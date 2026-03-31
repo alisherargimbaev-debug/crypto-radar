@@ -467,17 +467,20 @@ function calcSLTP(price, direction) {
 async function runStrategies(instId, coinData, asianSession) {
   const signals = [];
   try {
+    const price = coinData.price;
+    const ccy   = coinData.symbol; // ← это было удалено случайно
+
     const [k5m, k15m, k1h, oi5m, oi1h, tf5m, tf1h] = await Promise.all([
-  getOKXKlines(instId, '5m',  20),
-  getOKXKlines(instId, '15m', 10),
-  getOKXKlines(instId, '1H',  60),
-  getOKXOIHistory(ccy, '5m',  3),
-  getOKXOIHistory(ccy, '1H',  3),
-  getOKXTakerFlow(ccy, '5m'),
-  getOKXTakerFlow(ccy, '1H'),
-]);
-const oi15m = oi5m;   // используем 5m OI как замену
-const tf15m = tf5m;   // используем 5m taker как замену
+      getOKXKlines(instId, '5m',  20),
+      getOKXKlines(instId, '15m', 10),
+      getOKXKlines(instId, '1H',  60),
+      getOKXOIHistory(ccy, '5m',  3),
+      getOKXOIHistory(ccy, '1H',  3),
+      getOKXTakerFlow(ccy, '5m'),
+      getOKXTakerFlow(ccy, '1H'),
+    ]);
+    const oi15m = oi5m;
+    const tf15m = tf5m;
 
     // S1: Пробой 15m
     if (!asianSession && k15m.length >= 2 && oi15m.length >= 2) {

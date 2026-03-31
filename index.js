@@ -41,6 +41,7 @@ const SESSION_USA    = { from: 13, to: 22 };
 // ============================================================
 async function httpGet(url) {
   try {
+    await new Promise(r => setTimeout(r, 300)); // пауза 300ms
     const resp = await axios.get(url, { timeout: 30000 });
     return resp.data;
   } catch(e) {
@@ -472,10 +473,10 @@ async function runStrategies(instId, coinData, asianSession) {
       getOKXKlines(instId, '15m', 10),
       getOKXKlines(instId, '1H',  60),
       getOKXOIHistory(ccy, '5m',  3),
-      getOKXOIHistory(ccy, '15m', 3),
+      getOKXOIHistory(ccy, '15M', 3),
       getOKXOIHistory(ccy, '1H',  3),
       getOKXTakerFlow(ccy, '5m'),
-      getOKXTakerFlow(ccy, '15m'),
+      getOKXTakerFlow(ccy, '15M'),
       getOKXTakerFlow(ccy, '1H'),
     ]);
 

@@ -41,7 +41,7 @@ const SESSION_USA    = { from: 13, to: 22 };
 // ============================================================
 async function httpGet(url) {
   try {
-    await new Promise(r => setTimeout(r, 300)); // пауза 300ms
+    await new Promise(r => setTimeout(r, 800)); // пауза 800ms
     const resp = await axios.get(url, { timeout: 30000 });
     return resp.data;
   } catch(e) {

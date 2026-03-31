@@ -623,6 +623,9 @@ function getAlmatyDate() { return new Date(Date.now() + 5*60*60*1000).toISOStrin
 // ============================================================
 //  ОСНОВНЫЕ ФУНКЦИИ (запускаются по расписанию)
 // ============================================================
+// Добавь в самый конец index.js перед строкой checkSignals()
+const http = require('http');
+http.createServer((req, res) => res.end('OK')).listen(process.env.PORT || 3000);
 
 // Каждые 5 минут — поиск сигналов
 async function checkSignals() {

@@ -657,7 +657,7 @@ async function checkSignals() {
     }
 
     const best = filtered
-      .filter(s => s.confidence >= 60)
+      .filter(s => s.confidence >= 90)
       .sort((a, b) => b.confidence - a.confidence)[0];
 
     if (!best) continue;

@@ -21,7 +21,7 @@ const S1 = { priceMin: 1.5, oiMin: 2.0, vdeltaMin: 1000000, volMin: 5000000 };
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
 const S3 = { oiMin5m: 4.0, vol24Min: 10000000 };
 
-const MIN_VOLUME_24H = 10000000;
+const MIN_VOLUME_24H = 50000000;
 const TOP_N          = 15;
 const COOLDOWN_MIN   = 30;
 
@@ -481,6 +481,43 @@ function calcMACross(klines, fast, slow) {
   if (fp >= sp && fn < sn) return 'bearish';
   return 'none';
 }
+function calcMACD(klines, fast = 12, slow = 26, signal = 9) {
+  const closes = klines.map(c => c.close);
+  if (closes.length < slow + signal) return { macd: 0, signal: 0, hist: 0 };
+
+  const ema = (arr, period) => {
+    const k = 2 / (period + 1);
+    let val = arr[0];
+    for (let i = 1; i < arr.length; i++) val = arr[i] * k + val * (1 - k);
+    return val;
+  };
+
+  const macdLine = [];
+  for (let i = slow - 1; i < closes.length; i++) {
+    macdLine.push(ema(closes.slice(0, i + 1), fast) - ema(closes.slice(0, i + 1), slow));
+  }
+
+  const signalLine = ema(macdLine, signal);
+  const macdVal    = macdLine[macdLine.length - 1];
+  const hist       = macdVal - signalLine;
+
+  return { macd: macdVal, signal: signalLine, hist: parseFloat(hist.toFixed(6)) };
+}
+
+function calcBollinger(klines, period = 20, mult = 2) {
+  const closes = klines.map(c => c.close);
+  if (closes.length < period) return { upper: 0, mid: 0, lower: 0, width: 0 };
+
+  const slice = closes.slice(-period);
+  const mid   = slice.reduce((a, b) => a + b, 0) / period;
+  const std   = Math.sqrt(slice.reduce((a, b) => a + (b - mid) ** 2, 0) / period);
+  const upper = mid + mult * std;
+  const lower = mid - mult * std;
+  const width = ((upper - lower) / mid * 100);
+
+  return { upper: parseFloat(upper.toFixed(4)), mid: parseFloat(mid.toFixed(4)),
+           lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
+}
 function calcSLTP(price, direction) {
   return direction === 'long'
     ? { sl: (price*(1-SL_PCT/100)).toFixed(4), tp1: (price*(1+TP1_PCT/100)).toFixed(4), tp2: (price*(1+TP2_PCT/100)).toFixed(4) }
@@ -520,9 +557,21 @@ async function runStrategies(instId, coinData, asianSession) {
       if (iL || iS) {
         const dir = iL ? 'long' : 'short';
         const met = [Math.abs(pc)>=S1.priceMin, oi>=S1.oiMin, Math.abs(vd)>=S1.vdeltaMin, vol>=S1.volMin].filter(Boolean).length;
+         // MACD и Bollinger подтверждение для S1
+        const macd15 = calcMACD(k15m);
+        const bb15   = calcBollinger(k15m);
+        let confS1   = met * 25;
+
+        if (dir === 'long') {
+          if (macd15.hist > 0)              confS1 = Math.min(confS1 + 10, 100); // MACD бычий
+          if (k15m[k15m.length-1].close > bb15.upper) confS1 = Math.min(confS1 + 10, 100); // пробой BB вверх
+        } else {
+          if (macd15.hist < 0)              confS1 = Math.min(confS1 + 10, 100); // MACD медвежий
+          if (k15m[k15m.length-1].close < bb15.lower) confS1 = Math.min(confS1 + 10, 100); // пробой BB вниз
+        }
         signals.push({ strategy: '1️⃣ Пробой на импульсе (15m)', instId, direction: dir,
-          signal: dir==='long'?'🟢 LONG':'🔴 SHORT', price, confidence: met*25,
-          metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% VΔ:$${(vd/1e6).toFixed(2)}M Vol:$${(vol/1e6).toFixed(1)}M`,
+          signal: dir==='long'?'🟢 LONG':'🔴 SHORT', price, confidence: confS1,
+          metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% VΔ:$${(vd/1e6).toFixed(2)}M Vol:$${(vol/1e6).toFixed(1)}M MACD:${macd15.hist.toFixed(4)} BB:${bb15.width.toFixed(1)}%`,
           ...calcSLTP(price, dir) });
       }
     }
@@ -563,12 +612,48 @@ async function runStrategies(instId, coinData, asianSession) {
         const dir   = iL ? 'long' : 'short';
         const cross = k1h.length >= 51 ? calcMACross(k1h, 20, 50) : 'none';
         let conf    = 85;
+        // MACD подтверждение для S3
+        const macd5 = calcMACD(k5m);
+        if (dir === 'long'  && macd5.hist > 0) conf = Math.min(conf + 10, 100);
+        if (dir === 'short' && macd5.hist < 0) conf = Math.min(conf + 10, 100);
+        if (dir === 'long'  && macd5.hist < 0) conf = Math.max(conf - 15, 0);
+        if (dir === 'short' && macd5.hist > 0) conf = Math.max(conf - 15, 0);
         if (dir==='long' && cross==='bullish')  conf = Math.min(conf+10, 100);
         if (dir==='short' && cross==='bearish') conf = Math.min(conf+10, 100);
         signals.push({ strategy: '3️⃣ Ранний вход (5m)', instId, direction: dir,
           signal: dir==='long'?'🟢 LONG':'🔴 SHORT', price, confidence: conf,
           metrics: `OI 5m:${oi5.toFixed(2)}% CVD:$${(vd5/1e6).toFixed(2)}M Vol24h:$${(coinData.volume24h/1e6).toFixed(0)}M MA:${cross}`,
           ...calcSLTP(price, dir) });
+      }
+    }
+
+  // S4: MA20/MA50 + RSI (1h) — долгосрочный разворот тренда
+    if (k1h.length >= 55) {
+      const cross = calcMACross(k1h, 20, 50);
+      const rsi   = calcRSI(k1h, 14);
+      const ma20  = calcSMA(k1h, 20);
+      const ma50  = calcSMA(k1h, 50);
+      const iL    = cross === 'bullish' && rsi < 70;
+      const iS    = cross === 'bearish' && rsi > 30;
+
+      if (iL || iS) {
+        const dir = iL ? 'long' : 'short';
+        let conf  = 70;
+        if (iL && rsi < 50) conf += 10; // RSI не перекуплен — хорошо
+        if (iS && rsi > 50) conf += 10; // RSI не перепродан — хорошо
+        if (iL && cross === 'bullish') conf += 5; // Golden Cross бонус
+        if (iS && cross === 'bearish') conf += 5; // Death Cross бонус
+
+        signals.push({
+          strategy:  '4️⃣ MA20/MA50+RSI (1h)',
+          instId,
+          direction: dir,
+          signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+          price,
+          confidence: Math.min(conf, 100),
+          metrics: `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'}`,
+          ...calcSLTP(price, dir),
+        });
       }
     }
 

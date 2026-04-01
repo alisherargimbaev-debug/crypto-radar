@@ -777,8 +777,166 @@ function getAlmatyDate() { return new Date(Date.now() + 5*60*60*1000).toISOStrin
 // ============================================================
 //  ОСНОВНЫЕ ФУНКЦИИ (запускаются по расписанию)
 // ============================================================
-const http = require('http');
-http.createServer((req, res) => res.end('OK')).listen(process.env.PORT || 3000);
+const express = require('express');
+const app     = express();
+
+app.get('/', async (req, res) => {
+  try {
+    const [sigRes, tradeRes, openRes] = await Promise.all([
+      supabase.from('signals').select('*').order('ts', { ascending: false }).limit(50),
+      supabase.from('trades').select('*').order('closed_at', { ascending: false }).limit(50),
+      supabase.from('open_trades').select('*').order('ts', { ascending: false }).limit(20),
+    ]);
+
+    const signals    = sigRes.data    || [];
+    const trades     = tradeRes.data  || [];
+    const openTrades = openRes.data   || [];
+
+    const wins    = trades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses  = trades.filter(t => t.outcome === 'sl');
+    const wr      = trades.length ? Math.round(wins.length / trades.length * 100) : 0;
+    const pnl     = trades.reduce((a, t) => a + (parseFloat(t.pnl) || 0), 0);
+    const longs   = signals.filter(s => s.direction === 'long').length;
+    const shorts  = signals.filter(s => s.direction === 'short').length;
+
+    const fmtTime = ts => new Date(+ts + 5*60*60*1000).toISOString().replace('T',' ').substr(0,16);
+    const fmtPnl  = p => `${parseFloat(p) >= 0 ? '+' : ''}${parseFloat(p).toFixed(1)}%`;
+
+    const outcomeIcon = o => ({ tp1:'✅', tp2:'🏆', sl:'❌', expired:'⏰' }[o] || '❓');
+    const dirIcon     = d => d === 'long' ? '🟢' : '🔴';
+
+    const html = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Крипто Радар</title>
+<meta http-equiv="refresh" content="60">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; padding: 24px; font-size: 14px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px; }
+  .card-label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .card-val { font-size: 28px; font-weight: 600; }
+  .green { color: #34d399; }
+  .red { color: #f87171; }
+  .blue { color: #60a5fa; }
+  .yellow { color: #fbbf24; }
+  section { margin-bottom: 28px; }
+  h2 { font-size: 14px; font-weight: 500; color: #999; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 8px 12px; color: #555; font-size: 11px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #222; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1a1a1a; font-size: 13px; }
+  tr:hover td { background: #1a1a1a; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: 500; }
+  .badge-long  { background: #064e3b; color: #34d399; }
+  .badge-short { background: #450a0a; color: #f87171; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 11px; }
+  .tag-tp  { background: #064e3b; color: #34d399; }
+  .tag-sl  { background: #450a0a; color: #f87171; }
+  .tag-exp { background: #1c1c1c; color: #666; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #34d399; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+</style>
+</head>
+<body>
+<h1>🤖 Крипто Радар v4.0</h1>
+<p class="sub"><span class="dot"></span>Обновляется каждую минуту · ${fmtTime(Date.now())} Алматы</p>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-label">Сигналов</div>
+    <div class="card-val blue">${signals.length}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Win Rate</div>
+    <div class="card-val ${wr >= 60 ? 'green' : wr >= 40 ? 'yellow' : 'red'}">${wr}%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">PnL</div>
+    <div class="card-val ${pnl >= 0 ? 'green' : 'red'}">${fmtPnl(pnl)}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Long / Short</div>
+    <div class="card-val" style="font-size:20px"><span class="green">${longs}</span> / <span class="red">${shorts}</span></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Открытых</div>
+    <div class="card-val yellow">${openTrades.length}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Закрытых</div>
+    <div class="card-val">${trades.length}</div>
+  </div>
+</div>
+
+${openTrades.length ? `
+<section>
+  <h2>⚡ Открытые сделки</h2>
+  <table>
+    <thead><tr><th>Монета</th><th>Направление</th><th>Вход</th><th>SL</th><th>TP1</th><th>TP2</th><th>Уверенность</th><th>Время</th></tr></thead>
+    <tbody>
+      ${openTrades.map(t => `<tr>
+        <td><b>${t.symbol}</b></td>
+        <td><span class="badge ${t.direction === 'long' ? 'badge-long' : 'badge-short'}">${t.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'}</span></td>
+        <td>$${parseFloat(t.price).toFixed(4)}</td>
+        <td style="color:#f87171">$${parseFloat(t.sl).toFixed(4)}</td>
+        <td style="color:#34d399">$${parseFloat(t.tp1).toFixed(4)}</td>
+        <td style="color:#34d399">$${parseFloat(t.tp2).toFixed(4)}</td>
+        <td>${t.confidence}%</td>
+        <td style="color:#666">${fmtTime(t.ts)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+</section>` : ''}
+
+<section>
+  <h2>📊 История сделок</h2>
+  <table>
+    <thead><tr><th>Монета</th><th>Направление</th><th>Исход</th><th>PnL</th><th>Вход</th><th>Выход</th><th>Время</th></tr></thead>
+    <tbody>
+      ${trades.map(t => `<tr>
+        <td><b>${t.symbol}</b></td>
+        <td><span class="badge ${t.direction === 'long' ? 'badge-long' : 'badge-short'}">${t.direction === 'long' ? '🟢 LONG' : '🔴 SHORT'}</span></td>
+        <td><span class="tag ${t.outcome?.startsWith('tp') ? 'tag-tp' : t.outcome === 'sl' ? 'tag-sl' : 'tag-exp'}">${outcomeIcon(t.outcome)} ${t.outcome?.toUpperCase()}</span></td>
+        <td style="color:${parseFloat(t.pnl) >= 0 ? '#34d399' : '#f87171'};font-weight:500">${fmtPnl(t.pnl)}</td>
+        <td>$${parseFloat(t.price).toFixed(4)}</td>
+        <td>${t.close_price ? '$' + parseFloat(t.close_price).toFixed(4) : '—'}</td>
+        <td style="color:#666">${t.closed_at ? fmtTime(t.closed_at) : '—'}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>📨 Последние сигналы</h2>
+  <table>
+    <thead><tr><th>Монета</th><th>Направление</th><th>Стратегия</th><th>Уверенность</th><th>Цена</th><th>Время</th></tr></thead>
+    <tbody>
+      ${signals.map(s => `<tr>
+        <td><b>${s.symbol}</b></td>
+        <td><span class="badge ${s.direction === 'long' ? 'badge-long' : 'badge-short'}">${dirIcon(s.direction)} ${s.direction?.toUpperCase()}</span></td>
+        <td style="color:#666;font-size:12px">${s.strategy}</td>
+        <td>${s.confidence}%</td>
+        <td>$${parseFloat(s.price).toFixed(4)}</td>
+        <td style="color:#666">${fmtTime(s.ts)}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+</section>
+
+</body></html>`;
+
+    res.send(html);
+  } catch(e) {
+    res.status(500).send('Ошибка: ' + e.message);
+  }
+});
+
+app.listen(process.env.PORT || 3000);
 
 // Каждые 5 минут — поиск сигналов
 async function checkSignals() {

@@ -777,3 +777,10 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 
 // Первый запуск сразу при старте для проверки
 checkSignals().catch(e => console.error('Initial checkSignals error:', e.message));
+
+process.on('uncaughtException', e => {
+  console.error('[CRASH PREVENTED]', e.message);
+});
+process.on('unhandledRejection', e => {
+  console.error('[PROMISE ERROR]', e?.message || e);
+});

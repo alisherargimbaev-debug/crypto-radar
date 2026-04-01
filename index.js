@@ -2,6 +2,12 @@ require('dotenv').config();
 const axios = require('axios');
 const cron  = require('node-cron');
 
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
 // ── Настройки ──────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const CHAT_ID        = process.env.CHAT_ID;
@@ -624,16 +630,55 @@ function setCoinCooldown(instId) { store.cooldowns[instId] = Date.now(); }
 // ============================================================
 //  ХРАНЕНИЕ СДЕЛОК
 // ============================================================
-function saveOpenTrade(sig) {
-  store.openTrades.push({ ts: sig.ts, instId: sig.instId, symbol: sig.instId.replace('-USDT-SWAP',''),
-    strategy: sig.strategy, direction: sig.direction, price: sig.price,
-    sl: sig.sl, tp1: sig.tp1, tp2: sig.tp2, confidence: sig.confidence });
+async function saveOpenTrade(sig) {
+  // В памяти
+  store.openTrades.push({
+    ts: sig.ts, instId: sig.instId,
+    symbol: sig.instId.replace('-USDT-SWAP',''),
+    strategy: sig.strategy, direction: sig.direction,
+    price: sig.price, sl: sig.sl, tp1: sig.tp1,
+    tp2: sig.tp2, confidence: sig.confidence
+  });
   if (store.openTrades.length > 100) store.openTrades = store.openTrades.slice(-100);
+
+  // В базу данных
+  try {
+    await supabase.from('open_trades').insert({
+      ts:         sig.ts,
+      inst_id:    sig.instId,
+      symbol:     sig.instId.replace('-USDT-SWAP',''),
+      strategy:   sig.strategy,
+      direction:  sig.direction,
+      price:      sig.price,
+      sl:         sig.sl,
+      tp1:        sig.tp1,
+      tp2:        sig.tp2,
+      confidence: sig.confidence,
+    });
+  } catch(e) { console.error('[DB] saveOpenTrade error:', e.message); }
 }
-function logSignal(sig) {
-  store.signalLog.push({ ts: sig.ts, symbol: sig.instId.replace('-USDT-SWAP',''),
-    strategy: sig.strategy, direction: sig.direction, price: sig.price, confidence: sig.confidence });
+async function logSignal(sig) {
+  // В памяти (для текущей сессии)
+  store.signalLog.push({
+    ts: sig.ts, symbol: sig.instId.replace('-USDT-SWAP',''),
+    strategy: sig.strategy, direction: sig.direction,
+    price: sig.price, confidence: sig.confidence
+  });
   if (store.signalLog.length > 300) store.signalLog = store.signalLog.slice(-300);
+
+  // В базу данных (постоянно)
+  try {
+    await supabase.from('signals').insert({
+      ts:         sig.ts,
+      inst_id:    sig.instId,
+      symbol:     sig.instId.replace('-USDT-SWAP',''),
+      strategy:   sig.strategy,
+      direction:  sig.direction,
+      signal:     sig.signal,
+      price:      sig.price,
+      confidence: sig.confidence,
+    });
+  } catch(e) { console.error('[DB] logSignal error:', e.message); }
 }
 
 
@@ -733,7 +778,29 @@ async function checkOutcomes() {
   }
 
   store.openTrades   = stillOpen;
-  store.tradeHistory = [...store.tradeHistory, ...closed].slice(-500);
+store.tradeHistory = [...store.tradeHistory, ...closed].slice(-500);
+
+// Сохраняем закрытые сделки в базу
+for (const trade of closed) {
+  try {
+    await supabase.from('trades').insert({
+      ts:          trade.ts,
+      inst_id:     trade.instId,
+      symbol:      trade.symbol,
+      strategy:    trade.strategy,
+      direction:   trade.direction,
+      price:       trade.price,
+      sl:          trade.sl,
+      tp1:         trade.tp1,
+      tp2:         trade.tp2,
+      confidence:  trade.confidence,
+      outcome:     trade.outcome,
+      close_price: trade.closePrice,
+      closed_at:   trade.closedAt,
+      pnl:         trade.pnl,
+    });
+  } catch(e) { console.error('[DB] trade save error:', e.message); }
+}
 }
 
 // Каждый час — аномалии

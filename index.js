@@ -320,20 +320,41 @@ async function applyCandlePatterns(sig, instId) {
 // ============================================================
 async function checkNews(symbol) {
   try {
-    const data = await httpGet(`https://cryptopanic.com/api/free/v1/posts/?auth_token=free&currencies=${symbol}&filter=important&kind=news`);
-    if (!data?.results?.length) return { blocked: false, note: null };
+    const key  = process.env.CRYPTOCOMPARE_KEY;
+    if (!key) return { blocked: false, note: null };
 
-    const news = data.results.slice(0, 5).map(n => n.title).join('\n');
+    const data = await httpGet(
+      `https://min-api.cryptocompare.com/data/v2/news/?categories=${symbol}&excludeCategories=Sponsored&lang=EN&api_key=${key}`
+    );
+
+    if (!data || data.Response !== 'Success' || !data.Data?.length) {
+      return { blocked: false, note: null };
+    }
+
+    // Берём последние 5 новостей за последние 6 часов
+    const sixHoursAgo = Date.now() / 1000 - 6 * 60 * 60;
+    const recent = data.Data
+      .filter(n => n.published_on >= sixHoursAgo)
+      .slice(0, 5);
+
+    if (!recent.length) return { blocked: false, note: null };
+
+    const headlines = recent.map(n => n.title).join('\n');
     const prompt =
-      `Ты криптовалютный аналитик. Последние новости по ${symbol}:\n\n${news}\n\n` +
+      `Ты криптовалютный аналитик. Последние новости по ${symbol}:\n\n${headlines}\n\n` +
       `Ответь ТОЛЬКО одним словом: POSITIVE, NEGATIVE или NEUTRAL.`;
 
     const sentiment = (await callGroq(prompt)).trim().toUpperCase();
     console.log(`[NEWS] ${symbol}: ${sentiment}`);
 
-    if (sentiment.includes('NEGATIVE')) return { blocked: true, reason: `Негативные новости по ${symbol}` };
-    if (sentiment.includes('POSITIVE')) return { blocked: false, note: '📰 Позитивные новости → подтверждает' };
+    if (sentiment.includes('NEGATIVE')) {
+      return { blocked: true, reason: `📰 Негативные новости по ${symbol}` };
+    }
+    if (sentiment.includes('POSITIVE')) {
+      return { blocked: false, note: `📰 Позитивные новости → подтверждает` };
+    }
     return { blocked: false, note: null };
+
   } catch(e) {
     console.error('checkNews error:', e.message);
     return { blocked: false, note: null };

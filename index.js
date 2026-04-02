@@ -43,7 +43,7 @@ const STRATEGY_META = {
   '5️⃣ RSI Дивергенция (1h)':       { color: '#34d399', rating: 'A', wr: '~67%' },
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
-};Х
+};
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
 const store = {

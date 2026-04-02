@@ -2,6 +2,9 @@ require('dotenv').config();
 const axios = require('axios');
 const cron  = require('node-cron');
 
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
+
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -104,6 +107,83 @@ async function callGroq(prompt) {
     { Authorization: `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' }
   );
   return data?.choices?.[0]?.message?.content || 'AI недоступен';
+}
+
+async function validateSignalWithAI(sig, fng, session) {
+  const meta = STRATEGY_META[sig.strategy] || { rating: '?', wr: '?' };
+
+  const prompt =
+    `Ты — профессиональный крипто-трейдер уровня проп-фонда, работающий с деривативами более 10 лет.
+Твоя задача — ПРОФЕССИОНАЛЬНАЯ ОЦЕНКА уже сгенерированного сигнала.
+Ты НЕ создаешь сигнал с нуля — ты РЕШАЕШЬ: ОСТАВИТЬ или ОТКЛОНИТЬ.
+
+📊 СИГНАЛ:
+Стратегия: ${sig.strategy} (Рейтинг: ${meta.rating}, Win Rate: ${meta.wr})
+Направление: ${sig.direction === 'long' ? 'LONG' : 'SHORT'}
+Цена: $${sig.price}
+Confidence (до AI): ${sig.confidence}%
+Метрики: ${sig.metrics}
+
+ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ:
+Сессия: ${session}
+Fear & Greed: ${fng ? fng.value + ' (' + fng.label + ')' : 'N/A'}
+${sig.srNote     ? 'Уровни S/R: '   + sig.srNote     : ''}
+${sig.fngNote    ? 'F&G заметка: '  + sig.fngNote    : ''}
+${sig.patternNote? 'Паттерны: '     + sig.patternNote : ''}
+${sig.liqNote    ? 'Ликвидации: '   + sig.liqNote    : ''}
+${sig.newsNote   ? 'Новости: '      + sig.newsNote   : ''}
+
+ЖЁСТКИЕ ПРАВИЛА:
+- Минимум 3 независимых подтверждения для APPROVE
+- Если есть противоречия между индикаторами → REJECT
+- Рейтинг A (S4,S5,S6): порог 75%+ | Рейтинг B (S2,S7): 85%+ | Рейтинг C (S1,S3): 92%+
+- Азия сессия → почти всегда REJECT
+- Если RR < 1:2 → REJECT
+- Лучше пропустить 10 сделок чем взять одну плохую
+
+Ответь СТРОГО в одном из двух форматов:
+APPROVE | 94
+или
+REJECT | причина одной строкой`;
+
+  try {
+    // Проверяем есть ли ключ
+    if (!process.env.GEMINI_KEY) {
+      console.log('[GEMINI] Ключ не найден — пропускаем валидацию');
+      return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
+    }
+
+    const model    = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result   = await model.generateContent(prompt);
+    const response = result.response.text().trim();
+    const line     = response.split('\n')[0].trim();
+
+    console.log(`[GEMINI] ${sig.instId} → ${line}`);
+
+    if (line.startsWith('APPROVE')) {
+      const parts   = line.split('|');
+      const newConf = parts[1] ? parseInt(parts[1].trim()) : sig.confidence;
+      return {
+        approved:   true,
+        confidence: isNaN(newConf) ? sig.confidence : Math.min(newConf, 100),
+        reason:     parts[1] ? `Gemini: ${newConf}% уверенность` : 'Gemini подтвердил'
+      };
+    }
+
+    if (line.startsWith('REJECT')) {
+      const reason = line.split('|')[1]?.trim() || 'Gemini отклонил';
+      return { approved: false, confidence: 0, reason };
+    }
+
+    // Непонятный ответ — перестраховываемся
+    console.log(`[GEMINI] Непонятный ответ: ${line}`);
+    return { approved: false, confidence: 0, reason: 'Непонятный ответ Gemini' };
+
+  } catch(e) {
+    console.error('[GEMINI] error:', e.message);
+    // Если Gemini недоступен — не блокируем сигнал
+    return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
+  }
 }
 
 
@@ -779,7 +859,7 @@ function buildSignalAlert(sig) {
   const timeStr  = getAlmatyTime();
   const fngEmoji = !sig.fng ? '😐' : sig.fng.value < 25 ? '😱' : sig.fng.value > 75 ? '🤑' : '😐';
   const fngLine  = sig.fng ? `${fngEmoji} F&G: ${sig.fng.value} (${sig.fng.label})` : '';
-  const notes    = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote]
+  const notes = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -1105,6 +1185,15 @@ async function checkSignals() {
     best.ts      = Date.now();
     best.fng     = fng;
     best.session = session;
+
+    // AI валидация — финальный фильтр
+    const aiResult = await validateSignalWithAI(best, fng, session);
+    if (!aiResult.approved) {
+      console.log(`[AI REJECT] ${coin.instId} → ${aiResult.reason}`);
+      continue;
+    }
+    best.confidence = aiResult.confidence;
+    best.aiNote     = `🤖 AI: ${aiResult.reason}`;
 
     await sendTelegram(buildSignalAlert(best));
     setCoinCooldown(coin.instId);

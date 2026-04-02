@@ -153,7 +153,7 @@ REJECT | причина одной строкой`;
       return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
     }
 
-    const model    = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model    = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const result   = await model.generateContent(prompt);
     const response = result.response.text().trim();
     const line     = response.split('\n')[0].trim();
@@ -997,12 +997,22 @@ app.get('/', async (req, res) => {
     const trades     = tradeRes.data  || [];
     const openTrades = openRes.data   || [];
 
+    // Общая статистика
     const wins    = trades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
     const losses  = trades.filter(t => t.outcome === 'sl');
     const wr      = trades.length ? Math.round(wins.length / trades.length * 100) : 0;
     const pnl     = trades.reduce((a, t) => a + (parseFloat(t.pnl) || 0), 0);
     const longs   = signals.filter(s => s.direction === 'long').length;
     const shorts  = signals.filter(s => s.direction === 'short').length;
+
+    // Дневная статистика (последние 24 часа)
+    const since24h     = Date.now() - 24 * 60 * 60 * 1000;
+    const todayTrades  = trades.filter(t => t.closed_at && +t.closed_at >= since24h);
+    const todayWins    = todayTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const todayLosses  = todayTrades.filter(t => t.outcome === 'sl');
+    const todayWR      = todayTrades.length ? Math.round(todayWins.length / todayTrades.length * 100) : 0;
+    const todayPnl     = todayTrades.reduce((a, t) => a + (parseFloat(t.pnl) || 0), 0);
+    const todaySignals = signals.filter(s => +s.ts >= since24h).length;
 
     const fmtTime = ts => new Date(+ts + 5*60*60*1000).toISOString().replace('T',' ').substr(0,16);
     const fmtPnl  = p => `${parseFloat(p) >= 0 ? '+' : ''}${parseFloat(p).toFixed(1)}%`;
@@ -1051,18 +1061,39 @@ app.get('/', async (req, res) => {
 <h1>🤖 Крипто Радар v4.0</h1>
 <p class="sub"><span class="dot"></span>Обновляется каждую минуту · ${fmtTime(Date.now())} Алматы</p>
 
+<p style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">За сегодня</p>
+<div class="grid" style="margin-bottom:16px;">
+  <div class="card">
+    <div class="card-label">Сигналов сегодня</div>
+    <div class="card-val blue">${todaySignals}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Win Rate сегодня</div>
+    <div class="card-val ${todayWR >= 60 ? 'green' : todayWR >= 40 ? 'yellow' : todayTrades.length ? 'red' : ''}">${todayTrades.length ? todayWR + '%' : '—'}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">PnL сегодня</div>
+    <div class="card-val ${todayPnl >= 0 ? 'green' : 'red'}">${todayTrades.length ? fmtPnl(todayPnl) : '—'}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">TP / SL сегодня</div>
+    <div class="card-val" style="font-size:20px"><span class="green">${todayWins.length}</span> / <span class="red">${todayLosses.length}</span></div>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">За всё время</p>
 <div class="grid">
   <div class="card">
-    <div class="card-label">Сигналов</div>
+    <div class="card-label">Всего сигналов</div>
     <div class="card-val blue">${signals.length}</div>
   </div>
   <div class="card">
-    <div class="card-label">Win Rate</div>
-    <div class="card-val ${wr >= 60 ? 'green' : wr >= 40 ? 'yellow' : 'red'}">${wr}%</div>
+    <div class="card-label">Win Rate общий</div>
+    <div class="card-val ${wr >= 60 ? 'green' : wr >= 40 ? 'yellow' : trades.length ? 'red' : ''}">${trades.length ? wr + '%' : '—'}</div>
   </div>
   <div class="card">
-    <div class="card-label">PnL</div>
-    <div class="card-val ${pnl >= 0 ? 'green' : 'red'}">${fmtPnl(pnl)}</div>
+    <div class="card-label">PnL общий</div>
+    <div class="card-val ${pnl >= 0 ? 'green' : 'red'}">${trades.length ? fmtPnl(pnl) : '—'}</div>
   </div>
   <div class="card">
     <div class="card-label">Long / Short</div>
@@ -1073,7 +1104,7 @@ app.get('/', async (req, res) => {
     <div class="card-val yellow">${openTrades.length}</div>
   </div>
   <div class="card">
-    <div class="card-label">Закрытых</div>
+    <div class="card-label">Закрытых всего</div>
     <div class="card-val">${trades.length}</div>
   </div>
 </div>

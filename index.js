@@ -537,6 +537,78 @@ async function getLiquidationData(instId) {
   return { longLiqs, shortLiqs, totalUsd, dominant: longLiqs > shortLiqs ? 'longs' : 'shorts' };
 }
 
+// ============================================================
+//  WHALE TRACKER — крупные ордера OKX
+// ============================================================
+async function getWhaleActivity(instId, symbol) {
+  try {
+    // Крупные сделки через trade history
+    const data = await httpGet(
+      `https://www.okx.com/api/v5/market/trades?instId=${instId}&limit=50`
+    );
+    if (!data || data.code !== '0' || !data.data?.length) {
+      return { hasWhales: false, buyUsd: 0, sellUsd: 0, dominant: 'none', note: null };
+    }
+
+    const price    = parseFloat(data.data[0].px);
+    const WHALE_MIN = 100000; // $100k минимум для "кита"
+
+    let buyUsd  = 0;
+    let sellUsd = 0;
+    let whaleTrades = 0;
+
+    data.data.forEach(t => {
+      const usd = parseFloat(t.sz) * parseFloat(t.px);
+      if (usd < WHALE_MIN) return; // игнорируем мелкие сделки
+      whaleTrades++;
+      if (t.side === 'buy')  buyUsd  += usd;
+      if (t.side === 'sell') sellUsd += usd;
+    });
+
+    if (whaleTrades === 0) {
+      return { hasWhales: false, buyUsd: 0, sellUsd: 0, dominant: 'none', note: null };
+    }
+
+    const totalUsd = buyUsd + sellUsd;
+    const dominant = buyUsd > sellUsd * 1.3 ? 'buy' :
+                     sellUsd > buyUsd * 1.3  ? 'sell' : 'neutral';
+
+    const note = dominant === 'buy'
+      ? `🐋 Киты покупают $${(buyUsd/1e6).toFixed(2)}M vs продают $${(sellUsd/1e6).toFixed(2)}M`
+      : dominant === 'sell'
+      ? `🐋 Киты продают $${(sellUsd/1e6).toFixed(2)}M vs покупают $${(buyUsd/1e6).toFixed(2)}M`
+      : `🐋 Нейтральная активность китов $${(totalUsd/1e6).toFixed(2)}M`;
+
+    return { hasWhales: true, buyUsd, sellUsd, totalUsd, dominant, note, whaleTrades };
+  } catch(e) {
+    console.error('getWhaleActivity error:', e.message);
+    return { hasWhales: false, buyUsd: 0, sellUsd: 0, dominant: 'none', note: null };
+  }
+}
+
+async function applyWhaleBoost(sig) {
+  const whale = await getWhaleActivity(sig.instId, sig.instId.replace('-USDT-SWAP',''));
+  if (!whale.hasWhales) return sig;
+
+  if (sig.direction === 'long' && whale.dominant === 'buy') {
+    sig.confidence = Math.min(sig.confidence + 15, 100);
+    sig.whaleNote  = `${whale.note} → +15%`;
+  } else if (sig.direction === 'short' && whale.dominant === 'sell') {
+    sig.confidence = Math.min(sig.confidence + 15, 100);
+    sig.whaleNote  = `${whale.note} → +15%`;
+  } else if (
+    (sig.direction === 'long'  && whale.dominant === 'sell') ||
+    (sig.direction === 'short' && whale.dominant === 'buy')
+  ) {
+    sig.confidence = Math.max(sig.confidence - 20, 0);
+    sig.whaleNote  = `${whale.note} → -20% (против сигнала)`;
+  } else {
+    sig.whaleNote = whale.note;
+  }
+
+  return sig;
+}
+
 async function applyLiquidationBoost(sig) {
   if (!sig.strategy.includes('Bounce')) return sig;
   const liq = await getLiquidationData(sig.instId);
@@ -894,7 +966,7 @@ function buildSignalAlert(sig) {
   const timeStr  = getAlmatyTime();
   const fngEmoji = !sig.fng ? '😐' : sig.fng.value < 25 ? '😱' : sig.fng.value > 75 ? '🤑' : '😐';
   const fngLine  = sig.fng ? `${fngEmoji} F&G: ${sig.fng.value} (${sig.fng.label})` : '';
-  const notes = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -1065,6 +1137,7 @@ async function checkSignals() {
         sig = applySessionFilter(sig, session);
         sig = await applyCandlePatterns(sig, coin.instId);
         sig = await applyLiquidationBoost(sig);
+        sig = await applyWhaleBoost(sig);
         filtered.push(sig);
       }
 
@@ -1178,6 +1251,57 @@ async function checkAnomalies() {
   await sendTelegram(`🔔 КРИПТО РАДАР v4.0\n🕐 ${getAlmatyTime()}\n😐 F&G: ${fng.value} (${fng.label})\n\n${coins}\n\n🤖 AI:\n${await callGroq(prompt)}`);
 }
 
+// ============================================================
+//  WHALE REPORT — рассылка активности китов (каждый час)
+// ============================================================
+async function checkWhales() {
+  const candidates = await getOKXCandidates();
+  if (!candidates.length) return;
+
+  const whaleAlerts = [];
+
+  for (const coin of candidates.slice(0, 10)) { // топ-10 по объёму
+    const whale = await getWhaleActivity(coin.instId, coin.symbol);
+    if (!whale.hasWhales || whale.totalUsd < 500000) continue; // минимум $500k
+    if (whale.dominant === 'neutral') continue;
+
+    whaleAlerts.push({
+      symbol:    coin.symbol,
+      price:     coin.price,
+      dominant:  whale.dominant,
+      buyUsd:    whale.buyUsd,
+      sellUsd:   whale.sellUsd,
+      totalUsd:  whale.totalUsd,
+    });
+  }
+
+  if (!whaleAlerts.length) return; // нет активности — молчим
+
+  // Сортируем по объёму
+  whaleAlerts.sort((a, b) => b.totalUsd - a.totalUsd);
+
+  const lines = whaleAlerts.map(w => {
+    const emoji = w.dominant === 'buy' ? '🟢' : '🔴';
+    const action= w.dominant === 'buy' ? 'ПОКУПКА' : 'ПРОДАЖА';
+    return (
+      `${emoji} ${w.symbol}/USDT — ${action}\n` +
+      `   💰 $${w.price}\n` +
+      `   🟢 Купили: $${(w.buyUsd/1e6).toFixed(2)}M\n` +
+      `   🔴 Продали: $${(w.sellUsd/1e6).toFixed(2)}M\n` +
+      `   📊 Всего: $${(w.totalUsd/1e6).toFixed(2)}M`
+    );
+  }).join('\n\n━━━━━━━━━━━━\n\n');
+
+  await sendTelegram(
+    `🐋 АКТИВНОСТЬ КИТОВ\n` +
+    `⏰ ${getAlmatyTime()} Алматы\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    lines + '\n\n' +
+    `━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `⚠️ Не является финансовым советом.`
+  );
+}
+
 // Раз в день — дневной отчёт
 async function dailyReport() {
   const since   = Date.now() - 24*60*60*1000;
@@ -1220,6 +1344,9 @@ cron.schedule('*/15 * * * *', () => { checkOutcomes().catch(e => console.error('
 
 // Каждый час (в 00 минут)
 cron.schedule('0 * * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });
+
+// Каждые 2 часа — whale активность
+cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('checkWhales error:', e.message)); });
 
 // Каждый день в 07:00 UTC = 12:00 Алматы
 cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('dailyReport error:', e.message)); });

@@ -153,10 +153,21 @@ REJECT | причина одной строкой`;
       return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
     }
 
-    const model    = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const result   = await model.generateContent(prompt);
-    const response = result.response.text().trim();
-    const line     = response.split('\n')[0].trim();
+    const data = await httpPost(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model:    'mistralai/mistral-7b-instruct',
+        messages: [{ role: 'user', content: prompt }],
+      },
+      {
+        'Authorization':  `Bearer ${process.env.OPENROUTER_KEY}`,
+        'Content-Type':   'application/json',
+        'HTTP-Referer':   'https://crypto-radar-8ceq.onrender.com',
+        'X-Title':        'Crypto Radar Bot',
+      }
+    );
+    const response = data?.choices?.[0]?.message?.content || '';
+    const line     = response.trim().split('\n')[0].trim();
 
     console.log(`[GEMINI] ${sig.instId} → ${line}`);
 

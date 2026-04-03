@@ -150,21 +150,34 @@ REJECT | причина одной строкой`;
       return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
     }
 
-    const data = await httpPost(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model:    'mistralai/mistral-7b-instruct',
-        messages: [{ role: 'user', content: prompt }],
-      },
-      {
-        'Authorization':  `Bearer ${process.env.OPENROUTER_KEY}`,
-        'Content-Type':   'application/json',
-        'HTTP-Referer':   'https://crypto-radar-8ceq.onrender.com',
-        'X-Title':        'Crypto Radar Bot',
-      }
-    );
-    const response = data?.choices?.[0]?.message?.content || '';
-    const line     = response.trim().split('\n')[0].trim();
+    let response = '';
+
+    // Пробуем OpenRouter
+    if (process.env.OPENROUTER_KEY) {
+      const data = await httpPost(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model:    'mistralai/mistral-7b-instruct:free',
+          messages: [{ role: 'user', content: prompt }],
+        },
+        {
+          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
+          'Content-Type':  'application/json',
+          'HTTP-Referer':  'https://crypto-radar-8ceq.onrender.com',
+          'X-Title':       'Crypto Radar Bot',
+        }
+      );
+      response = data?.choices?.[0]?.message?.content || '';
+    }
+
+    // Если OpenRouter не ответил — используем Groq
+    if (!response.trim()) {
+      console.log('[AI] OpenRouter пустой → Groq');
+      response = await callGroq(prompt);
+    }
+
+    const line = response.trim().split('\n')[0].trim();
+    console.log(`[AI] ${sig.instId} → ${line}`);
 
     console.log(`[GEMINI] ${sig.instId} → ${line}`);
 

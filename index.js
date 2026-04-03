@@ -33,9 +33,9 @@ const COOLDOWN_MIN   = 30;
 
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
-  '1️⃣ Пробой на импульсе (15m)':  { color: '#f87171', rating: 'C', wr: '~40%' },
+  '1️⃣ Пробой на импульсе (15m)':  { color: '#4a5a7a', rating: 'C', wr: '~40% (откл.)' },
   '2️⃣ Liquidity Bounce (1h)':      { color: '#fbbf24', rating: 'B', wr: '~55%' },
-  '3️⃣ Ранний вход (5m)':           { color: '#f87171', rating: 'C', wr: '~38%' },
+  '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
   '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~65%' },
   '5️⃣ RSI Дивергенция (1h)':       { color: '#34d399', rating: 'A', wr: '~67%' },
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
@@ -196,9 +196,9 @@ REJECT | причина одной строкой`;
       return { approved: false, confidence: 0, reason };
     }
 
-    // Непонятный ответ — перестраховываемся
-    console.log(`[GEMINI] Непонятный ответ: ${line}`);
-    return { approved: false, confidence: 0, reason: 'Непонятный ответ Gemini' };
+    // Непонятный ответ — пропускаем сигнал (не блокируем)
+    console.log(`[AI] Непонятный ответ, пропускаем фильтр: ${line}`);
+    return { approved: true, confidence: sig.confidence, reason: 'AI не определился — пропущен' };
 
   } catch(e) {
     console.error('[GEMINI] error:', e.message);
@@ -675,8 +675,8 @@ async function runStrategies(instId, coinData, asianSession) {
     const oi15m = oi5m;
     const tf15m = tf5m;
 
-    // S1: Пробой 15m
-    if (!asianSession && k15m.length >= 2 && oi15m.length >= 2) {
+    // S1: Пробой 15m 
+    /* if (!asianSession && k15m.length >= 2 && oi15m.length >= 2) {
       const pc  = calcPriceChangePct(k15m);
       const oi  = calcOiChangePct(oi15m);
       const vd  = tf15m ? tf15m.delta : calcVolumeDelta(k15m);
@@ -703,7 +703,7 @@ async function runStrategies(instId, coinData, asianSession) {
           metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% VΔ:$${(vd/1e6).toFixed(2)}M Vol:$${(vol/1e6).toFixed(1)}M MACD:${macd15.hist.toFixed(4)} BB:${bb15.width.toFixed(1)}%`,
           ...calcSLTP(price, dir, '1️⃣ Пробой на импульсе (15m)') });
       }
-    }
+    } */
 
     // S2: Bounce 1h
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
@@ -729,7 +729,7 @@ async function runStrategies(instId, coinData, asianSession) {
     }
 
     // S3: Ранний вход 5m
-    if (k5m.length >= 7 && oi5m.length >= 2) {
+    /* if (k5m.length >= 7 && oi5m.length >= 2) {
       const oi5  = calcOiChangePct(oi5m);
       const vd5  = tf5m ? tf5m.delta : calcVolumeDelta(k5m);
       const prev = k5m.slice(-6, -1);
@@ -754,7 +754,7 @@ async function runStrategies(instId, coinData, asianSession) {
           metrics: `OI 5m:${oi5.toFixed(2)}% CVD:$${(vd5/1e6).toFixed(2)}M Vol24h:$${(coinData.volume24h/1e6).toFixed(0)}M MA:${cross}`,
           ...calcSLTP(price, dir, '3️⃣ Ранний вход (5m)') });
       }
-    }
+    } */
 
   // S4: MA20/MA50 + RSI (1h) — долгосрочный разворот тренда
     if (k1h.length >= 55) {

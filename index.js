@@ -1037,60 +1037,66 @@ app.get('/', async (req, res) => {
 app.listen(process.env.PORT || 3000);
 
 // Каждые 5 минут — поиск сигналов
+let isRunning = false;
+
 async function checkSignals() {
-  console.log(`[${getAlmatyTime()}] checkSignals запущен`);
-  const candidates    = await getOKXCandidates();
-  if (!candidates.length) { console.log('Нет кандидатов'); return; }
+  if (isRunning) { console.log('[SKIP] checkSignals уже выполняется'); return; }
+  isRunning = true;
+  try {
+    console.log(`[${getAlmatyTime()}] checkSignals запущен`);
 
-  const fng           = await getFearAndGreed();
-  const session       = getCurrentSession();
-  const asianSession  = isAsianSession();
+    const candidates   = await getOKXCandidates();
+    if (!candidates.length) { console.log('Нет кандидатов'); return; }
 
-  for (const coin of candidates) {
-    if (isCoinOnCooldown(coin.instId)) continue;
+    const fng          = await getFearAndGreed();
+    const session      = getCurrentSession();
+    const asianSession = isAsianSession();
 
-    let signals = await runStrategies(coin.instId, coin, asianSession);
-    if (!signals.length) continue;
+    for (const coin of candidates) {
+      if (isCoinOnCooldown(coin.instId)) continue;
 
-    // Применяем все фильтры
-    const filtered = [];
-    for (let sig of signals) {
-      sig = applyFearGreed(sig, fng);
-      sig = await applySupportResistance(sig, coin.instId);
-      sig = applySessionFilter(sig, session);
-      sig = await applyCandlePatterns(sig, coin.instId);
-      sig = await applyLiquidationBoost(sig);
-      filtered.push(sig);
+      let signals = await runStrategies(coin.instId, coin, asianSession);
+      if (!signals.length) continue;
+
+      const filtered = [];
+      for (let sig of signals) {
+        sig = applyFearGreed(sig, fng);
+        sig = await applySupportResistance(sig, coin.instId);
+        sig = applySessionFilter(sig, session);
+        sig = await applyCandlePatterns(sig, coin.instId);
+        sig = await applyLiquidationBoost(sig);
+        filtered.push(sig);
+      }
+
+      const best = filtered
+        .filter(s => s.confidence >= 90)
+        .sort((a, b) => b.confidence - a.confidence)[0];
+
+      if (!best) continue;
+
+      const news = await checkNews(coin.symbol);
+      if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
+      if (news.note) best.newsNote = news.note;
+
+      best.ts      = Date.now();
+      best.fng     = fng;
+      best.session = session;
+
+      const aiResult = await validateSignalWithAI(best, fng, session);
+      if (!aiResult.approved) {
+        console.log(`[AI REJECT] ${coin.instId} → ${aiResult.reason}`);
+        continue;
+      }
+      best.confidence = aiResult.confidence;
+      best.aiNote     = `🤖 AI: ${aiResult.reason}`;
+
+      await sendTelegram(buildSignalAlert(best));
+      setCoinCooldown(coin.instId);
+      logSignal(best);
+      saveOpenTrade(best);
     }
-
-    const best = filtered
-      .filter(s => s.confidence >= 90)
-      .sort((a, b) => b.confidence - a.confidence)[0];
-
-    if (!best) continue;
-
-    // Новостной фильтр
-    const news = await checkNews(coin.symbol);
-    if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
-    if (news.note) best.newsNote = news.note;
-
-    best.ts      = Date.now();
-    best.fng     = fng;
-    best.session = session;
-
-    // AI валидация — финальный фильтр
-    const aiResult = await validateSignalWithAI(best, fng, session);
-    if (!aiResult.approved) {
-      console.log(`[AI REJECT] ${coin.instId} → ${aiResult.reason}`);
-      continue;
-    }
-    best.confidence = aiResult.confidence;
-    best.aiNote     = `🤖 AI: ${aiResult.reason}`;
-
-    await sendTelegram(buildSignalAlert(best));
-    setCoinCooldown(coin.instId);
-    logSignal(best);
-    saveOpenTrade(best);
+  } finally {
+    isRunning = false;
   }
 }
 

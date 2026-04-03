@@ -51,6 +51,7 @@ const store = {
   fngCache:     null,
   fngTs:        0,
   adaptedThresholds: null,
+  oiCache: {},      // { 'BTC': { data5m: [], data1h: [], tf5m: null, tf1h: null, ts: 0 } }
 };
 
 // ── Сессии UTC ─────────────────────────────────────────────
@@ -64,7 +65,7 @@ const SESSION_USA    = { from: 13, to: 22 };
 // ============================================================
 async function httpGet(url) {
   try {
-    await new Promise(r => setTimeout(r, 1200)); // пауза 800ms
+    await new Promise(r => setTimeout(r, 1500)); // пауза 1500ms
     const resp = await axios.get(url, { timeout: 30000 });
     return resp.data;
   } catch(e) {
@@ -664,13 +665,27 @@ async function runStrategies(instId, coinData, asianSession) {
     const ccy   = coinData.symbol; // ← это было удалено случайно
 
     // Последовательные запросы — без rate limit
+    // Свечи — всегда свежие
     const k5m  = await getOKXKlines(instId, '5m',  20);
     const k15m = await getOKXKlines(instId, '15m', 10);
     const k1h  = await getOKXKlines(instId, '1H',  60);
-    const oi5m = await getOKXOIHistory(ccy, '5m',  3);
-    const oi1h = await getOKXOIHistory(ccy, '1H',  3);
-    const tf5m = await getOKXTakerFlow(ccy, '5m');
-    const tf1h = await getOKXTakerFlow(ccy, '1H');
+
+    // OI и taker — кэшируем на 5 минут чтобы не словить 429
+    const OI_TTL = 5 * 60 * 1000;
+    if (!store.oiCache[ccy] || Date.now() - store.oiCache[ccy].ts > OI_TTL) {
+      console.log(`[OI CACHE] Обновляем ${ccy}...`);
+      store.oiCache[ccy] = {
+        oi5m: await getOKXOIHistory(ccy, '5m', 3),
+        oi1h: await getOKXOIHistory(ccy, '1H', 3),
+        tf5m: await getOKXTakerFlow(ccy, '5m'),
+        tf1h: await getOKXTakerFlow(ccy, '1H'),
+        ts:   Date.now(),
+      };
+    }
+    const oi5m = store.oiCache[ccy].oi5m;
+    const oi1h = store.oiCache[ccy].oi1h;
+    const tf5m = store.oiCache[ccy].tf5m;
+    const tf1h = store.oiCache[ccy].tf1h;
     const oi15m = oi5m;
     const tf15m = tf5m;
 

@@ -48,7 +48,6 @@ const store = {
   signalLog:    [],  // лог сигналов
   fngCache:     null,
   fngTs:        0,
-  adaptedThresholds: null,
   oiCache: {},      // { 'BTC': { data5m: [], data1h: [], tf5m: null, tf1h: null, ts: 0 } }
 };
 
@@ -339,7 +338,7 @@ async function applySupportResistance(sig, instId) {
 }
 
 async function calcSmartSLTP(price, direction, sr) {
-  const base = calcSLTP(price, direction);
+  const base = calcSLTP(price, direction, null);
   try {
     if (direction === 'long') {
       const supports = sr.supports.filter(s => s < price * 0.999);
@@ -728,7 +727,6 @@ async function runStrategies(instId, coinData, asianSession) {
 
     // Последовательные запросы — без rate limit
     // Свечи — всегда свежие
-    const k5m  = await getOKXKlines(instId, '5m',  20);
     const k15m = await getOKXKlines(instId, '15m', 10);
     const k1h  = await getOKXKlines(instId, '1H',  60);
 
@@ -748,8 +746,6 @@ async function runStrategies(instId, coinData, asianSession) {
     const oi1h = store.oiCache[ccy].oi1h;
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
-    const oi15m = oi5m;
-    const tf15m = tf5m;
 
     // S1: Пробой 15m 
     /* if (!asianSession && k15m.length >= 2 && oi15m.length >= 2) {

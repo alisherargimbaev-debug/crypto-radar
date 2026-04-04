@@ -1411,6 +1411,55 @@ async function checkSignals() {
     isRunning = false;
   }
 }
+// ============================================================
+//  ТАЙМЕР НА СДЕЛКУ — напоминание если сделка висит долго
+// ============================================================
+async function checkTradeTimers() {
+  if (!store.openTrades.length) return;
+
+  for (const trade of store.openTrades) {
+    const ageMin  = Math.round((Date.now() - trade.ts) / 60000);
+    const ageHour = Math.floor(ageMin / 60);
+
+    // Напоминаем через 2 часа и через 4 часа
+    const reminded2h = trade.reminded2h || false;
+    const reminded4h = trade.reminded4h || false;
+
+    if (ageMin >= 120 && !reminded2h) {
+      trade.reminded2h = true;
+      const dir = trade.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+      await sendTelegram(
+        `⏰ НАПОМИНАНИЕ — сделка висит 2 часа\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `${dir} ${trade.symbol}/USDT\n` +
+        `💰 Вход: $${trade.price}\n` +
+        `🛡 SL: $${trade.sl}\n` +
+        `🎯 TP1: $${trade.tp1} | TP2: $${trade.tp2}\n` +
+        `⏱ Открыта: ${ageHour}ч ${ageMin % 60}мин\n\n` +
+        `📌 ${trade.strategy}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `Проверь позицию — возможно стоит закрыть вручную.`
+      );
+    }
+
+    if (ageMin >= 240 && !reminded4h) {
+      trade.reminded4h = true;
+      const dir = trade.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+      await sendTelegram(
+        `⚠️ СДЕЛКА ВИСИТ 4 ЧАСА — скоро истечёт\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `${dir} ${trade.symbol}/USDT\n` +
+        `💰 Вход: $${trade.price}\n` +
+        `🛡 SL: $${trade.sl}\n` +
+        `🎯 TP1: $${trade.tp1} | TP2: $${trade.tp2}\n` +
+        `⏱ Открыта: ${ageHour}ч ${ageMin % 60}мин\n\n` +
+        `📌 ${trade.strategy}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🔴 Сделка будет автоматически закрыта как expired.`
+      );
+    }
+  }
+}
 
 // Каждые 15 минут — проверка исходов
 async function checkOutcomes() {
@@ -1579,7 +1628,10 @@ console.log(`📊 Сессия: ${getCurrentSession()}`);
 cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
 
 // Каждые 15 минут
-cron.schedule('*/15 * * * *', () => { checkOutcomes().catch(e => console.error('checkOutcomes error:', e.message)); });
+cron.schedule('*/15 * * * *', () => {
+  checkOutcomes().catch(e => console.error('checkOutcomes error:', e.message));
+  checkTradeTimers().catch(e => console.error('checkTradeTimers error:', e.message));
+});
 
 // Каждый час (в 00 минут)
 cron.schedule('0 */2 * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });

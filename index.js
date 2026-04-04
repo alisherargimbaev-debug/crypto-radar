@@ -883,7 +883,27 @@ function calcBollinger(klines, period = 20, mult = 2) {
   return { upper: parseFloat(upper.toFixed(4)), mid: parseFloat(mid.toFixed(4)),
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
-function calcSLTP(price, direction, strategy) {
+function calcSLTP(price, direction, strategy, atr = null) {
+  // Если есть ATR — используем его для динамического SL
+  if (atr && atr > 0) {
+    const slDist  = atr * 1.5;  // SL = 1.5x ATR
+    const tp1Dist = atr * 3.0;  // TP1 = 3x ATR (RR 1:2)
+    const tp2Dist = atr * 4.5;  // TP2 = 4.5x ATR (RR 1:3)
+
+    return direction === 'long'
+      ? {
+          sl:  (price - slDist).toFixed(4),
+          tp1: (price + tp1Dist).toFixed(4),
+          tp2: (price + tp2Dist).toFixed(4),
+        }
+      : {
+          sl:  (price + slDist).toFixed(4),
+          tp1: (price - tp1Dist).toFixed(4),
+          tp2: (price - tp2Dist).toFixed(4),
+        };
+  }
+
+  // Fallback — фиксированные проценты из STRATEGY_SL
   const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 3.0, tp2: 4.5 };
   const { sl, tp1, tp2 } = params;
   return direction === 'long'
@@ -897,6 +917,17 @@ function calcSLTP(price, direction, strategy) {
         tp1: (price * (1 - tp1 / 100)).toFixed(4),
         tp2: (price * (1 - tp2 / 100)).toFixed(4),
       };
+}
+function calcATR(klines, period = 14) {
+  if (klines.length < period + 1) return 0;
+  const trs = [];
+  for (let i = 1; i < klines.length; i++) {
+    const high  = klines[i].high;
+    const low   = klines[i].low;
+    const prev  = klines[i-1].close;
+    trs.push(Math.max(high - low, Math.abs(high - prev), Math.abs(low - prev)));
+  }
+  return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
 }
 
 
@@ -913,6 +944,9 @@ async function runStrategies(instId, coinData, asianSession) {
     // Свечи — всегда свежие
     const k15m = await getOKXKlines(instId, '15m', 10);
     const k1h  = await getOKXKlines(instId, '1H',  60);
+    // ATR для динамического SL
+    const atr1h  = calcATR(k1h,  14);
+    const atr15m = calcATR(k15m, 14);
 
     // OI и taker — кэшируем на 5 минут чтобы не словить 429
     const OI_TTL = 5 * 60 * 1000;
@@ -1038,7 +1072,7 @@ async function runStrategies(instId, coinData, asianSession) {
           price,
           confidence: Math.min(conf, 100),
           metrics: `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'}`,
-          ...calcSLTP(price, dir, '4️⃣ MA20/MA50+RSI (1h)'),
+          ...calcSLTP(price, dir, '4️⃣ MA20/MA50+RSI (1h)', atr1h),
         });
       }
     }
@@ -1061,7 +1095,7 @@ async function runStrategies(instId, coinData, asianSession) {
           strategy: '5️⃣ RSI Дивергенция (1h)', instId, direction: 'long',
           signal: '🟢 LONG', price, confidence: 78,
           metrics: `RSI сейчас:${rsiNow} RSI ранее:${rsiPrev.toFixed(1)} Цена новый лоу: да`,
-          ...calcSLTP(price, 'long', '5️⃣ RSI Дивергенция (1h)')
+          ...calcSLTP(price, 'long',  '5️⃣ RSI Дивергенция (1h)', atr1h)
         });
       }
       if (priceNewHigh && rsiLower && rsiNow > 55) {
@@ -1070,30 +1104,57 @@ async function runStrategies(instId, coinData, asianSession) {
           strategy: '5️⃣ RSI Дивергенция (1h)', instId, direction: 'short',
           signal: '🔴 SHORT', price, confidence: 78,
           metrics: `RSI сейчас:${rsiNow} RSI ранее:${rsiPrev.toFixed(1)} Цена новый хай: да`,
-          ...calcSLTP(price, 'short', '5️⃣ RSI Дивергенция (1h)')
+          ...calcSLTP(price, 'short', '5️⃣ RSI Дивергенция (1h)', atr1h)
         });
       }
     }
 
-    // S6: Funding Rate Extreme — шортисты/лонгисты переплачивают = разворот
-    if (oi1h.length >= 2) {
+   // S6: Funding Rate Extreme
+    if (k1h.length >= 14) {
       const funding = coinData.fundingRate || 0;
-      const rsi1h  = calcRSI(k1h, 14);
-      // Экстремально отрицательный funding = шортисты переплачивают = скоро закроются = рост
-      if (funding < -0.03 && rsi1h < 45) {
+      const rsi1h   = calcRSI(k1h, 14);
+      const macd1h  = calcMACD(k1h);
+
+      // Уровни funding:
+      // Умеренный: ±0.01%  → осторожный сигнал
+      // Сильный:   ±0.02%  → хороший сигнал
+      // Экстремальный: ±0.05% → очень сильный
+
+      const fundingAbs = Math.abs(funding);
+      let fundingConf  = 0;
+      let fundingLabel = '';
+
+      if (fundingAbs >= 0.05)      { fundingConf = 85; fundingLabel = 'ЭКСТРЕМАЛЬНЫЙ'; }
+      else if (fundingAbs >= 0.02) { fundingConf = 78; fundingLabel = 'СИЛЬНЫЙ'; }
+      else if (fundingAbs >= 0.01) { fundingConf = 70; fundingLabel = 'УМЕРЕННЫЙ'; }
+
+      if (fundingConf === 0) {
+        // funding нейтральный — пропускаем
+      } else if (funding < 0 && rsi1h < 50) {
+        // Отрицательный funding → шортисты переплачивают → разворот вверх
+        let conf = fundingConf;
+        if (macd1h.hist > 0) conf = Math.min(conf + 8, 100); // MACD подтверждает
+        if (rsi1h < 35)      conf = Math.min(conf + 5, 100); // перепродан
+
         signals.push({
-          strategy: '6️⃣ Funding Extreme (1h)', instId, direction: 'long',
-          signal: '🟢 LONG', price, confidence: 80,
-          metrics: `Funding:${funding.toFixed(4)}% RSI:${rsi1h} Шортисты переплачивают`,
-          ...calcSLTP(price, 'long', '6️⃣ Funding Extreme (1h)')
+          strategy:  '6️⃣ Funding Extreme (1h)',
+          instId, direction: 'long',
+          signal:    '🟢 LONG', price, confidence: conf,
+          metrics:   `Funding:${(funding*100).toFixed(4)}% [${fundingLabel}] RSI:${rsi1h} MACD:${macd1h.hist > 0 ? '▲' : '▼'}`,
+          ...calcSLTP(price, 'long',  '6️⃣ Funding Extreme (1h)', atr1h)
         });
-      }
-      if (funding > 0.03 && rsi1h > 55) {
+      } else if (funding > 0 && rsi1h > 50) {
+        // Положительный funding → лонгисты переплачивают → разворот вниз
+        let conf = fundingConf;
+        if (macd1h.hist < 0) conf = Math.min(conf + 8, 100); // MACD подтверждает
+        if (rsi1h > 65)      conf = Math.min(conf + 5, 100); // перекуплен
+
         signals.push({
-          strategy: '6️⃣ Funding Extreme (1h)', instId, direction: 'short',
-          signal: '🔴 SHORT', price, confidence: 80,
-          metrics: `Funding:${funding.toFixed(4)}% RSI:${rsi1h} Лонгисты переплачивают`,
-          ...calcSLTP(price, 'short', '6️⃣ Funding Extreme (1h)')
+          strategy:  '6️⃣ Funding Extreme (1h)',
+          instId, direction: 'short',
+          signal:    '🔴 SHORT', price, confidence: conf,
+          metrics:   `Funding:${(funding*100).toFixed(4)}% [${fundingLabel}] RSI:${rsi1h} MACD:${macd1h.hist < 0 ? '▼' : '▲'}`,
+          ...calcSLTP(price, 'short', '6️⃣ Funding Extreme (1h)', atr1h)
         });
       }
     }
@@ -1113,7 +1174,7 @@ async function runStrategies(instId, coinData, asianSession) {
             strategy: '7️⃣ Поглощение на объёме (15m)', instId, direction: dir,
             signal: dir === 'long' ? '🟢 LONG' : '🔴 SHORT', price, confidence: 72,
             metrics: `${engulfing.desc} | Vol:$${(lastVol/1e6).toFixed(2)}M (${(lastVol/avgVol).toFixed(1)}x среднего)`,
-            ...calcSLTP(price, dir, '7️⃣ Поглощение на объёме (15m)')
+            ...calcSLTP(price, dir, '7️⃣ Поглощение на объёме (15m)', atr15m)
           });
         }
       }

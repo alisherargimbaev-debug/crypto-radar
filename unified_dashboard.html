@@ -215,6 +215,75 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .news-tag.t-regulation{border-color:rgba(255,51,102,0.3);color:var(--red);}
 .news-tag.t-macro{border-color:rgba(68,136,255,0.3);color:var(--blue);}
 
+/* ═══════════════ МОБИЛЬНАЯ ВЕРСИЯ ═══════════════ */
+@media(max-width:768px){
+  .wrap{padding:10px 12px;}
+  h1{font-size:1.3rem;letter-spacing:2px;}
+  .hdr-right{gap:6px;}
+  .hdr-time{display:none;}
+
+  .nav-btn{padding:8px 12px;font-size:0.6rem;}
+
+  /* Радар */
+  .tbl-head{display:none;}
+  .coin-row{
+    grid-template-columns:1fr 1fr;
+    grid-template-rows:auto auto auto;
+    gap:6px;
+    padding:12px;
+    border-left:3px solid var(--border);
+  }
+  .coin-row.anomaly-high{border-left-color:var(--accent);}
+  .coin-row.anomaly-low{border-left-color:var(--red);}
+  .rank{display:none;}
+  .coin-name{grid-column:1;grid-row:1;}
+  .price{grid-column:2;grid-row:1;font-size:0.8rem;}
+  .change{grid-column:1;grid-row:2;justify-content:flex-start;font-size:0.75rem;}
+  .volume{grid-column:2;grid-row:2;font-size:0.65rem;}
+  .funding{grid-column:1;grid-row:3;justify-content:flex-start;font-size:0.65rem;}
+  .grade-wrap{grid-column:2;grid-row:3;display:flex;justify-content:flex-end;}
+  .next-f{display:none;}
+  .anomaly-badges{grid-column:1/-1;grid-row:4;}
+
+  .controls{gap:6px;}
+  .search-box{width:100%;}
+  .thr-ctrl{margin-left:0;width:100%;}
+
+  /* Статистика */
+  .stats-row{grid-template-columns:repeat(2,1fr)!important;}
+  .main-grid{grid-template-columns:1fr;}
+  .stbl-head{display:none;}
+  .sig-row{
+    grid-template-columns:1fr 1fr;
+    grid-template-rows:auto auto auto;
+    gap:4px;
+    padding:10px 12px;
+  }
+  .sig-row > div:nth-child(1){display:none;}
+  .sym{grid-column:1;grid-row:1;font-size:0.8rem;}
+  .sig-row > div:nth-child(3){grid-column:2;grid-row:1;justify-content:flex-end;}
+  .strat-tag{grid-column:1/-1;grid-row:2;font-size:0.6rem;}
+  .price-c:nth-of-type(1){grid-column:1;grid-row:3;}
+  .price-c:nth-of-type(2){grid-column:2;grid-row:3;justify-content:flex-end;}
+  .sig-row > div:nth-child(7){grid-column:1;grid-row:4;}
+  .sig-row > div:nth-child(8){grid-column:2;grid-row:4;justify-content:flex-end;}
+  .sig-row > div:nth-child(9){grid-column:1/-1;grid-row:5;}
+  .time-c{grid-column:1/-1;grid-row:6;}
+
+  .open-trade{padding:8px 0;}
+  .ot-levels{grid-template-columns:1fr 1fr;gap:4px;}
+
+  /* Новости */
+  .news-grid{grid-template-columns:1fr;}
+  .news-title{font-size:0.72rem;}
+
+  /* Кнопки фильтров */
+  #page-news > div{flex-direction:column;align-items:flex-start;}
+  #page-news > div > div{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
+
+  .period-btns{flex-wrap:wrap;}
+  .period-btn{min-width:60px;}
+}
 /* TOAST */
 .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--accent);color:#000;padding:9px 22px;font-family:'Space Mono',monospace;font-size:0.7rem;font-weight:700;letter-spacing:2px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999;}
 .toast.show{opacity:1;}

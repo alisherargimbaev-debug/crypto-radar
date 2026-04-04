@@ -90,7 +90,141 @@ async function sendTelegram(text) {
   await httpPost(url, { chat_id: CHAT_ID, text });
   console.log(`[TG] Отправлено: ${text.substring(0, 60)}...`);
 }
+// ============================================================
+//  TELEGRAM КОМАНДЫ
+// ============================================================
+async function handleTelegramCommand(text, chatId) {
+  const cmd = text.trim().toLowerCase();
 
+  if (cmd === '/status' || cmd === '/start') {
+    const open = store.openTrades;
+    if (!open.length) {
+      await sendTelegramTo(chatId, '📊 СТАТУС\n━━━━━━━━━━━━━━━━━━━━━━\nОткрытых сделок нет.');
+      return;
+    }
+    const lines = open.map(t => {
+      const dir   = t.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+      const age   = Math.round((Date.now() - t.ts) / 60000);
+      return `${dir} ${t.symbol}/USDT\n  💰 Вход: $${t.price}\n  🛡 SL: $${t.sl} | 🎯 TP1: $${t.tp1}\n  ⏱ ${age} мин назад`;
+    }).join('\n\n');
+    await sendTelegramTo(chatId,
+      `📊 ОТКРЫТЫЕ СДЕЛКИ (${open.length})\n━━━━━━━━━━━━━━━━━━━━━━\n${lines}`
+    );
+  }
+
+  else if (cmd === '/trades') {
+    const recent = store.tradeHistory.slice(-10).reverse();
+    if (!recent.length) {
+      await sendTelegramTo(chatId, '📈 ИСТОРИЯ\n━━━━━━━━━━━━━━━━━━━━━━\nИстории сделок нет.');
+      return;
+    }
+    const lines = recent.map(t => {
+      const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+      const pnl  = t.pnl >= 0 ? `+${t.pnl}%` : `${t.pnl}%`;
+      return `${icon} ${t.symbol}/USDT — ${pnl}`;
+    }).join('\n');
+    await sendTelegramTo(chatId,
+      `📈 ПОСЛЕДНИЕ 10 СДЕЛОК\n━━━━━━━━━━━━━━━━━━━━━━\n${lines}`
+    );
+  }
+
+  else if (cmd === '/stats') {
+    const since  = Date.now() - 24*60*60*1000;
+    const today  = store.tradeHistory.filter(t => t.closedAt >= since);
+    const wins   = today.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses = today.filter(t => t.outcome === 'sl');
+    const wr     = today.length ? Math.round(wins.length / today.length * 100) : 0;
+    const pnl    = today.reduce((a, t) => a + (t.pnl || 0), 0);
+    const sigs   = store.signalLog.filter(s => s.ts >= since).length;
+    const allW   = store.tradeHistory.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const allWR  = store.tradeHistory.length ? Math.round(allW.length / store.tradeHistory.length * 100) : 0;
+    const fng    = store.fngCache || { value: '?', label: '?' };
+
+    await sendTelegramTo(chatId,
+      `📊 СТАТИСТИКА\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `😐 F&G: ${fng.value} (${fng.label})\n\n` +
+      `📅 За сегодня:\n` +
+      `  Сигналов: ${sigs}\n` +
+      `  Сделок: ${today.length} | ✅ ${wins.length} ❌ ${losses.length}\n` +
+      `  Win Rate: ${wr}%\n` +
+      `  PnL: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}%\n\n` +
+      `📈 За всё время:\n` +
+      `  Сделок: ${store.tradeHistory.length}\n` +
+      `  Win Rate: ${allWR}%\n` +
+      `  Открытых: ${store.openTrades.length}`
+    );
+  }
+
+  else if (cmd === '/help') {
+    await sendTelegramTo(chatId,
+      `🤖 КРИПТО РАДАР\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `/status — открытые сделки\n` +
+      `/trades — последние 10 сделок\n` +
+      `/stats  — статистика за день\n` +
+      `/guide  — инструкция по сигналам\n` +
+      `/help   — это сообщение`
+    );
+  }
+
+  else if (cmd === '/guide') {
+    await sendTelegramTo(chatId,
+      `📖 ИНСТРУКЦИЯ\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `📌 СТРАТЕГИИ:\n` +
+      `🟢 A — высокий win rate (~65-68%)\n` +
+      `🟡 B — средний win rate (~55-58%)\n\n` +
+      `💰 КАК ИСПОЛЬЗОВАТЬ СИГНАЛ:\n` +
+      `1. Открой позицию по цене входа\n` +
+      `2. Выставь стоп-лосс (SL) — защита\n` +
+      `3. Тейк-1 (TP1) — частичная прибыль\n` +
+      `4. Тейк-2 (TP2) — полная прибыль\n\n` +
+      `📊 ЧТО ЗНАЧАТ МЕТРИКИ:\n` +
+      `• OI — открытый интерес (новые деньги)\n` +
+      `• VΔ — разница покупок и продаж\n` +
+      `• RSI — перекупленность (>70) / перепроданность (<30)\n` +
+      `• F&G — настроение рынка (0=паника, 100=эйфория)\n` +
+      `• MACD — направление импульса\n\n` +
+      `🐋 WHALE TRACKING:\n` +
+      `• Киты покупают → подтверждает LONG\n` +
+      `• Киты продают → подтверждает SHORT\n` +
+      `• Против сигнала → осторожно!\n\n` +
+      `📈 4H ТРЕНД:\n` +
+      `• Торгуй по тренду — лучший win rate\n` +
+      `• Против тренда — избегай или уменьши размер\n\n` +
+      `⚠️ Не является финансовым советом.\n` +
+      `Управляй рисками — не более 1-2% депозита на сделку.`
+    );
+  }
+}
+
+async function sendTelegramTo(chatId, text) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+  await httpPost(url, { chat_id: chatId, text });
+}
+
+async function pollTelegramUpdates() {
+  let offset = 0;
+  const poll = async () => {
+    try {
+      const data = await httpPost(
+        `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
+        { offset, limit: 10, timeout: 5 },
+        { 'Content-Type': 'application/json' }
+      );
+      if (data?.result?.length) {
+        for (const update of data.result) {
+          offset = update.update_id + 1;
+          const msg = update.message;
+          if (msg?.text?.startsWith('/')) {
+            console.log(`[TG CMD] ${msg.text} от ${msg.chat.id}`);
+            await handleTelegramCommand(msg.text, msg.chat.id);
+          }
+        }
+      }
+    } catch(e) { console.error('[TG POLL] error:', e.message); }
+    setTimeout(poll, 3000);
+  };
+  poll();
+}
 
 // ============================================================
 //  GROQ AI
@@ -1393,6 +1527,8 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 setTimeout(() => {
   checkSignals().catch(e => console.error('Initial checkSignals error:', e.message));
 }, 10000);
+// Запускаем опрос команд Telegram
+pollTelegramUpdates();
 
 process.on('uncaughtException', e => {
   console.error('[CRASH PREVENTED]', e.message);

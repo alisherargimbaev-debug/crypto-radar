@@ -375,7 +375,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   btn.classList.add('active');
-  if (id === 'stats' && !allTrades.length) loadStats();
+  if (id === 'stats') loadStats();
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -537,8 +537,15 @@ async function loadRadar() {
 // ══════════════════════════════════════════════════════════════
 //  STATS PAGE
 // ══════════════════════════════════════════════════════════════
-async function sbFetch(table,params='') {
-  const r=await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`,{headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
+async function sbFetch(table, params='') {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+    headers: {
+      'apikey':        SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type':  'application/json',
+    }
+  });
+  if (!r.ok) throw new Error(`Supabase ${table}: ${r.status} ${r.statusText}`);
   return r.json();
 }
 function fmtTs(ts){ if(!ts)return'—'; const d=new Date(+ts+5*60*60*1000); return d.toISOString().replace('T',' ').substr(0,16); }
@@ -546,7 +553,10 @@ function fmtP(p){ return p?'$'+parseFloat(p).toFixed(4):'—'; }
 function fmtPnl(p){ if(p==null)return'<span style="color:var(--dim)">—</span>'; const v=parseFloat(p); return`<span class="${v>=0?'pnl-pos':'pnl-neg'}">${v>=0?'+':''}${v.toFixed(1)}%</span>`; }
 function confCol(c){ return c>=90?'var(--accent)':c>=75?'var(--yellow)':'var(--blue)'; }
 function outHTML(o){ const m={tp1:['out-tp','✅ TP1'],tp2:['out-tp','🏆 TP2'],sl:['out-sl','❌ SL'],expired:['out-exp','⏰ ИСТ']}; const[cl,lb]=m[o]||['out-open','⏳ ОТКР']; return`<span class="out-badge ${cl}">${lb}</span>`; }
-function shortStrat(s){ if(!s)return'—'; return s.replace(/\d️⃣\s*/,'').replace(/\(.*?\)/g,'').trim(); }
+function shortStrat(s){
+  if(!s) return '—';
+  return s.replace(/^.{1,3}️⃣\s*/u, '').replace(/\(.*?\)/g, '').trim();
+}
 function periodMs(){ return{day:86400000,week:7*86400000,month:30*86400000,all:Infinity}[statPeriod]||86400000; }
 function filterByPeriod(items,tsField){ const ms=periodMs(); if(ms===Infinity)return items; const since=Date.now()-ms; return items.filter(i=>(+i[tsField]||0)>=since); }
 function filterByDir(items){
@@ -679,7 +689,10 @@ async function loadStats(){
     allSignals=Array.isArray(signals)?signals:[];
     openTrades=Array.isArray(open)?open:[];
     renderStatsBar(); renderTrades(); renderSignals(); renderOpenTrades();
-  }catch(e){document.getElementById('tradesBody').innerHTML='<div class="no-data">Ошибка загрузки</div>';}
+  }catch(e){
+    console.error('loadStats error:', e);
+    document.getElementById('tradesBody').innerHTML=`<div class="no-data">Ошибка: ${e.message}</div>`;
+  }
 }
 function setPeriod(p,btn){statPeriod=p;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function setStatFilter(f,btn){statFilter=f;document.querySelectorAll('#page-stats .tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}

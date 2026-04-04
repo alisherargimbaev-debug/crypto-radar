@@ -962,7 +962,7 @@ async function runStrategies(instId, coinData, asianSession) {
     } */
 
     // S2: Bounce 1h
-    if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
+    /*if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
       const oi   = calcOiChangePct(oi1h);
       const vd   = tf1h ? tf1h.delta : calcVolumeDelta(k1h);
@@ -983,6 +983,7 @@ async function runStrategies(instId, coinData, asianSession) {
           ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)') });
       }
     }
+    */
 
     // S3: Ранний вход 5m
     /* if (k5m.length >= 7 && oi5m.length >= 2) {
@@ -1018,8 +1019,8 @@ async function runStrategies(instId, coinData, asianSession) {
       const rsi   = calcRSI(k1h, 14);
       const ma20  = calcSMA(k1h, 20);
       const ma50  = calcSMA(k1h, 50);
-      const iL    = cross === 'bullish' && rsi < 70;
-      const iS    = cross === 'bearish' && rsi > 30;
+      const iL    = cross === 'bullish' && rsi < 55; // RSI не перегрет
+      const iS    = cross === 'bearish' && rsi > 45; // RSI не перепродан
 
       if (iL || iS) {
         const dir = iL ? 'long' : 'short';

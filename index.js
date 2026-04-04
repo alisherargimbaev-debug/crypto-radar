@@ -1329,7 +1329,7 @@ cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('ch
 cron.schedule('*/15 * * * *', () => { checkOutcomes().catch(e => console.error('checkOutcomes error:', e.message)); });
 
 // Каждый час (в 00 минут)
-cron.schedule('0 * * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });
+cron.schedule('0 */2 * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });
 
 // Каждые 2 часа — whale активность
 cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('checkWhales error:', e.message)); });

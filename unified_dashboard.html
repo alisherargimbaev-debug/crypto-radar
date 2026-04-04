@@ -832,13 +832,10 @@ async function loadNews() {
     const url = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cat}&excludeCategories=Sponsored&lang=EN&api_key=${CC_KEY}&limit=30`;
     const r   = await fetch(url);
     const d   = await r.json();
-    if (d.Response !== 'Success' && d.Response !== 'Ok') throw new Error(d.Message || 'API error');
-    allNews = d.Data || [];
-    if (!allNews.length) throw new Error('Нет данных');
-    allNews = d.Data || [];
+    allNews   = d.Data || [];
     renderNews();
   } catch(e) {
-    document.getElementById('newsBody').innerHTML = `<div class="no-data">Ошибка: ${e.message}</div>`;
+    document.getElementById('newsBody').innerHTML = `<div class="no-data">Ошибка загрузки</div>`;
   }
 }
 

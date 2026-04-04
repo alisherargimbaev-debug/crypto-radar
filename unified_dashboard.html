@@ -191,18 +191,29 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .daily-item-label{font-size:0.52rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;}
 .daily-item-val{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:1px;}
 
-.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
-.news-card{background:var(--panel);border:1px solid var(--border);padding:14px;transition:border-color .15s;cursor:pointer;}
-.news-card:hover{border-color:var(--accent);}
-.news-source{font-size:0.52rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}
-.news-title{font-size:0.72rem;color:var(--text);line-height:1.5;margin-bottom:8px;font-weight:500;}
-.news-body{font-size:0.62rem;color:var(--dim);line-height:1.5;margin-bottom:10px;}
-.news-footer{display:flex;align-items:center;justify-content:space-between;}
-.news-time{font-size:0.55rem;color:var(--dim);}
-.news-tags{display:flex;gap:4px;flex-wrap:wrap;}
-.news-tag{font-size:0.5rem;padding:1px 6px;border:1px solid var(--border);color:var(--dim);}
-.news-tag.pos{border-color:var(--accent);color:var(--accent);}
-.news-tag.neg{border-color:var(--red);color:var(--red);}
+.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;}
+.news-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--dim);padding:14px 16px;cursor:pointer;transition:all .2s;position:relative;}
+.news-card:hover{border-color:var(--accent);border-left-color:var(--accent);background:#0a1020;}
+.news-card.cat-btc{border-left-color:#f7931a;}
+.news-card.cat-eth{border-left-color:#627eea;}
+.news-card.cat-sol{border-left-color:#9945ff;}
+.news-card.cat-xrp{border-left-color:#00aae4;}
+.news-card.cat-macro{border-left-color:#4488ff;}
+.news-card.cat-regulation{border-left-color:#ff3366;}
+.news-source{font-size:0.5rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;}
+.news-time-badge{background:rgba(255,255,255,0.05);padding:1px 7px;font-size:0.5rem;color:var(--dim);border:1px solid var(--border);}
+.news-time-badge.fresh{color:var(--accent);border-color:rgba(0,255,136,0.3);}
+.news-title{font-size:0.78rem;color:#fff;line-height:1.55;margin-bottom:8px;font-weight:500;}
+.news-body{font-size:0.6rem;color:var(--dim);line-height:1.6;margin-bottom:10px;}
+.news-footer{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+.news-tag{font-size:0.48rem;padding:2px 7px;letter-spacing:1px;border:1px solid var(--border);color:var(--dim);text-transform:uppercase;}
+.news-tag.t-btc{border-color:rgba(247,147,26,0.4);color:#f7931a;}
+.news-tag.t-eth{border-color:rgba(98,126,234,0.4);color:#627eea;}
+.news-tag.t-sol{border-color:rgba(153,69,255,0.4);color:#9945ff;}
+.news-tag.t-xrp{border-color:rgba(0,170,228,0.4);color:#00aae4;}
+.news-tag.t-business,.news-tag.t-market{border-color:rgba(68,136,255,0.3);color:var(--blue);}
+.news-tag.t-regulation{border-color:rgba(255,51,102,0.3);color:var(--red);}
+.news-tag.t-macro{border-color:rgba(68,136,255,0.3);color:var(--blue);}
 
 /* TOAST */
 .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--accent);color:#000;padding:9px 22px;font-family:'Space Mono',monospace;font-size:0.7rem;font-weight:700;letter-spacing:2px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999;}
@@ -845,18 +856,39 @@ function renderNews() {
 
   body.innerHTML = `<div class="news-grid">${allNews.map(n => {
     const diff    = Math.round((Date.now() - n.published_on * 1000) / 60000);
-    const timeStr = diff < 60 ? `${diff} мин назад` : diff < 1440 ? `${Math.round(diff/60)} ч назад` : `${Math.round(diff/1440)} д назад`;
-    const tags    = (n.categories || '').split('|').filter(Boolean).slice(0, 3);
-    const safeUrl = encodeURI(n.url);
+    const timeStr = diff < 60
+      ? `${diff} мин назад`
+      : diff < 1440
+      ? `${Math.round(diff/60)} ч назад`
+      : `${Math.round(diff/1440)} д назад`;
+    const isFresh = diff < 60;
 
-    return `<div class="news-card" onclick="window.open('${safeUrl}','_blank')">
-      <div class="news-source">${n.source_info?.name || n.source || '—'}</div>
-      <div class="news-title">${n.title}</div>
-      <div class="news-body">${(n.body || '').substr(0, 120)}...</div>
-      <div class="news-footer">
-        <div class="news-time">${timeStr}</div>
-        <div class="news-tags">${tags.map(t => `<span class="news-tag">${t.trim()}</span>`).join('')}</div>
+    const cats = (n.categories || '').toUpperCase();
+    let cardCat = 'cat-macro';
+    if (cats.includes('BTC')) cardCat = 'cat-btc';
+    else if (cats.includes('ETH')) cardCat = 'cat-eth';
+    else if (cats.includes('SOL')) cardCat = 'cat-sol';
+    else if (cats.includes('XRP')) cardCat = 'cat-xrp';
+    else if (cats.includes('REGULATION')) cardCat = 'cat-regulation';
+
+    const tags = (n.categories || '').split('|').filter(Boolean).slice(0, 4);
+    const tagHtml = tags.map(t => {
+      const tc = t.trim().toLowerCase();
+      const cls = ['btc','eth','sol','xrp','business','market','regulation','macro'].includes(tc) ? `t-${tc}` : '';
+      return `<span class="news-tag ${cls}">${t.trim()}</span>`;
+    }).join('');
+
+    const safeUrl = encodeURI(n.url);
+    const source  = n.source_info?.name || n.source || '—';
+
+    return `<div class="news-card ${cardCat}" onclick="window.open('${safeUrl}','_blank')">
+      <div class="news-source">
+        <span>${source}</span>
+        <span class="news-time-badge ${isFresh ? 'fresh' : ''}">${timeStr}</span>
       </div>
+      <div class="news-title">${n.title}</div>
+      <div class="news-body">${(n.body || '').substr(0, 130)}...</div>
+      <div class="news-footer">${tagHtml}</div>
     </div>`;
   }).join('')}</div>`;
 }

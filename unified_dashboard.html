@@ -191,6 +191,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .daily-item-label{font-size:0.52rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;}
 .daily-item-val{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:1px;}
 
+.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
+.news-card{background:var(--panel);border:1px solid var(--border);padding:14px;transition:border-color .15s;cursor:pointer;}
+.news-card:hover{border-color:var(--accent);}
+.news-source{font-size:0.52rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}
+.news-title{font-size:0.72rem;color:var(--text);line-height:1.5;margin-bottom:8px;font-weight:500;}
+.news-body{font-size:0.62rem;color:var(--dim);line-height:1.5;margin-bottom:10px;}
+.news-footer{display:flex;align-items:center;justify-content:space-between;}
+.news-time{font-size:0.55rem;color:var(--dim);}
+.news-tags{display:flex;gap:4px;flex-wrap:wrap;}
+.news-tag{font-size:0.5rem;padding:1px 6px;border:1px solid var(--border);color:var(--dim);}
+.news-tag.pos{border-color:var(--accent);color:var(--accent);}
+.news-tag.neg{border-color:var(--red);color:var(--red);}
+
 /* TOAST */
 .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--accent);color:#000;padding:9px 22px;font-family:'Space Mono',monospace;font-size:0.7rem;font-weight:700;letter-spacing:2px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999;}
 .toast.show{opacity:1;}
@@ -225,6 +238,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <div class="nav">
   <button class="nav-btn active" onclick="showPage('radar',this)">📡 РАДАР</button>
   <button class="nav-btn" onclick="showPage('stats',this)">📊 СТАТИСТИКА</button>
+  <button class="nav-btn" onclick="showPage('news',this)">📰 НОВОСТИ</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -360,6 +374,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   </div>
 </div>
 
+<!-- ═══════════════════ PAGE 3: NEWS ═══════════════════ -->
+<div id="page-news" class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+    <div class="sec-title">Крипто и макро новости</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+      <button class="filter-btn news-filter-btn active" onclick="setNewsFilter('all',this)">ВСЕ</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('BTC',this)">BTC</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('ETH',this)">ETH</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('SOL',this)">SOL</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('XRP',this)">XRP</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('macro',this)">🌍 МАКРО</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('regulation',this)">⚖️ РЕГУЛЯЦИЯ</button>
+      <button class="refresh-btn" onclick="loadNews()">↻ ОБНОВИТЬ</button>
+    </div>
+  </div>
+  <div id="newsBody">
+    <div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>
+  </div>
+</div>
+
 </div>
 <div class="toast" id="toast">СКОПИРОВАНО ✓</div>
 
@@ -380,7 +414,8 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   btn.classList.add('active');
-  if (id === 'stats') loadStats();
+   if (id === 'stats') loadStats();
+  if (id === 'news' && !allNews.length) loadNews();
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -773,6 +808,66 @@ function setPeriod(p,btn){statPeriod=p;document.querySelectorAll('.period-btn').
 function setStatFilter(f,btn){statFilter=f;document.querySelectorAll('#page-stats .tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function toggleSignals(btn){const w=document.getElementById('signalsWrap');if(w.style.display==='none'){w.style.display='block';btn.textContent='Свернуть ▲';renderSignals();}else{w.style.display='none';btn.textContent='Развернуть ▼';}}
 
+// ══════════════════════════════════════════════════════════════
+//  NEWS PAGE
+// ══════════════════════════════════════════════════════════════
+let allNews = [], newsFilter = 'all';
+const CC_KEY = '%%CRYPTOCOMPARE_KEY%%';
+
+const NEWS_CATEGORIES = {
+  'all':        'BTC,ETH,SOL,XRP,Macro,Regulation,Business',
+  'BTC':        'BTC',
+  'ETH':        'ETH',
+  'SOL':        'SOL',
+  'XRP':        'XRP',
+  'macro':      'Macro,Business,Economics',
+  'regulation': 'Regulation,Government',
+};
+
+async function loadNews() {
+  const body = document.getElementById('newsBody');
+  body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
+  try {
+    const cat = NEWS_CATEGORIES[newsFilter] || 'BTC,ETH,Macro';
+    const url = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cat}&excludeCategories=Sponsored&lang=EN&api_key=${CC_KEY}&limit=30`;
+    const r   = await fetch(url);
+    const d   = await r.json();
+    if (d.Response !== 'Success') throw new Error(d.Message || 'API error');
+    allNews = d.Data || [];
+    renderNews();
+  } catch(e) {
+    document.getElementById('newsBody').innerHTML = `<div class="no-data">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function renderNews() {
+  const body = document.getElementById('newsBody');
+  if (!allNews.length) { body.innerHTML = '<div class="no-data">Нет новостей</div>'; return; }
+
+  body.innerHTML = `<div class="news-grid">${allNews.map(n => {
+    const diff    = Math.round((Date.now() - n.published_on * 1000) / 60000);
+    const timeStr = diff < 60 ? `${diff} мин назад` : diff < 1440 ? `${Math.round(diff/60)} ч назад` : `${Math.round(diff/1440)} д назад`;
+    const tags    = (n.categories || '').split('|').filter(Boolean).slice(0, 3);
+    const safeUrl = encodeURI(n.url);
+
+    return `<div class="news-card" onclick="window.open('${safeUrl}','_blank')">
+      <div class="news-source">${n.source_info?.name || n.source || '—'}</div>
+      <div class="news-title">${n.title}</div>
+      <div class="news-body">${(n.body || '').substr(0, 120)}...</div>
+      <div class="news-footer">
+        <div class="news-time">${timeStr}</div>
+        <div class="news-tags">${tags.map(t => `<span class="news-tag">${t.trim()}</span>`).join('')}</div>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function setNewsFilter(f, btn) {
+  newsFilter = f;
+  document.querySelectorAll('#page-news .news-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadNews();
+}
 // ── INIT ─────────────────────────────────────────────────────
 loadRadar();
 setInterval(loadRadar, 60000);

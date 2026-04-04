@@ -1198,7 +1198,11 @@ function buildSignalAlert(sig) {
   const timeStr  = getAlmatyTime();
   const fngEmoji = !sig.fng ? '😐' : sig.fng.value < 25 ? '😱' : sig.fng.value > 75 ? '🤑' : '😐';
   const fngLine  = sig.fng ? `${fngEmoji} F&G: ${sig.fng.value} (${sig.fng.label})` : '';
-  const notes = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.aiNote]
+  const slPct = sig.price && sig.sl
+    ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
+    : null;
+  if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -1332,6 +1336,7 @@ app.get('/', async (req, res) => {
     let html = fs.readFileSync(path.join(__dirname, 'unified_dashboard.html'), 'utf8');
     html = html.replace('%%SUPABASE_URL%%', process.env.SUPABASE_URL || '');
     html = html.replace('%%SUPABASE_KEY%%', process.env.SUPABASE_KEY || '');
+    html = html.replace('%%CRYPTOCOMPARE_KEY%%', process.env.CRYPTOCOMPARE_KEY || '');
     res.send(html);
   } catch(e) {
     res.status(500).send('Ошибка: ' + e.message);

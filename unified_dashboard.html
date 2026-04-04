@@ -348,6 +348,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
         </div>
       </div>
       <div class="side-card">
+        <div class="side-title">📈 PnL по дням</div>
+        <canvas id="pnlChart" style="width:100%;height:140px;"></canvas>
+        <div id="pnlEmpty" class="no-data" style="display:none;">Нет данных</div>
+      </div>
+      <div class="side-card">
         <div class="side-title">🏆 Топ стратегии</div>
         <div id="stratStats"><div class="no-data">Нет данных</div></div>
       </div>
@@ -678,6 +683,76 @@ function renderStatsBar(){
     </div>`;
   }).join('');
 }
+function renderPnlChart() {
+  const canvas = document.getElementById('pnlChart');
+  const empty  = document.getElementById('pnlEmpty');
+  if (!canvas) return;
+
+  // Группируем PnL по дням
+  const byDay = {};
+  allTrades.forEach(t => {
+    if (!t.closed_at || !t.pnl) return;
+    const d = new Date(+t.closed_at + 5*60*60*1000).toISOString().substr(0,10);
+    byDay[d] = (byDay[d] || 0) + parseFloat(t.pnl);
+  });
+
+  const days = Object.keys(byDay).sort().slice(-14); // последние 14 дней
+  if (!days.length) {
+    canvas.style.display = 'none';
+    empty.style.display  = 'block';
+    return;
+  }
+
+  canvas.style.display = 'block';
+  empty.style.display  = 'none';
+
+  const vals   = days.map(d => byDay[d]);
+  const maxAbs = Math.max(...vals.map(Math.abs), 1);
+  const ctx    = canvas.getContext('2d');
+  const W      = canvas.offsetWidth || 300;
+  const H      = 140;
+  canvas.width  = W;
+  canvas.height = H;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Нулевая линия
+  const midY = H / 2;
+  ctx.strokeStyle = '#1a2540';
+  ctx.lineWidth   = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  ctx.lineTo(W, midY);
+  ctx.stroke();
+
+  // Bars
+  const barW   = (W / days.length) * 0.6;
+  const gap    = W / days.length;
+
+  days.forEach((d, i) => {
+    const val   = vals[i];
+    const x     = i * gap + gap / 2 - barW / 2;
+    const barH  = Math.abs(val) / maxAbs * (H / 2 - 10);
+    const y     = val >= 0 ? midY - barH : midY;
+    ctx.fillStyle = val >= 0 ? '#00ff88' : '#ff3366';
+    ctx.fillRect(x, y, barW, barH);
+  });
+
+  // Labels (первый и последний день)
+  ctx.fillStyle  = '#4a5a7a';
+  ctx.font       = '9px Space Mono, monospace';
+  ctx.textAlign  = 'left';
+  ctx.fillText(days[0].substr(5), 2, H - 2);
+  ctx.textAlign  = 'right';
+  ctx.fillText(days[days.length-1].substr(5), W - 2, H - 2);
+
+  // Cumulative PnL
+  const total = vals.reduce((a, b) => a + b, 0);
+  ctx.fillStyle  = total >= 0 ? '#00ff88' : '#ff3366';
+  ctx.font       = '10px Space Mono, monospace';
+  ctx.textAlign  = 'left';
+  ctx.fillText(`Итого: ${total >= 0 ? '+' : ''}${total.toFixed(1)}%`, 4, 12);
+}
 async function loadStats(){
   try{
     const [trades,signals,open]=await Promise.all([
@@ -688,7 +763,7 @@ async function loadStats(){
     allTrades=Array.isArray(trades)?trades:[];
     allSignals=Array.isArray(signals)?signals:[];
     openTrades=Array.isArray(open)?open:[];
-    renderStatsBar(); renderTrades(); renderSignals(); renderOpenTrades();
+    renderStatsBar(); renderPnlChart(); renderTrades(); renderSignals(); renderOpenTrades();
   }catch(e){
     console.error('loadStats error:', e);
     document.getElementById('tradesBody').innerHTML=`<div class="no-data">Ошибка: ${e.message}</div>`;

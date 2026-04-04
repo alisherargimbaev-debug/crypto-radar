@@ -129,10 +129,10 @@ ${sig.liqNote     ? 'Ликвидации: '  + sig.liqNote     : ''}
 ${sig.newsNote    ? 'Новости: '     + sig.newsNote    : ''}
 ${sig.whaleNote   ? 'Киты: '        + sig.whaleNote   : ''}
 
-ПРАВИЛА:
-- Рейтинг A (S4,S5,S6): одобряй при 70%+
-- Рейтинг B (S2,S7): одобряй при 75%+
-- Если confidence >= 75% и есть хотя бы 2 подтверждения → APPROVE
+ПРАВИЛА ОЦЕНКИ:
+- Рейтинг A (S4,S5,S6): одобряй при confidence 70%+
+- Рейтинг B (S2,S7): одобряй при confidence 75%+
+- Минимум 2 подтверждающих фактора → APPROVE
 - Азия сессия → снижай уверенность но не всегда REJECT
 - Ты не обязан отклонять — одобряй хорошие сигналы
 
@@ -142,59 +142,59 @@ APPROVE | 94
 REJECT | причина одной строкой`;
 
   try {
-    let response = '';
-
-    // Пробуем OpenRouter
-    if (process.env.OPENROUTER_KEY) {
+    // Пробуем Claude API
+    if (process.env.CLAUDE_KEY) {
       const data = await httpPost(
-        'https://openrouter.ai/api/v1/chat/completions',
+        'https://api.anthropic.com/v1/messages',
         {
-          model:    'mistralai/mistral-7b-instruct:free',
-          messages: [{ role: 'user', content: prompt }],
+          model:      'claude-haiku-4-5-20251001',
+          max_tokens: 100,
+          messages:   [{ role: 'user', content: prompt }],
         },
         {
-          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-          'Content-Type':  'application/json',
-          'HTTP-Referer':  'https://crypto-radar-8ceq.onrender.com',
-          'X-Title':       'Crypto Radar Bot',
+          'x-api-key':         process.env.CLAUDE_KEY,
+          'anthropic-version': '2023-06-01',
+          'Content-Type':      'application/json',
         }
       );
-      response = data?.choices?.[0]?.message?.content || '';
+      const response = data?.content?.[0]?.text || '';
+      if (response.trim()) {
+        const line = response.trim().split('\n')[0].trim();
+        console.log(`[CLAUDE] ${sig.instId} → ${line}`);
+        return parseAIResponse(line, sig);
+      }
     }
 
-    // Если OpenRouter не ответил — используем Groq
-    if (!response.trim()) {
-      console.log('[AI] OpenRouter пустой → Groq');
-      response = await callGroq(prompt);
-    }
-
+    // Fallback — Groq
+    console.log('[AI] Claude недоступен → Groq');
+    const response = await callGroq(prompt);
     const line = response.trim().split('\n')[0].trim();
-    console.log(`[AI] ${sig.instId} → ${line}`);
-
-    if (line.startsWith('APPROVE')) {
-      const parts   = line.split('|');
-      const newConf = parseInt(parts[1]?.trim());
-      return {
-        approved:   true,
-        confidence: isNaN(newConf) ? sig.confidence : Math.min(newConf, 100),
-        reason:     `AI: ${isNaN(newConf) ? sig.confidence : newConf}% уверенность`,
-      };
-    }
-
-    if (line.startsWith('REJECT')) {
-      const reason = line.split('|')[1]?.trim() || 'AI отклонил';
-      console.log(`[AI REJECT] ${sig.instId} → ${reason}`);
-      return { approved: false, confidence: 0, reason };
-    }
-
-    // Непонятный ответ — пропускаем фильтр, не блокируем сигнал
-    console.log(`[AI] Непонятный ответ — пропускаем фильтр`);
-    return { approved: true, confidence: sig.confidence, reason: 'AI не определился' };
+    console.log(`[GROQ] ${sig.instId} → ${line}`);
+    return parseAIResponse(line, sig);
 
   } catch(e) {
     console.error('[AI] error:', e.message);
     return { approved: true, confidence: sig.confidence, reason: 'AI недоступен' };
   }
+}
+
+function parseAIResponse(line, sig) {
+  if (line.startsWith('APPROVE')) {
+    const parts   = line.split('|');
+    const newConf = parseInt(parts[1]?.trim());
+    return {
+      approved:   true,
+      confidence: isNaN(newConf) ? sig.confidence : Math.min(newConf, 100),
+      reason:     `Claude: ${isNaN(newConf) ? sig.confidence : newConf}%`,
+    };
+  }
+  if (line.startsWith('REJECT')) {
+    const reason = line.split('|')[1]?.trim() || 'Отклонён';
+    console.log(`[AI REJECT] ${sig.instId} → ${reason}`);
+    return { approved: false, confidence: 0, reason };
+  }
+  // Непонятный ответ — пропускаем
+  return { approved: true, confidence: sig.confidence, reason: 'AI не определился' };
 }
 
 
@@ -426,6 +426,56 @@ async function applyCandlePatterns(sig, instId) {
     sig.confidence = Math.min(Math.max(sig.confidence + boost, 0), 100);
     if (notes.length) sig.patternNote = notes.join(' | ');
   } catch(e) { console.error('applyCandlePatterns error:', e.message); }
+  return sig;
+}
+
+// ============================================================
+//  VOLUME PROFILE ФИЛЬТР
+// ============================================================
+function applyVolumeProfile(sig, klines) {
+  try {
+    if (!klines || klines.length < 20) return sig;
+    const avgVol  = klines.slice(-21, -1).reduce((a, c) => a + c.quoteVolume, 0) / 20;
+    const lastVol = klines[klines.length - 1].quoteVolume;
+    const ratio   = lastVol / avgVol;
+
+    if (ratio >= 2.0) {
+      sig.confidence = Math.min(sig.confidence + 10, 100);
+      sig.volNote    = `📊 Объём ${ratio.toFixed(1)}x среднего → +10%`;
+    } else if (ratio < 0.7) {
+      sig.confidence = Math.max(sig.confidence - 15, 0);
+      sig.volNote    = `📊 Слабый объём ${ratio.toFixed(1)}x → -15%`;
+    }
+  } catch(e) {}
+  return sig;
+}
+
+// ============================================================
+//  4H ТРЕНД ФИЛЬТР
+// ============================================================
+async function apply4HTrend(sig, instId) {
+  try {
+    const k4h  = await getOKXKlines(instId, '4H', 55);
+    if (k4h.length < 51) return sig;
+
+    const ma20 = calcSMA(k4h, 20);
+    const ma50 = calcSMA(k4h, 50);
+    const trend = ma20 > ma50 ? 'bullish' : 'bearish';
+
+    if (sig.direction === 'long' && trend === 'bullish') {
+      sig.confidence = Math.min(sig.confidence + 8, 100);
+      sig.trendNote  = `📈 4H тренд бычий (MA20>MA50) → +8%`;
+    } else if (sig.direction === 'short' && trend === 'bearish') {
+      sig.confidence = Math.min(sig.confidence + 8, 100);
+      sig.trendNote  = `📉 4H тренд медвежий (MA20<MA50) → +8%`;
+    } else if (sig.direction === 'long' && trend === 'bearish') {
+      sig.confidence = Math.max(sig.confidence - 20, 0);
+      sig.trendNote  = `⚠️ 4H тренд медвежий — торговля против тренда → -20%`;
+    } else if (sig.direction === 'short' && trend === 'bullish') {
+      sig.confidence = Math.max(sig.confidence - 20, 0);
+      sig.trendNote  = `⚠️ 4H тренд бычий — торговля против тренда → -20%`;
+    }
+  } catch(e) { console.error('apply4HTrend error:', e.message); }
   return sig;
 }
 
@@ -952,7 +1002,7 @@ function buildSignalAlert(sig) {
   const timeStr  = getAlmatyTime();
   const fngEmoji = !sig.fng ? '😐' : sig.fng.value < 25 ? '😱' : sig.fng.value > 75 ? '🤑' : '😐';
   const fngLine  = sig.fng ? `${fngEmoji} F&G: ${sig.fng.value} (${sig.fng.label})` : '';
-  const notes = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -1124,6 +1174,8 @@ async function checkSignals() {
         sig = await applyCandlePatterns(sig, coin.instId);
         sig = await applyLiquidationBoost(sig);
         sig = await applyWhaleBoost(sig);
+        sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
+        sig = await apply4HTrend(sig, coin.instId);
         filtered.push(sig);
       }
 
@@ -1338,7 +1390,9 @@ cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('che
 cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('dailyReport error:', e.message)); });
 
 // Первый запуск сразу при старте для проверки
-checkSignals().catch(e => console.error('Initial checkSignals error:', e.message));
+setTimeout(() => {
+  checkSignals().catch(e => console.error('Initial checkSignals error:', e.message));
+}, 10000);
 
 process.on('uncaughtException', e => {
   console.error('[CRASH PREVENTED]', e.message);

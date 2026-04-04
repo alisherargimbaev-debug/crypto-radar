@@ -23,9 +23,7 @@ const STRATEGY_SL = {
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
 };
 
-const S1 = { priceMin: 1.5, oiMin: 2.0, vdeltaMin: 1000000, volMin: 5000000 };
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
-const S3 = { oiMin5m: 4.0, vol24Min: 10000000 };
 
 const MIN_VOLUME_24H = 50000000;
 const TOP_N          = 15;
@@ -125,18 +123,18 @@ Confidence (до AI): ${sig.confidence}%
 ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ:
 Сессия: ${session}
 Fear & Greed: ${fng ? fng.value + ' (' + fng.label + ')' : 'N/A'}
-${sig.srNote     ? 'Уровни S/R: '   + sig.srNote     : ''}
-${sig.fngNote    ? 'F&G заметка: '  + sig.fngNote    : ''}
-${sig.patternNote? 'Паттерны: '     + sig.patternNote : ''}
-${sig.liqNote    ? 'Ликвидации: '   + sig.liqNote    : ''}
-${sig.newsNote   ? 'Новости: '      + sig.newsNote   : ''}
+${sig.srNote      ? 'Уровни S/R: '  + sig.srNote      : ''}
+${sig.fngNote     ? 'F&G: '         + sig.fngNote     : ''}
+${sig.patternNote ? 'Паттерны: '    + sig.patternNote  : ''}
+${sig.liqNote     ? 'Ликвидации: '  + sig.liqNote     : ''}
+${sig.newsNote    ? 'Новости: '     + sig.newsNote    : ''}
+${sig.whaleNote   ? 'Киты: '        + sig.whaleNote   : ''}
 
-ЖЁСТКИЕ ПРАВИЛА:
-- Минимум 3 независимых подтверждения для APPROVE
-- Если есть противоречия между индикаторами → REJECT
-- Рейтинг A (S4,S5,S6): порог 70%+ | Рейтинг B (S2,S7): 75%+ | Рейтинг C (S1,S3): 85%+
-- Азия сессия → снижай уверенность, но не всегда REJECT
+ПРАВИЛА:
+- Рейтинг A (S4,S5,S6): одобряй при 70%+
+- Рейтинг B (S2,S7): одобряй при 75%+
 - Если confidence >= 75% и есть хотя бы 2 подтверждения → APPROVE
+- Азия сессия → снижай уверенность но не всегда REJECT
 - Ты не обязан отклонять — одобряй хорошие сигналы
 
 Ответь СТРОГО в одном из двух форматов:
@@ -145,12 +143,6 @@ APPROVE | 94
 REJECT | причина одной строкой`;
 
   try {
-    // Проверяем есть ли ключ
-    if (!process.env.GEMINI_KEY) {
-      console.log('[GEMINI] Ключ не найден — пропускаем валидацию');
-      return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
-    }
-
     let response = '';
 
     // Пробуем OpenRouter
@@ -180,31 +172,29 @@ REJECT | причина одной строкой`;
     const line = response.trim().split('\n')[0].trim();
     console.log(`[AI] ${sig.instId} → ${line}`);
 
-    console.log(`[GEMINI] ${sig.instId} → ${line}`);
-
     if (line.startsWith('APPROVE')) {
       const parts   = line.split('|');
-      const newConf = parts[1] ? parseInt(parts[1].trim()) : sig.confidence;
+      const newConf = parseInt(parts[1]?.trim());
       return {
         approved:   true,
         confidence: isNaN(newConf) ? sig.confidence : Math.min(newConf, 100),
-        reason:     parts[1] ? `Gemini: ${newConf}% уверенность` : 'Gemini подтвердил'
+        reason:     `AI: ${isNaN(newConf) ? sig.confidence : newConf}% уверенность`,
       };
     }
 
     if (line.startsWith('REJECT')) {
-      const reason = line.split('|')[1]?.trim() || 'Gemini отклонил';
+      const reason = line.split('|')[1]?.trim() || 'AI отклонил';
+      console.log(`[AI REJECT] ${sig.instId} → ${reason}`);
       return { approved: false, confidence: 0, reason };
     }
 
-    // Непонятный ответ — пропускаем сигнал (не блокируем)
-    console.log(`[AI] Непонятный ответ, пропускаем фильтр: ${line}`);
-    return { approved: true, confidence: sig.confidence, reason: 'AI не определился — пропущен' };
+    // Непонятный ответ — пропускаем фильтр, не блокируем сигнал
+    console.log(`[AI] Непонятный ответ — пропускаем фильтр`);
+    return { approved: true, confidence: sig.confidence, reason: 'AI не определился' };
 
   } catch(e) {
-    console.error('[GEMINI] error:', e.message);
-    // Если Gemini недоступен — не блокируем сигнал
-    return { approved: true, confidence: sig.confidence, reason: 'Gemini недоступен' };
+    console.error('[AI] error:', e.message);
+    return { approved: true, confidence: sig.confidence, reason: 'AI недоступен' };
   }
 }
 
@@ -356,7 +346,7 @@ async function calcSmartSLTP(price, direction, sr) {
       if (supports.length) {
         const nearest  = supports.reduce((p, c) => Math.abs(c - price) < Math.abs(p - price) ? c : p);
         const smartSL  = nearest * 0.997;
-        if (smartSL > price * (1 - SL_PCT * 2 / 100)) {
+        if (smartSL > price * 0.97) {
           const slPct = (price - smartSL) / price * 100;
           return { sl: smartSL.toFixed(4), tp1: (price * (1 + slPct * 2 / 100)).toFixed(4),
             tp2: (price * (1 + slPct * 3 / 100)).toFixed(4), slNote: `📍 SL за поддержкой $${nearest.toFixed(4)}` };
@@ -367,7 +357,7 @@ async function calcSmartSLTP(price, direction, sr) {
       if (resistances.length) {
         const nearest   = resistances.reduce((p, c) => Math.abs(c - price) < Math.abs(p - price) ? c : p);
         const smartSL   = nearest * 1.003;
-        if (smartSL < price * (1 + SL_PCT * 2 / 100)) {
+        if (smartSL < price * 1.03) {
           const slPct = (smartSL - price) / price * 100;
           return { sl: smartSL.toFixed(4), tp1: (price * (1 - slPct * 2 / 100)).toFixed(4),
             tp2: (price * (1 - slPct * 3 / 100)).toFixed(4), slNote: `📍 SL за сопротивлением $${nearest.toFixed(4)}` };
@@ -1097,7 +1087,7 @@ const path = require('path');
 
 app.get('/', async (req, res) => {
   try {
-    let html = fs.readFileSync(path.join(__dirname, 'dashboard.html'), 'utf8');
+    let html = fs.readFileSync(path.join(__dirname, 'unified_dashboard.html'), 'utf8');
     html = html.replace('%%SUPABASE_URL%%', process.env.SUPABASE_URL || '');
     html = html.replace('%%SUPABASE_KEY%%', process.env.SUPABASE_KEY || '');
     res.send(html);

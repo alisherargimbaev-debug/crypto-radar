@@ -1574,14 +1574,14 @@ const klines1h = data1h.data.reverse().map(c => ({
 }));
 
 // Загружаем 15m свечи для S1
-const data15m = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=15m&limit=${limit}`);
+
 if (!data15m || data15m.code !== '0') continue;
 const klines15m = data15m.data.reverse().map(c => ({
   ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
   volume:+c[5], quoteVolume:+c[7],
 }));
 
-if (klines1h.length < 60 || klines15m.length < 60) continue;
+if (klines1h.length < 60) continue;
 
     const runs = [
   /* { name:'S1 Пробой 15m',      fn: btS1 }, */
@@ -1594,7 +1594,7 @@ if (klines1h.length < 60 || klines15m.length < 60) continue;
 
     for (const { name, fn } of runs) {
       // S1 использует 15m свечи, остальные — 1H
-      const klines = name === 'S1 Пробой 15m' ? klines15m : klines1h;
+      const klines = klines1h;
       let lastI = -10;
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;

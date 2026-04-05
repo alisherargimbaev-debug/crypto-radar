@@ -1654,11 +1654,10 @@ function btS1(klines, i) {
   const prev    = slice[slice.length-2];
   const pc      = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
   const avgVol  = slice.slice(-11,-1).reduce((a,c)=>a+c.quoteVolume,0)/10;
-  const volSpike = last.quoteVolume >= avgVol * 3.0;
+  const volSpike = last.quoteVolume >= avgVol * 2.0; // снизили с 3x до 2x
   if (!volSpike) return null;
-  const vd = last.quoteVolume * 0.5 - (last.quoteVolume - last.quoteVolume * 0.5);
-  if (pc >= 1.5 && vd > 0) return 'long';
-  if (pc <= -1.5 && vd < 0) return 'short';
+  if (pc >= 1.0) return 'long';  // снизили с 1.5% до 1.0%
+  if (pc <= -1.0) return 'short';
   return null;
 }
 
@@ -1715,21 +1714,17 @@ function btS5(klines, i) {
 }
 
 function btS9(klines, i) {
-  if (i < 24) return null;
-  const slice   = klines.slice(0, i+1);
-  const btcClose = slice[slice.length-1].close;
-  const btc3hAgo = slice[slice.length-4]?.close;
-  if (!btc3hAgo) return null;
-  const btcChange = (btcClose - btc3hAgo) / btc3hAgo * 100;
-  const rsi = calcRSI(slice, 14);
+  if (i < 10) return null;
+  const slice  = klines.slice(0, i+1);
+  const rsiNow = calcRSI(slice, 14);
+  const rsiPrev = calcRSI(slice.slice(0, -4), 14);
+  const last   = slice[slice.length-1];
+  const prev4  = slice[slice.length-5];
+  if (!prev4) return null;
+  const change4h = (last.close - prev4.close) / prev4.close * 100;
 
-  // Симулируем расхождение через изменение самой монеты vs BTC
-  // В бэктесте нет второй монеты — используем RSI дивергенцию как прокси
-  const rsiPrev = calcRSI(slice.slice(0, -3), 14);
-  const divergence = Math.abs(btcChange) > 2 && Math.abs(rsi - rsiPrev) > 3;
-
-  if (btcChange > 2 && rsi < rsiPrev - 3 && rsi < 55) return 'long';
-  if (btcChange < -2 && rsi > rsiPrev + 3 && rsi > 45) return 'short';
+  if (change4h < -2.0 && rsiNow > rsiPrev + 2) return 'long';
+  if (change4h > 2.0  && rsiNow < rsiPrev - 2) return 'short';
   return null;
 }
 

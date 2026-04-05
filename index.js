@@ -1444,28 +1444,44 @@ app.get('/backtest/run', async (req, res) => {
 
 async function runBacktest(coins, limit = 300) {
   const strategies = {
-    'S4 MA/RSI':        { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-    'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-    'S7 Поглощение':    { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S2 Bounce 1h':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   };
 
   for (const instId of coins) {
     const symbol = instId.replace('-USDT-SWAP','');
-    const data   = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=1H&limit=${limit}`);
-    if (!data || data.code !== '0') continue;
-    const klines = data.data.reverse().map(c => ({
-      ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
-      volume:+c[5], quoteVolume:+c[7],
-    }));
-    if (klines.length < 60) continue;
+    // Загружаем 1H свечи для S2 S4 S5 S7
+const data1h = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=1H&limit=${limit}`);
+if (!data1h || data1h.code !== '0') continue;
+const klines1h = data1h.data.reverse().map(c => ({
+  ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
+  volume:+c[5], quoteVolume:+c[7],
+}));
+
+// Загружаем 15m свечи для S1
+const data15m = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=15m&limit=${limit}`);
+if (!data15m || data15m.code !== '0') continue;
+const klines15m = data15m.data.reverse().map(c => ({
+  ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
+  volume:+c[5], quoteVolume:+c[7],
+}));
+
+if (klines1h.length < 60 || klines15m.length < 60) continue;
 
     const runs = [
-      { name:'S4 MA/RSI',         fn: btS4 },
-      { name:'S5 RSI Дивергенция', fn: btS5 },
-      { name:'S7 Поглощение',      fn: btS7 },
-    ];
+  { name:'S1 Пробой 15m',      fn: btS1 },
+  { name:'S2 Bounce 1h',       fn: btS2 },
+  { name:'S4 MA/RSI',          fn: btS4 },
+  { name:'S5 RSI Дивергенция', fn: btS5 },
+  { name:'S7 Поглощение',      fn: btS7 },
+];
 
     for (const { name, fn } of runs) {
+      // S1 использует 15m свечи, остальные — 1H
+const klines = name === 'S1 Пробой 15m' ? klines15m : klines1h;
       let lastI = -10;
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
@@ -1517,6 +1533,42 @@ async function runBacktest(coins, limit = 300) {
     avgPnl:  s.signals ? parseFloat((s.pnl/s.signals).toFixed(2)) : 0,
     trades:  s.trades.slice(-20),
   }));
+}
+function btS1(klines, i) {
+  if (i < 15) return null;
+  const slice   = klines.slice(0, i+1);
+  const last    = slice[slice.length-1];
+  const prev    = slice[slice.length-2];
+  const pc      = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
+  const avgVol  = slice.slice(-11,-1).reduce((a,c)=>a+c.quoteVolume,0)/10;
+  const volSpike = last.quoteVolume >= avgVol * 3.0;
+  if (!volSpike) return null;
+  const vd = last.quoteVolume * 0.5 - (last.quoteVolume - last.quoteVolume * 0.5);
+  if (pc >= 1.5 && vd > 0) return 'long';
+  if (pc <= -1.5 && vd < 0) return 'short';
+  return null;
+}
+
+function btS2(klines, i) {
+  if (i < 55) return null;
+  const slice = klines.slice(0, i+1);
+  const last  = slice[slice.length-1];
+  const prev  = slice[slice.length-2];
+  const pc    = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
+  const rsi   = calcRSI(slice, 14);
+
+  // Проверяем боковик через MA
+  const ma20 = calcSMA(slice, 20);
+  const ma50 = calcSMA(slice, 50);
+  const trendStrength = ma50 ? Math.abs(ma20 - ma50) / ma50 * 100 : 0;
+  const isSideways = trendStrength < 1.0;
+
+  const vol = slice.slice(-5).reduce((a,c)=>a+c.quoteVolume,0);
+  const volMin = 10000000;
+
+  if (pc <= -2.5 && vol >= volMin && rsi < 40 && isSideways) return 'long';
+  if (pc >= 2.5  && vol >= volMin && rsi > 60 && isSideways) return 'short';
+  return null;
 }
 
 function btS4(klines, i) {

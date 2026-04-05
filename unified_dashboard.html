@@ -41,7 +41,7 @@ h1 span{color:var(--text);}
 
 /* NAV TABS */
 .nav{display:flex;gap:0;margin:14px 0;border-bottom:1px solid var(--border);}
-.nav-btn{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);padding:10px 20px;font-family:'Space Mono',monospace;font-size:0.68rem;cursor:pointer;transition:all .2s;letter-spacing:1px;margin-bottom:-1px;}
+.nav-btn{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.62rem;cursor:pointer;transition:all .2s;letter-spacing:1px;margin-bottom:-1px;}
 .nav-btn:hover{color:var(--text);}
 .nav-btn.active{color:var(--accent);border-bottom-color:var(--accent);}
 .page{display:none;}
@@ -813,17 +813,21 @@ async function loadNews() {
   body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
   try {
     const cats = 'BTC,ETH,SOL,XRP,Altcoin,Blockchain,Business,Market,Regulation,Macro';
-    const url  = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cats}&excludeCategories=Sponsored&lang=EN&api_key=${CRYPTOCOMPARE_KEY}`;
+    const url  = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cats}&excludeCategories=Sponsored&lang=EN${CRYPTOCOMPARE_KEY ? '&api_key=' + CRYPTOCOMPARE_KEY : ''}`;
     const resp = await fetch(url);
     const data = await resp.json();
     if (data.Response === 'Success' && data.Data?.length) {
       allNews = data.Data;
       renderNews();
-    } else {
-      body.innerHTML = '<div class="no-data">Нет новостей или ключ не настроен</div>';
+    } else if (data.Response === 'Error' || !data.Data?.length) {
+      // Fallback — пробуем без ключа
+      const r2 = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=50');
+      const d2 = await r2.json();
+      if (d2.Data?.length) { allNews = d2.Data; renderNews(); }
+      else body.innerHTML = '<div class="no-data">Нет новостей. Проверь CRYPTOCOMPARE_KEY в Render</div>';
     }
   } catch(e) {
-    body.innerHTML = `<div class="no-data">Ошибка: ${e.message}</div>`;
+    body.innerHTML = `<div class="no-data">Ошибка загрузки новостей: ${e.message}</div>`;
   }
 }
 
@@ -895,16 +899,29 @@ async function loadTwitter() {
   status.textContent = 'Подключаемся к Nitter...';
   allTweets = [];
   let loaded = 0;
-  const NITTER = ['https://nitter.privacydev.net','https://nitter.poast.org','https://nitter.lucahammer.com'];
+  const CORS_PROXIES = [
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://cors-anywhere.herokuapp.com/${url}`,
+  ];
+  const NITTER = ['https://nitter.privacydev.net','https://nitter.poast.org','https://nitter.lucahammer.com','https://nitter.1d4.us'];
 
   await Promise.all(TW_ACCOUNTS.map(async acc => {
     for (const instance of NITTER) {
       try {
         const url = `${instance}/${acc.handle}/rss`;
-        const resp = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
-        if (!resp.ok) continue;
-        const json = await resp.json();
-        const xml = json.contents;
+        let xml = null;
+        for (const proxyFn of CORS_PROXIES) {
+          try {
+            const resp = await fetch(proxyFn(url), { signal: AbortSignal.timeout(5000) });
+            if (!resp.ok) continue;
+            const text = await resp.text();
+            // allorigins возвращает JSON, corsproxy возвращает текст напрямую
+            try { xml = JSON.parse(text).contents; } catch { xml = text; }
+            if (xml && xml.length > 100) break;
+          } catch(e) { continue; }
+        }
+        if (!xml || xml.length < 100) continue;
         if (!xml || xml.length < 100) continue;
         const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
         items.slice(0, 8).forEach(item => {

@@ -1795,8 +1795,29 @@ if (alreadyOpen) {
         filtered.push(sig);
       }
 
+      const fngValue = fng?.value || 50;
+
       const best = filtered
         .filter(s => s.confidence >= 90)
+        .filter(s => {
+          // Extreme Fear (< 25) — блокируем LONG кроме S2 и S7
+          if (fngValue < 25 && s.direction === 'long') {
+            const allowed = s.strategy.includes('Bounce') || s.strategy.includes('Поглощение');
+            if (!allowed) {
+              console.log(`[FNG BLOCK] ${s.instId} LONG заблокирован F&G:${fngValue}`);
+              return false;
+            }
+          }
+          // Extreme Greed (> 75) — блокируем SHORT кроме S2 и S7
+          if (fngValue > 75 && s.direction === 'short') {
+            const allowed = s.strategy.includes('Bounce') || s.strategy.includes('Поглощение');
+            if (!allowed) {
+              console.log(`[FNG BLOCK] ${s.instId} SHORT заблокирован F&G:${fngValue}`);
+              return false;
+            }
+          }
+          return true;
+        })
         .sort((a, b) => b.confidence - a.confidence)[0];
 
       if (!best) continue;

@@ -22,6 +22,8 @@ const STRATEGY_SL = {
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
+  '9️⃣ Pairs Trading (ETH/BTC)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
+  '9️⃣ Pairs Trading (BTC/ETH)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -40,6 +42,8 @@ const STRATEGY_META = {
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '9️⃣ Pairs Trading (ETH/BTC)': { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '9️⃣ Pairs Trading (BTC/ETH)': { color: '#34d399', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -1292,7 +1296,80 @@ if (k1h.length >= 55) {
   return signals;
 }
 
+// S9: Pairs Trading — корреляция BTC/ETH
+    try {
+      if (coinData.symbol === 'ETH' || coinData.symbol === 'BTC') {
+        const btcData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=1H&limit=24');
+        const ethData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=ETH-USDT-SWAP&bar=1H&limit=24');
 
+        if (btcData?.code === '0' && ethData?.code === '0') {
+          const btcKlines = btcData.data.reverse().map(c => ({ close: +c[4] }));
+          const ethKlines = ethData.data.reverse().map(c => ({ close: +c[4] }));
+
+          if (btcKlines.length >= 24 && ethKlines.length >= 24) {
+            // Изменение за последние 3 часа
+            const btcChange3h = (btcKlines[btcKlines.length-1].close - btcKlines[btcKlines.length-4].close) / btcKlines[btcKlines.length-4].close * 100;
+            const ethChange3h = (ethKlines[ethKlines.length-1].close - ethKlines[ethKlines.length-4].close) / ethKlines[ethKlines.length-4].close * 100;
+
+            // Расхождение между BTC и ETH
+            const divergence = btcChange3h - ethChange3h;
+            const rsi1h = calcRSI(k1h, 14);
+            const atr   = calcATR(k1h, 14);
+
+            // ETH отстал от BTC на 3%+ → ETH догонит → LONG ETH
+            if (
+              coinData.symbol === 'ETH' &&
+              divergence > 3.0 &&
+              btcChange3h > 0 &&
+              rsi1h < 60 &&
+              atr
+            ) {
+              signals.push({
+                strategy:  '9️⃣ Pairs Trading (ETH/BTC)',
+                instId, direction: 'long',
+                signal:    '🟢 LONG', price, confidence: 74,
+                metrics:   `BTC 3h:+${btcChange3h.toFixed(2)}% ETH 3h:${ethChange3h.toFixed(2)}% Расхождение:${divergence.toFixed(2)}% RSI:${rsi1h}`,
+                ...calcSLTP(price, 'long', '9️⃣ Pairs Trading (ETH/BTC)', atr)
+              });
+            }
+
+            // ETH вырос а BTC нет → ETH упадёт → SHORT ETH
+            if (
+              coinData.symbol === 'ETH' &&
+              divergence < -3.0 &&
+              btcChange3h < 0 &&
+              rsi1h > 40 &&
+              atr
+            ) {
+              signals.push({
+                strategy:  '9️⃣ Pairs Trading (ETH/BTC)',
+                instId, direction: 'short',
+                signal:    '🔴 SHORT', price, confidence: 74,
+                metrics:   `BTC 3h:${btcChange3h.toFixed(2)}% ETH 3h:+${ethChange3h.toFixed(2)}% Расхождение:${divergence.toFixed(2)}% RSI:${rsi1h}`,
+                ...calcSLTP(price, 'short', '9️⃣ Pairs Trading (ETH/BTC)', atr)
+              });
+            }
+
+            // BTC отстал от ETH → BTC догонит → LONG BTC
+            if (
+              coinData.symbol === 'BTC' &&
+              divergence < -3.0 &&
+              ethChange3h > 0 &&
+              rsi1h < 60 &&
+              atr
+            ) {
+              signals.push({
+                strategy:  '9️⃣ Pairs Trading (BTC/ETH)',
+                instId, direction: 'long',
+                signal:    '🟢 LONG', price, confidence: 74,
+                metrics:   `ETH 3h:+${ethChange3h.toFixed(2)}% BTC 3h:${btcChange3h.toFixed(2)}% Расхождение:${Math.abs(divergence).toFixed(2)}% RSI:${rsi1h}`,
+                ...calcSLTP(price, 'long', '9️⃣ Pairs Trading (BTC/ETH)', atr)
+              });
+            }
+          }
+        }
+      }
+    } catch(e) { console.error('S9 error:', e.message); }
 
 // ============================================================
 //  ФОРМАТИРОВАНИЕ

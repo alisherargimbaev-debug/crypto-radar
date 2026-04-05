@@ -88,7 +88,37 @@ input[type=range]{-webkit-appearance:none;width:70px;height:2px;background:var(-
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;background:var(--accent);border-radius:50%;cursor:pointer;}
 .thr-val{font-size:0.7rem;color:var(--accent);min-width:32px;}
 
-/* RADAR TABLE */
+/* ═══════════════ TWITTER PAGE ═══════════════ */
+.tw-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;}
+.tw-accounts{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+.tw-acc-btn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:5px 12px;font-family:'Space Mono',monospace;font-size:0.58rem;cursor:pointer;transition:all .2s;letter-spacing:1px;}
+.tw-acc-btn:hover,.tw-acc-btn.active{border-color:#1d9bf0;color:#1d9bf0;}
+.tw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;}
+.tw-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid #1d9bf0;padding:14px 16px;transition:all .2s;cursor:pointer;}
+.tw-card:hover{border-color:#1d9bf0;background:rgba(29,155,240,0.04);}
+.tw-card.bullish{border-left-color:var(--accent);}
+.tw-card.bearish{border-left-color:var(--red);}
+.tw-card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.tw-author{display:flex;align-items:center;gap:8px;}
+.tw-avatar{width:28px;height:28px;border-radius:50%;background:var(--panel2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:#1d9bf0;font-weight:700;}
+.tw-name{font-size:0.65rem;color:var(--text);font-weight:500;}
+.tw-handle{font-size:0.55rem;color:var(--dim);}
+.tw-time{font-size:0.52rem;color:var(--dim);background:rgba(255,255,255,0.04);padding:2px 8px;border:1px solid var(--border);}
+.tw-time.fresh{color:#1d9bf0;border-color:rgba(29,155,240,0.3);}
+.tw-text{font-size:0.65rem;color:var(--text);line-height:1.6;margin-bottom:10px;}
+.tw-coins{display:flex;gap:4px;flex-wrap:wrap;}
+.tw-coin-tag{font-size:0.5rem;padding:2px 8px;border:1px solid rgba(29,155,240,0.3);color:#1d9bf0;letter-spacing:1px;}
+.tw-coin-tag.btc{border-color:rgba(247,147,26,0.4);color:#f7931a;}
+.tw-coin-tag.eth{border-color:rgba(98,126,234,0.4);color:#627eea;}
+.tw-coin-tag.sol{border-color:rgba(153,69,255,0.4);color:#9945ff;}
+.tw-coin-tag.xrp{border-color:rgba(0,170,228,0.4);color:#00aae4;}
+.tw-sentiment{font-size:0.52rem;padding:2px 8px;letter-spacing:1px;}
+.tw-sentiment.bull{color:var(--accent);border:1px solid rgba(0,255,136,0.3);}
+.tw-sentiment.bear{color:var(--red);border:1px solid rgba(255,51,102,0.3);}
+.tw-loading{text-align:center;padding:40px;color:var(--dim);font-size:0.65rem;letter-spacing:2px;}
+.tw-error{text-align:center;padding:30px;color:var(--dim);font-size:0.62rem;}
+
+
 .tbl-head{display:grid;grid-template-columns:36px 170px 100px 85px 85px 95px 85px 65px 110px 1fr;gap:4px;padding:9px 14px;font-size:0.52rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;border-bottom:1px solid var(--border);background:var(--panel);}
 .sort-btn{background:none;border:none;color:var(--dim);font-family:'Space Mono',monospace;font-size:0.52rem;letter-spacing:2px;text-transform:uppercase;cursor:pointer;text-align:right;padding:0;transition:color .2s;}
 .sort-btn:hover,.sort-btn.active{color:var(--accent);}
@@ -225,6 +255,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <div class="nav">
   <button class="nav-btn active" onclick="showPage('radar',this)">📡 РАДАР</button>
   <button class="nav-btn" onclick="showPage('stats',this)">📊 СТАТИСТИКА</button>
+  <button class="nav-btn" onclick="showPage('news',this)">📰 НОВОСТИ</button>
+  <button class="nav-btn" onclick="showPage('twitter',this)">𝕏 TWITTER</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -355,6 +387,72 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   </div>
 </div>
 
+/* ═══════════════ NEWS PAGE ═══════════════ */
+.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;}
+.news-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--dim);padding:14px 16px;cursor:pointer;transition:all .2s;}
+.news-card:hover{border-color:var(--accent);border-left-color:var(--accent);background:#0a1020;}
+.news-card.cat-btc{border-left-color:#f7931a;}
+.news-card.cat-eth{border-left-color:#627eea;}
+.news-card.cat-sol{border-left-color:#9945ff;}
+.news-card.cat-xrp{border-left-color:#00aae4;}
+.news-card.cat-macro{border-left-color:#4488ff;}
+.news-card.cat-regulation{border-left-color:#ff3366;}
+.news-source{font-size:0.5rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;}
+.news-time-badge{background:rgba(255,255,255,0.05);padding:1px 7px;font-size:0.5rem;color:var(--dim);border:1px solid var(--border);}
+.news-time-badge.fresh{color:var(--accent);border-color:rgba(0,255,136,0.3);}
+.news-title{font-size:0.75rem;color:#fff;line-height:1.55;margin-bottom:8px;font-weight:500;}
+.news-body{font-size:0.6rem;color:var(--dim);line-height:1.6;margin-bottom:10px;}
+.news-footer{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+.news-tag{font-size:0.48rem;padding:2px 7px;letter-spacing:1px;border:1px solid var(--border);color:var(--dim);text-transform:uppercase;}
+.news-tag.t-btc{border-color:rgba(247,147,26,0.4);color:#f7931a;}
+.news-tag.t-eth{border-color:rgba(98,126,234,0.4);color:#627eea;}
+.news-tag.t-sol{border-color:rgba(153,69,255,0.4);color:#9945ff;}
+.news-tag.t-xrp{border-color:rgba(0,170,228,0.4);color:#00aae4;}
+.news-tag.t-business,.news-tag.t-market{border-color:rgba(68,136,255,0.3);color:var(--blue);}
+.news-tag.t-regulation{border-color:rgba(255,51,102,0.3);color:var(--red);}
+
+<!-- ═══════════════════ PAGE 3: NEWS ═══════════════════ -->
+<div id="page-news" class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+    <div class="sec-title">📰 Крипто и макро новости</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+      <button class="filter-btn news-filter-btn active" onclick="setNewsFilter('all',this)">ВСЕ</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('BTC',this)">BTC</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('ETH',this)">ETH</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('SOL',this)">SOL</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('XRP',this)">XRP</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('macro',this)">🌍 МАКРО</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('regulation',this)">⚖️ РЕГУЛЯЦИЯ</button>
+      <button class="refresh-btn" onclick="loadNews()">↻ ОБНОВИТЬ</button>
+    </div>
+  </div>
+  <div id="newsBody">
+    <div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>
+  </div>
+</div>
+<div id="page-twitter" class="page">
+  <div class="tw-header">
+    <div class="sec-title">𝕏 Крипто Twitter</div>
+    <button class="refresh-btn" onclick="loadTwitter()">↻ ОБНОВИТЬ</button>
+  </div>
+
+  <!-- Фильтр по аккаунтам -->
+  <div class="tw-accounts">
+    <button class="tw-acc-btn active" onclick="setTwFilter('all',this)">ВСЕ</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('elonmusk',this)">⚡ Elon Musk</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('cz_binance',this)">🔶 CZ Binance</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('VitalikButerin',this)">💜 Vitalik</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('saylor',this)">🟠 Saylor</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('CoinDesk',this)">📰 CoinDesk</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('Cointelegraph',this)">📰 CoinTelegraph</button>
+  </div>
+
+  <div id="twStatus" style="font-size:0.6rem;color:var(--dim);margin-bottom:10px;"></div>
+  <div id="twBody" class="tw-grid">
+    <div class="tw-loading">ЗАГРУЗКА ТВИТОВ<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>
+  </div>
+</div>
+
 </div>
 <div class="toast" id="toast">СКОПИРОВАНО ✓</div>
 
@@ -376,6 +474,8 @@ function showPage(id, btn) {
   document.getElementById('page-' + id).classList.add('active');
   btn.classList.add('active');
   if (id === 'stats' && !allTrades.length) loadStats();
+  if (id === 'news' && !allNews.length) loadNews();
+  if (id === 'twitter' && !allTweets.length) loadTwitter();
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -684,6 +784,233 @@ async function loadStats(){
 function setPeriod(p,btn){statPeriod=p;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function setStatFilter(f,btn){statFilter=f;document.querySelectorAll('#page-stats .tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function toggleSignals(btn){const w=document.getElementById('signalsWrap');if(w.style.display==='none'){w.style.display='block';btn.textContent='Свернуть ▲';renderSignals();}else{w.style.display='none';btn.textContent='Развернуть ▼';}}
+
+// ══════════════════════════════════════════════════════════════
+//  NEWS PAGE
+// ══════════════════════════════════════════════════════════════
+const CRYPTOCOMPARE_KEY = '%%CRYPTOCOMPARE_KEY%%';
+let allNews = [], newsFilter = 'all';
+
+function setNewsFilter(f, btn) {
+  newsFilter = f;
+  document.querySelectorAll('.news-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderNews();
+}
+
+async function loadNews() {
+  const body = document.getElementById('newsBody');
+  body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
+  try {
+    const cats = 'BTC,ETH,SOL,XRP,Altcoin,Blockchain,Business,Market,Regulation,Macro';
+    const url  = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cats}&excludeCategories=Sponsored&lang=EN&api_key=${CRYPTOCOMPARE_KEY}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.Response === 'Success' && data.Data?.length) {
+      allNews = data.Data;
+      renderNews();
+    } else {
+      body.innerHTML = '<div class="no-data">Нет новостей или ключ не настроен</div>';
+    }
+  } catch(e) {
+    body.innerHTML = `<div class="no-data">Ошибка загрузки: ${e.message}</div>`;
+  }
+}
+
+function renderNews() {
+  const body = document.getElementById('newsBody');
+  let filtered = allNews;
+
+  if (newsFilter !== 'all') {
+    const f = newsFilter.toUpperCase();
+    filtered = allNews.filter(n => {
+      const cats = (n.categories || '').toUpperCase();
+      if (f === 'MACRO')      return cats.includes('MACRO') || cats.includes('BUSINESS') || cats.includes('MARKET');
+      if (f === 'REGULATION') return cats.includes('REGULATION');
+      return cats.includes(f);
+    });
+  }
+
+  if (!filtered.length) { body.innerHTML = '<div class="no-data">Нет новостей</div>'; return; }
+
+  body.innerHTML = `<div class="news-grid">${filtered.map(n => {
+    const diff    = Math.round((Date.now() - n.published_on * 1000) / 60000);
+    const timeStr = diff < 60 ? `${diff} мин назад` : diff < 1440 ? `${Math.round(diff/60)} ч назад` : `${Math.round(diff/1440)} д назад`;
+    const isFresh = diff < 60;
+    const cats    = (n.categories || '').toUpperCase();
+    let cardCat   = 'cat-macro';
+    if (cats.includes('BTC')) cardCat = 'cat-btc';
+    else if (cats.includes('ETH')) cardCat = 'cat-eth';
+    else if (cats.includes('SOL')) cardCat = 'cat-sol';
+    else if (cats.includes('XRP')) cardCat = 'cat-xrp';
+    else if (cats.includes('REGULATION')) cardCat = 'cat-regulation';
+    const tags    = (n.categories || '').split('|').filter(Boolean).slice(0, 4);
+    const tagHtml = tags.map(t => {
+      const tc = t.trim().toLowerCase();
+      const cls = ['btc','eth','sol','xrp','business','market','regulation','macro'].includes(tc) ? `t-${tc}` : '';
+      return `<span class="news-tag ${cls}">${t.trim()}</span>`;
+    }).join('');
+    const source = n.source_info?.name || n.source || '—';
+    return `<div class="news-card ${cardCat}" onclick="window.open('${encodeURI(n.url)}','_blank')">
+      <div class="news-source">
+        <span>${source}</span>
+        <span class="news-time-badge ${isFresh?'fresh':''}">${timeStr}</span>
+      </div>
+      <div class="news-title">${n.title}</div>
+      <div class="news-body">${(n.body||'').substr(0,130)}...</div>
+      <div class="news-footer">${tagHtml}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TWITTER / NITTER PAGE
+// ══════════════════════════════════════════════════════════════
+const NITTER_INSTANCES = [
+  'https://nitter.privacydev.net',
+  'https://nitter.poast.org',
+  'https://nitter.lucahammer.com',
+];
+
+const TW_ACCOUNTS = [
+  { handle: 'elonmusk',       name: 'Elon Musk',       avatar: 'E', color: '#f7931a' },
+  { handle: 'cz_binance',     name: 'CZ Binance',       avatar: 'C', color: '#f3ba2f' },
+  { handle: 'VitalikButerin', name: 'Vitalik Buterin',  avatar: 'V', color: '#627eea' },
+  { handle: 'saylor',         name: 'Michael Saylor',   avatar: 'S', color: '#ff8c00' },
+  { handle: 'CoinDesk',       name: 'CoinDesk',         avatar: 'CD', color: '#1d9bf0' },
+  { handle: 'Cointelegraph',  name: 'CoinTelegraph',    avatar: 'CT', color: '#00cc88' },
+];
+
+const WATCH_COINS_TW = ['BTC','ETH','SOL','XRP','DOGE','PEPE','AVAX','LINK','BNB','ADA','MATIC'];
+
+let allTweets = [];
+let twFilter  = 'all';
+
+function setTwFilter(f, btn) {
+  twFilter = f;
+  document.querySelectorAll('.tw-acc-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTweets();
+}
+
+async function fetchNitterRSS(handle) {
+  for (const instance of NITTER_INSTANCES) {
+    try {
+      const url  = `${instance}/${handle}/rss`;
+      const resp = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      const xml  = json.contents;
+      if (!xml || xml.length < 100) continue;
+
+      const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+      const acc   = TW_ACCOUNTS.find(a => a.handle === handle) || { handle, name: handle, avatar: handle[0].toUpperCase(), color: '#1d9bf0' };
+
+      return items.slice(0, 8).map(item => {
+        const content = item[1];
+        const title   = (content.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) ||
+                         content.match(/<title>([\s\S]*?)<\/title>/))?.[1]?.trim() || '';
+        const pubDate = (content.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
+        const link    = (content.match(/<link>(.*?)<\/link>/))?.[1] || '';
+
+        // Убираем имя автора из начала твита
+        const text = title.replace(/^[^:]+:\s*/, '').trim();
+
+        // Находим монеты
+        const coins = WATCH_COINS_TW.filter(c =>
+          text.toUpperCase().includes(c) || text.includes('$' + c)
+        );
+
+        // Определяем тональность по ключевым словам
+        const upper = text.toUpperCase();
+        const bullWords = ['BULLISH','PUMP','ATH','BUY','MOON','SURGE','RALLY','LONG','HODL','ACCUMULATE'];
+        const bearWords = ['BEARISH','DUMP','CRASH','SELL','BOTTOM','DROP','SHORT','LIQUIDAT','FEAR'];
+        const isBull = bullWords.some(w => upper.includes(w));
+        const isBear = bearWords.some(w => upper.includes(w));
+        const sentiment = isBull ? 'bullish' : isBear ? 'bearish' : 'neutral';
+
+        const diffMin = pubDate ? Math.round((Date.now() - new Date(pubDate).getTime()) / 60000) : 0;
+        const timeStr = diffMin < 60 ? `${diffMin}м назад` :
+                        diffMin < 1440 ? `${Math.floor(diffMin/60)}ч назад` :
+                        `${Math.floor(diffMin/1440)}д назад`;
+
+        return { handle, acc, text, coins, sentiment, timeStr, isFresh: diffMin < 60, link, pubDate };
+      }).filter(t => t.text.length > 5);
+    } catch(e) {
+      continue;
+    }
+  }
+  return [];
+}
+
+async function loadTwitter() {
+  const body   = document.getElementById('twBody');
+  const status = document.getElementById('twStatus');
+  body.innerHTML   = '<div class="tw-loading">ЗАГРУЗКА ТВИТОВ<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
+  status.textContent = 'Подключаемся к Nitter...';
+
+  allTweets = [];
+  let loaded = 0;
+
+  await Promise.all(TW_ACCOUNTS.map(async acc => {
+    try {
+      const tweets = await fetchNitterRSS(acc.handle);
+      allTweets.push(...tweets);
+      loaded++;
+      status.textContent = `Загружено: ${loaded}/${TW_ACCOUNTS.length} аккаунтов...`;
+    } catch(e) {}
+  }));
+
+  // Сортируем по времени
+  allTweets.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+  status.textContent = `✅ Загружено ${allTweets.length} твитов | Обновлено: ${new Date().toLocaleTimeString('ru')}`;
+  renderTweets();
+}
+
+function renderTweets() {
+  const body = document.getElementById('twBody');
+  let filtered = twFilter === 'all' ? allTweets : allTweets.filter(t => t.handle === twFilter);
+
+  if (!filtered.length) {
+    body.innerHTML = '<div class="tw-error">😕 Нет твитов.<br><br>Nitter может быть недоступен — попробуй обновить или зайди позже.</div>';
+    return;
+  }
+
+  body.innerHTML = filtered.map(t => {
+    const sentClass = t.sentiment === 'bullish' ? 'bullish' : t.sentiment === 'bearish' ? 'bearish' : '';
+    const sentBadge = t.sentiment === 'bullish'
+      ? '<span class="tw-sentiment bull">▲ BULLISH</span>'
+      : t.sentiment === 'bearish'
+      ? '<span class="tw-sentiment bear">▼ BEARISH</span>'
+      : '';
+
+    const coinTags = t.coins.map(c => {
+      const cls = c.toLowerCase();
+      return `<span class="tw-coin-tag ${['btc','eth','sol','xrp'].includes(cls)?cls:''}">${c}</span>`;
+    }).join('');
+
+    const safeLink = t.link ? t.link.replace(/nitter\.[^/]+/, 'twitter.com') : '#';
+
+    return `<div class="tw-card ${sentClass}" onclick="window.open('${safeLink}','_blank')">
+      <div class="tw-card-top">
+        <div class="tw-author">
+          <div class="tw-avatar" style="color:${t.acc.color}">${t.acc.avatar}</div>
+          <div>
+            <div class="tw-name">${t.acc.name}</div>
+            <div class="tw-handle">@${t.handle}</div>
+          </div>
+        </div>
+        <span class="tw-time ${t.isFresh?'fresh':''}">${t.timeStr}</span>
+      </div>
+      <div class="tw-text">${t.text.replace(/</g,'&lt;').replace(/>/g,'&gt;').slice(0,280)}</div>
+      <div class="tw-coins" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        ${coinTags}
+        ${sentBadge}
+      </div>
+    </div>`;
+  }).join('');
+}
 
 // ── INIT ─────────────────────────────────────────────────────
 loadRadar();

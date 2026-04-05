@@ -1575,11 +1575,6 @@ const klines1h = data1h.data.reverse().map(c => ({
 
 // Загружаем 15m свечи для S1
 
-if (!data15m || data15m.code !== '0') continue;
-const klines15m = data15m.data.reverse().map(c => ({
-  ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
-  volume:+c[5], quoteVolume:+c[7],
-}));
 
 if (klines1h.length < 60) continue;
 
@@ -1589,6 +1584,7 @@ if (klines1h.length < 60) continue;
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
+  { name:'S9 Pairs Trading',   fn: btS9 },
 ];
 
     for (const { name, fn } of runs) {
@@ -1798,7 +1794,7 @@ if (alreadyOpen) {
       const fngValue = fng?.value || 50;
 
       const best = filtered
-        .filter(s => s.confidence >= 90)
+        .filter(s => s.confidence >= 80)
         .filter(s => {
           // Extreme Fear (< 25) — блокируем LONG кроме S2 и S7
           if (fngValue < 25 && s.direction === 'long') {

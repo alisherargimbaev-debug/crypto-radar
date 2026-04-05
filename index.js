@@ -1558,7 +1558,8 @@ async function runBacktest(coins, limit = 300) {
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-  };
+  'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+};
 
   for (const instId of coins) {
     const symbol = instId.replace('-USDT-SWAP','');
@@ -1586,6 +1587,7 @@ if (klines1h.length < 60 || klines15m.length < 60) continue;
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
+  { name:'S9 Pairs Trading',   fn: btS9 },
 ];
 
     for (const { name, fn } of runs) {
@@ -1685,8 +1687,16 @@ function btS4(klines, i) {
   if (slice.length < 55) return null;
   const cross = calcMACross(slice, 20, 50);
   const rsi   = calcRSI(slice, 14);
-  if (cross==='bullish' && rsi<55) return 'long';
-  if (cross==='bearish' && rsi>45) return 'short';
+  const macd  = calcMACD(slice);
+  const ma20  = calcSMA(slice, 20);
+  const ma50  = calcSMA(slice, 50);
+  const price = slice[slice.length-1].close;
+  const maDist = Math.abs(ma20 - ma50) / ma50 * 100;
+  const freshCross  = maDist < 0.5;
+  const priceNearMA = Math.abs(price - ma20) / ma20 * 100 < 1.5;
+  if (!freshCross && !priceNearMA) return null;
+  if (cross==='bullish' && rsi<55 && rsi>30 && macd.hist>0) return 'long';
+  if (cross==='bearish' && rsi>45 && rsi<70 && macd.hist<0) return 'short';
   return null;
 }
 
@@ -1699,6 +1709,25 @@ function btS5(klines, i) {
   const rsiPrev= calcRSI(slice.slice(0,-5), 14);
   if (lows[lows.length-1] < Math.min(...lows.slice(-10,-1)) && rsiNow > rsiPrev+3 && rsiNow < 45) return 'long';
   if (closes[closes.length-1] > Math.max(...closes.slice(-10,-1)) && rsiNow < rsiPrev-3 && rsiNow > 55) return 'short';
+  return null;
+}
+
+function btS9(klines, i) {
+  if (i < 24) return null;
+  const slice   = klines.slice(0, i+1);
+  const btcClose = slice[slice.length-1].close;
+  const btc3hAgo = slice[slice.length-4]?.close;
+  if (!btc3hAgo) return null;
+  const btcChange = (btcClose - btc3hAgo) / btc3hAgo * 100;
+  const rsi = calcRSI(slice, 14);
+
+  // Симулируем расхождение через изменение самой монеты vs BTC
+  // В бэктесте нет второй монеты — используем RSI дивергенцию как прокси
+  const rsiPrev = calcRSI(slice.slice(0, -3), 14);
+  const divergence = Math.abs(btcChange) > 2 && Math.abs(rsi - rsiPrev) > 3;
+
+  if (btcChange > 2 && rsi < rsiPrev - 3 && rsi < 55) return 'long';
+  if (btcChange < -2 && rsi > rsiPrev + 3 && rsi > 45) return 'short';
   return null;
 }
 

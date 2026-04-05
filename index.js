@@ -25,8 +25,8 @@ const STRATEGY_SL = {
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
 
-const MIN_VOLUME_24H = 50000000;
-const TOP_N          = 15;
+const MIN_VOLUME_24H = 10000000;
+const TOP_N          = 30;
 const COOLDOWN_MIN   = 30;
 
 // Рейтинг стратегий по win rate

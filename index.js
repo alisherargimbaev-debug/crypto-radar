@@ -1442,6 +1442,16 @@ app.get('/backtest/run', async (req, res) => {
   }
 });
 
+async function httpGetFast(url) {
+  try {
+    await new Promise(r => setTimeout(r, 300)); // быстрая пауза 300ms
+    const resp = await axios.get(url, { timeout: 30000 });
+    return resp.data;
+  } catch(e) {
+    return null;
+  }
+}
+
 async function runBacktest(coins, limit = 300) {
   const strategies = {
   'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
@@ -1454,7 +1464,7 @@ async function runBacktest(coins, limit = 300) {
   for (const instId of coins) {
     const symbol = instId.replace('-USDT-SWAP','');
     // Загружаем 1H свечи для S2 S4 S5 S7
-const data1h = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=1H&limit=${limit}`);
+const data1h = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=1H&limit=${limit}`);
 if (!data1h || data1h.code !== '0') continue;
 const klines1h = data1h.data.reverse().map(c => ({
   ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
@@ -1462,7 +1472,7 @@ const klines1h = data1h.data.reverse().map(c => ({
 }));
 
 // Загружаем 15m свечи для S1
-const data15m = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=15m&limit=${limit}`);
+const data15m = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=15m&limit=${limit}`);
 if (!data15m || data15m.code !== '0') continue;
 const klines15m = data15m.data.reverse().map(c => ({
   ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
@@ -1481,7 +1491,7 @@ if (klines1h.length < 60 || klines15m.length < 60) continue;
 
     for (const { name, fn } of runs) {
       // S1 использует 15m свечи, остальные — 1H
-const klines = name === 'S1 Пробой 15m' ? klines15m : klines1h;
+      const klines = name === 'S1 Пробой 15m' ? klines15m : klines1h;
       let lastI = -10;
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;

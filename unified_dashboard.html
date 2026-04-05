@@ -425,17 +425,16 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <!-- ═══════════════════ PAGE 4: TWITTER ═══════════════════ -->
 <div id="page-twitter" class="page">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-    <div class="sec-title">𝕏 Крипто Twitter</div>
+    <div class="sec-title">📡 Крипто Медиа (RSS)</div>
     <button class="refresh-btn" onclick="loadTwitter()">↻ ОБНОВИТЬ</button>
   </div>
   <div class="tw-accounts">
     <button class="tw-acc-btn active" onclick="setTwFilter('all',this)">ВСЕ</button>
-    <button class="tw-acc-btn" onclick="setTwFilter('elonmusk',this)">⚡ Elon Musk</button>
-    <button class="tw-acc-btn" onclick="setTwFilter('cz_binance',this)">🔶 CZ Binance</button>
-    <button class="tw-acc-btn" onclick="setTwFilter('VitalikButerin',this)">💜 Vitalik</button>
-    <button class="tw-acc-btn" onclick="setTwFilter('saylor',this)">🟠 Saylor</button>
-    <button class="tw-acc-btn" onclick="setTwFilter('CoinDesk',this)">📰 CoinDesk</button>
-    <button class="tw-acc-btn" onclick="setTwFilter('Cointelegraph',this)">📰 CoinTelegraph</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('cointelegraph',this)">📰 CoinTelegraph</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('coindesk',this)">📰 CoinDesk</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('decrypt',this)">🔓 Decrypt</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('theblock',this)">🧱 The Block</button>
+    <button class="tw-acc-btn" onclick="setTwFilter('bitcoinmag',this)">🟠 Bitcoin Mag</button>
   </div>
   <div id="twStatus" style="font-size:0.6rem;color:var(--dim);margin-bottom:10px;"></div>
   <div id="twBody" class="tw-grid"><div class="no-data">Нажми ↻ ОБНОВИТЬ чтобы загрузить твиты</div></div>
@@ -812,22 +811,41 @@ async function loadNews() {
   const body = document.getElementById('newsBody');
   body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
   try {
-    const cats = 'BTC,ETH,SOL,XRP,Altcoin,Blockchain,Business,Market,Regulation,Macro';
-    const url  = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cats}&excludeCategories=Sponsored&lang=EN${CRYPTOCOMPARE_KEY ? '&api_key=' + CRYPTOCOMPARE_KEY : ''}`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (data.Response === 'Success' && data.Data?.length) {
+    // Пробуем несколько способов загрузки новостей
+    const apiUrl = `https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=50${CRYPTOCOMPARE_KEY ? '&api_key=' + CRYPTOCOMPARE_KEY : ''}`;
+    
+    // Способ 1: прямой запрос
+    let data = null;
+    try {
+      const r = await fetch(apiUrl);
+      data = await r.json();
+    } catch(e) {}
+
+    // Способ 2: через corsproxy если прямой не работает
+    if (!data?.Data?.length) {
+      try {
+        const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(apiUrl)}`);
+        data = await r.json();
+      } catch(e) {}
+    }
+
+    // Способ 3: через allorigins
+    if (!data?.Data?.length) {
+      try {
+        const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`);
+        const j = await r.json();
+        data = JSON.parse(j.contents);
+      } catch(e) {}
+    }
+
+    if (data?.Data?.length) {
       allNews = data.Data;
       renderNews();
-    } else if (data.Response === 'Error' || !data.Data?.length) {
-      // Fallback — пробуем без ключа
-      const r2 = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=50');
-      const d2 = await r2.json();
-      if (d2.Data?.length) { allNews = d2.Data; renderNews(); }
-      else body.innerHTML = '<div class="no-data">Нет новостей. Проверь CRYPTOCOMPARE_KEY в Render</div>';
+    } else {
+      body.innerHTML = '<div class="no-data">Не удалось загрузить новости.<br>Проверь что CRYPTOCOMPARE_KEY настроен в Render → Environment</div>';
     }
   } catch(e) {
-    body.innerHTML = `<div class="no-data">Ошибка загрузки новостей: ${e.message}</div>`;
+    body.innerHTML = `<div class="no-data">Ошибка: ${e.message}</div>`;
   }
 }
 
@@ -872,15 +890,14 @@ function renderNews() {
 }
 
 // ══════════════════════════════════════════════════════════
-//  TWITTER
+//  КРИПТО МЕДИА (RSS вместо Nitter)
 // ══════════════════════════════════════════════════════════
-const TW_ACCOUNTS = [
-  { handle: 'elonmusk',       name: 'Elon Musk',      avatar: 'E', color: '#f7931a' },
-  { handle: 'cz_binance',     name: 'CZ Binance',     avatar: 'C', color: '#f3ba2f' },
-  { handle: 'VitalikButerin', name: 'Vitalik',        avatar: 'V', color: '#627eea' },
-  { handle: 'saylor',         name: 'Saylor',         avatar: 'S', color: '#ff8c00' },
-  { handle: 'CoinDesk',       name: 'CoinDesk',       avatar: 'CD', color: '#1d9bf0' },
-  { handle: 'Cointelegraph',  name: 'CoinTelegraph',  avatar: 'CT', color: '#00cc88' },
+const RSS_SOURCES = [
+  { handle: 'cointelegraph', name: 'CoinTelegraph', url: 'https://cointelegraph.com/rss',                     avatar: 'CT', color: '#00cc88' },
+  { handle: 'coindesk',      name: 'CoinDesk',      url: 'https://www.coindesk.com/arc/outboundfeeds/rss/',   avatar: 'CD', color: '#1d9bf0' },
+  { handle: 'decrypt',       name: 'Decrypt',       url: 'https://decrypt.co/feed',                          avatar: 'DC', color: '#9945ff' },
+  { handle: 'theblock',      name: 'The Block',     url: 'https://www.theblock.co/rss.xml',                  avatar: 'TB', color: '#ff8c00' },
+  { handle: 'bitcoinmag',    name: 'Bitcoin Mag',   url: 'https://bitcoinmagazine.com/.rss/full/',            avatar: 'BM', color: '#f7931a' },
 ];
 const WATCH_COINS_TW = ['BTC','ETH','SOL','XRP','DOGE','PEPE','AVAX','LINK','BNB','ADA'];
 let allTweets = [], twFilter = 'all';
@@ -889,6 +906,62 @@ function setTwFilter(f, btn) {
   twFilter = f;
   document.querySelectorAll('.tw-acc-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  renderTweets();
+}
+
+async function loadTwitter() {
+  const body = document.getElementById('twBody');
+  const status = document.getElementById('twStatus');
+  body.innerHTML = '<div class="no-data">Загружаем новости...</div>';
+  status.textContent = 'Загружаем крипто медиа...';
+  allTweets = [];
+  let loaded = 0;
+  const PROXIES = [
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+  ];
+
+  await Promise.all(RSS_SOURCES.map(async src => {
+    for (const proxyFn of PROXIES) {
+      try {
+        const resp = await fetch(proxyFn(src.url), { signal: AbortSignal.timeout(8000) });
+        if (!resp.ok) continue;
+        const txt = await resp.text();
+        let xml;
+        try { xml = JSON.parse(txt).contents; } catch { xml = txt; }
+        if (!xml || xml.length < 100) continue;
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xml, 'text/xml');
+        const items = doc.querySelectorAll('item');
+
+        items.forEach((item, idx) => {
+          if (idx >= 10) return;
+          const title = item.querySelector('title')?.textContent?.trim() || '';
+          const pubDate = item.querySelector('pubDate')?.textContent || '';
+          const link = item.querySelector('link')?.textContent?.trim() || '';
+          if (!title || title.length < 5) return;
+
+          const diffMin = pubDate ? Math.round((Date.now() - new Date(pubDate).getTime()) / 60000) : 999;
+          const timeStr = diffMin < 60 ? diffMin + 'м назад' :
+                          diffMin < 1440 ? Math.floor(diffMin/60) + 'ч назад' :
+                          Math.floor(diffMin/1440) + 'д назад';
+          const coins = WATCH_COINS_TW.filter(coin => title.toUpperCase().includes(coin) || title.includes('$'+coin));
+          const upper = title.toUpperCase();
+          const isBull = ['BULLISH','PUMP','ATH','MOON','SURGE','RALLY','RISE','GAIN'].some(w => upper.includes(w));
+          const isBear = ['BEARISH','DUMP','CRASH','SELL','DROP','FALL','FEAR','WARN'].some(w => upper.includes(w));
+          const acc = { name: src.name, avatar: src.avatar, color: src.color };
+          allTweets.push({ handle: src.handle, acc, text: title, coins, sentiment: isBull?'bullish':isBear?'bearish':'neutral', timeStr, isFresh: diffMin < 60, link, pubDate });
+        });
+        loaded++;
+        status.textContent = 'Загружено: ' + loaded + '/' + RSS_SOURCES.length + ' источников...';
+        break;
+      } catch(e) { continue; }
+    }
+  }));
+
+  allTweets.sort((a,b) => new Date(b.pubDate) - new Date(a.pubDate));
+  status.textContent = allTweets.length ? ('✅ Загружено ' + allTweets.length + ' статей') : '❌ Не удалось загрузить. Попробуй позже.';
   renderTweets();
 }
 

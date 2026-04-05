@@ -1555,7 +1555,7 @@ async function httpGetFast(url) {
 
 async function runBacktest(coins, limit = 300) {
   const strategies = {
-  'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  /* 'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, */
   'S2 Bounce 1h':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
@@ -1584,7 +1584,7 @@ const klines15m = data15m.data.reverse().map(c => ({
 if (klines1h.length < 60 || klines15m.length < 60) continue;
 
     const runs = [
-  { name:'S1 Пробой 15m',      fn: btS1 },
+  /* { name:'S1 Пробой 15m',      fn: btS1 }, */
   { name:'S2 Bounce 1h',       fn: btS2 },
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
@@ -1715,14 +1715,13 @@ function btS5(klines, i) {
 
 function btS9(klines, i) {
   if (i < 10) return null;
-  const slice  = klines.slice(0, i+1);
-  const rsiNow = calcRSI(slice, 14);
+  const slice   = klines.slice(0, i+1);
+  const rsiNow  = calcRSI(slice, 14);
   const rsiPrev = calcRSI(slice.slice(0, -4), 14);
-  const last   = slice[slice.length-1];
-  const prev4  = slice[slice.length-5];
+  const last    = slice[slice.length-1];
+  const prev4   = slice[slice.length-5];
   if (!prev4) return null;
   const change4h = (last.close - prev4.close) / prev4.close * 100;
-
   if (change4h < -2.0 && rsiNow > rsiPrev + 2) return 'long';
   if (change4h > 2.0  && rsiNow < rsiPrev - 2) return 'short';
   return null;

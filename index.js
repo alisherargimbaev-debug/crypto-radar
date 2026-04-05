@@ -2023,7 +2023,85 @@ async function checkWhales() {
     `⚠️ Не является финансовым советом.`
   );
 }
+// ============================================================
+//  RSS НОВОСТИ
+// ============================================================
+async function checkRSSNews() {
+  const RSS_FEEDS = [
+    'https://cointelegraph.com/rss',
+    'https://coindesk.com/arc/outboundfeeds/rss/',
+    'https://decrypt.co/feed',
+  ];
 
+  const WATCH_COINS = ['BTC','ETH','SOL','XRP','DOGE','PEPE','AVAX','LINK','BNB','ADA'];
+
+  try {
+    for (const feedUrl of RSS_FEEDS) {
+      const data = await httpGet(feedUrl);
+      if (!data) continue;
+
+      // Парсим RSS (простой XML парсинг)
+      const items = [...data.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+      
+      for (const item of items.slice(0, 10)) {
+        const content = item[1];
+        const title   = (content.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || 
+                         content.match(/<title>(.*?)<\/title>/))?.[1] || '';
+        const pubDate = (content.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
+        const link    = (content.match(/<link>(.*?)<\/link>/) ||
+                         content.match(/<link\s[^>]*href="(.*?)"/))?.[1] || '';
+
+        if (!title) continue;
+
+        // Проверяем свежесть — только за последний час
+        const pubTs = pubDate ? new Date(pubDate).getTime() : 0;
+        if (pubTs && Date.now() - pubTs > 60 * 60 * 1000) continue;
+
+        // Проверяем упоминание монет
+        const mentioned = WATCH_COINS.filter(coin => 
+          title.toUpperCase().includes(coin) ||
+          title.toUpperCase().includes(coin + 'USD')
+        );
+        if (!mentioned.length) continue;
+
+        // Проверяем не отправляли ли уже эту новость
+        const newsKey = title.slice(0, 50);
+        if (store.sentNews && store.sentNews.has(newsKey)) continue;
+        if (!store.sentNews) store.sentNews = new Set();
+        store.sentNews.add(newsKey);
+        if (store.sentNews.size > 200) {
+          const first = store.sentNews.values().next().value;
+          store.sentNews.delete(first);
+        }
+
+        // AI анализ тональности
+        const prompt = `Крипто новость: "${title}"\nОтветь ОДНИМ словом: BULLISH, BEARISH или NEUTRAL`;
+        const sentiment = (await callGroq(prompt)).trim().toUpperCase();
+
+        if (sentiment.includes('NEUTRAL')) continue; // нейтральные не отправляем
+
+        const emoji  = sentiment.includes('BULLISH') ? '🟢' : '🔴';
+        const action = sentiment.includes('BULLISH') ? 'ПОЗИТИВНАЯ' : 'НЕГАТИВНАЯ';
+        const coins  = mentioned.join(', ');
+
+        await sendTelegram(
+          `📰 КРИПТО НОВОСТЬ — ${action}\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `${emoji} ${title}\n\n` +
+          `💰 Монеты: ${coins}\n` +
+          `⏰ ${getAlmatyTime()} Алматы\n` +
+          (link ? `🔗 ${link}\n` : '') +
+          `━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `⚠️ Не является финансовым советом.`
+        );
+
+        console.log(`[RSS] ${action}: ${title.slice(0,60)} | ${coins}`);
+      }
+    }
+  } catch(e) {
+    console.error('checkRSSNews error:', e.message);
+  }
+}
 // Раз в день — дневной отчёт
 async function dailyReport() {
   const since   = Date.now() - 24*60*60*1000;
@@ -2066,6 +2144,8 @@ cron.schedule('*/15 * * * *', () => {
   checkOutcomes().catch(e => console.error('checkOutcomes error:', e.message));
   checkTradeTimers().catch(e => console.error('checkTradeTimers error:', e.message));
 });
+// Каждые 30 минут — RSS новости
+cron.schedule('*/30 * * * *', () => { checkRSSNews().catch(e => console.error('RSS error:', e.message)); });
 
 // Каждый час (в 00 минут)
 cron.schedule('0 */2 * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });

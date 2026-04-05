@@ -1292,11 +1292,7 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S8 error:', e.message); }
 
-  } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
-  return signals;
-}
-
-// S9: Pairs Trading — корреляция BTC/ETH
+    // S9: Pairs Trading — корреляция BTC/ETH
     try {
       if (coinData.symbol === 'ETH' || coinData.symbol === 'BTC') {
         const btcData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=1H&limit=24');
@@ -1370,6 +1366,12 @@ if (k1h.length >= 55) {
         }
       }
     } catch(e) { console.error('S9 error:', e.message); }
+
+  } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
+  return signals;
+}
+
+
 
 // ============================================================
 //  ФОРМАТИРОВАНИЕ

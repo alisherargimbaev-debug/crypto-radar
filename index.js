@@ -976,7 +976,7 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
-// S1: Пробой на импульсе (15m) — с подтверждением объёма и S/R
+/*/ S1: Пробой на импульсе (15m) — с подтверждением объёма и S/R
     if (!asianSession && k15m.length >= 10) {
       const pc    = calcPriceChangePct(k15m);
       const vd    = tf5m ? tf5m.delta : calcVolumeDelta(k15m);
@@ -1024,7 +1024,7 @@ async function runStrategies(instId, coinData, asianSession) {
         }
       }
     }
-
+*/
 // S2: Liquidity Bounce (1h) — только в боковике или развороте
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
@@ -1609,7 +1609,7 @@ if (klines1h.length < 60 || klines15m.length < 60) continue;
         const tp1 = direction === 'long' ? price + atr*3.0 : price - atr*3.0;
         const tp2 = direction === 'long' ? price + atr*4.5 : price - atr*4.5;
 
-        const future = klines.slice(i+1, i+25);
+        const future = klines.slice(i+1, i+49); // 48 свечей = 48 часов для 1H
         let outcome  = 'expired', pnl = 0;
 
         for (const c of future) {
@@ -1857,7 +1857,7 @@ async function checkTradeTimers() {
       );
     }
 
-    if (ageMin >= 240 && !reminded4h) {
+    if (ageMin >= 480 && !reminded4h) {
       trade.reminded4h = true;
       const dir = trade.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
       await sendTelegram(
@@ -1870,7 +1870,7 @@ async function checkTradeTimers() {
         `⏱ Открыта: ${ageHour}ч ${ageMin % 60}мин\n\n` +
         `📌 ${trade.strategy}\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🔴 Сделка будет автоматически закрыта как expired.`
+        `🔴 Сделка будет автоматически закрыта как expired через несколько минут.`
       );
     }
   }
@@ -1883,7 +1883,7 @@ async function checkOutcomes() {
 
   for (const trade of store.openTrades) {
     const ageMin = (Date.now() - trade.ts) / 60000;
-    if (ageMin > 240) { trade.outcome = 'expired'; trade.closedAt = Date.now(); closed.push(trade); continue; }
+    if (ageMin > 480) { trade.outcome = 'expired'; trade.closedAt = Date.now(); closed.push(trade); continue; }
 
     const price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }

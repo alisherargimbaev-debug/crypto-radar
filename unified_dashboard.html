@@ -191,99 +191,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .daily-item-label{font-size:0.52rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;}
 .daily-item-val{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:1px;}
 
-.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;}
-.news-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--dim);padding:14px 16px;cursor:pointer;transition:all .2s;position:relative;}
-.news-card:hover{border-color:var(--accent);border-left-color:var(--accent);background:#0a1020;}
-.news-card.cat-btc{border-left-color:#f7931a;}
-.news-card.cat-eth{border-left-color:#627eea;}
-.news-card.cat-sol{border-left-color:#9945ff;}
-.news-card.cat-xrp{border-left-color:#00aae4;}
-.news-card.cat-macro{border-left-color:#4488ff;}
-.news-card.cat-regulation{border-left-color:#ff3366;}
-.news-source{font-size:0.5rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;}
-.news-time-badge{background:rgba(255,255,255,0.05);padding:1px 7px;font-size:0.5rem;color:var(--dim);border:1px solid var(--border);}
-.news-time-badge.fresh{color:var(--accent);border-color:rgba(0,255,136,0.3);}
-.news-title{font-size:0.78rem;color:#fff;line-height:1.55;margin-bottom:8px;font-weight:500;}
-.news-body{font-size:0.6rem;color:var(--dim);line-height:1.6;margin-bottom:10px;}
-.news-footer{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
-.news-tag{font-size:0.48rem;padding:2px 7px;letter-spacing:1px;border:1px solid var(--border);color:var(--dim);text-transform:uppercase;}
-.news-tag.t-btc{border-color:rgba(247,147,26,0.4);color:#f7931a;}
-.news-tag.t-eth{border-color:rgba(98,126,234,0.4);color:#627eea;}
-.news-tag.t-sol{border-color:rgba(153,69,255,0.4);color:#9945ff;}
-.news-tag.t-xrp{border-color:rgba(0,170,228,0.4);color:#00aae4;}
-.news-tag.t-business,.news-tag.t-market{border-color:rgba(68,136,255,0.3);color:var(--blue);}
-.news-tag.t-regulation{border-color:rgba(255,51,102,0.3);color:var(--red);}
-.news-tag.t-macro{border-color:rgba(68,136,255,0.3);color:var(--blue);}
-
-/* ═══════════════ МОБИЛЬНАЯ ВЕРСИЯ ═══════════════ */
-@media(max-width:768px){
-  .wrap{padding:10px 12px;}
-  h1{font-size:1.3rem;letter-spacing:2px;}
-  .hdr-right{gap:6px;}
-  .hdr-time{display:none;}
-
-  .nav-btn{padding:8px 12px;font-size:0.6rem;}
-
-  /* Радар */
-  .tbl-head{display:none;}
-  .coin-row{
-    grid-template-columns:1fr 1fr;
-    grid-template-rows:auto auto auto;
-    gap:6px;
-    padding:12px;
-    border-left:3px solid var(--border);
-  }
-  .coin-row.anomaly-high{border-left-color:var(--accent);}
-  .coin-row.anomaly-low{border-left-color:var(--red);}
-  .rank{display:none;}
-  .coin-name{grid-column:1;grid-row:1;}
-  .price{grid-column:2;grid-row:1;font-size:0.8rem;}
-  .change{grid-column:1;grid-row:2;justify-content:flex-start;font-size:0.75rem;}
-  .volume{grid-column:2;grid-row:2;font-size:0.65rem;}
-  .funding{grid-column:1;grid-row:3;justify-content:flex-start;font-size:0.65rem;}
-  .grade-wrap{grid-column:2;grid-row:3;display:flex;justify-content:flex-end;}
-  .next-f{display:none;}
-  .anomaly-badges{grid-column:1/-1;grid-row:4;}
-
-  .controls{gap:6px;}
-  .search-box{width:100%;}
-  .thr-ctrl{margin-left:0;width:100%;}
-
-  /* Статистика */
-  .stats-row{grid-template-columns:repeat(2,1fr)!important;}
-  .main-grid{grid-template-columns:1fr;}
-  .stbl-head{display:none;}
-  .sig-row{
-    grid-template-columns:1fr 1fr;
-    grid-template-rows:auto auto auto;
-    gap:4px;
-    padding:10px 12px;
-  }
-  .sig-row > div:nth-child(1){display:none;}
-  .sym{grid-column:1;grid-row:1;font-size:0.8rem;}
-  .sig-row > div:nth-child(3){grid-column:2;grid-row:1;justify-content:flex-end;}
-  .strat-tag{grid-column:1/-1;grid-row:2;font-size:0.6rem;}
-  .price-c:nth-of-type(1){grid-column:1;grid-row:3;}
-  .price-c:nth-of-type(2){grid-column:2;grid-row:3;justify-content:flex-end;}
-  .sig-row > div:nth-child(7){grid-column:1;grid-row:4;}
-  .sig-row > div:nth-child(8){grid-column:2;grid-row:4;justify-content:flex-end;}
-  .sig-row > div:nth-child(9){grid-column:1/-1;grid-row:5;}
-  .time-c{grid-column:1/-1;grid-row:6;}
-
-  .open-trade{padding:8px 0;}
-  .ot-levels{grid-template-columns:1fr 1fr;gap:4px;}
-
-  /* Новости */
-  .news-grid{grid-template-columns:1fr;}
-  .news-title{font-size:0.72rem;}
-
-  /* Кнопки фильтров */
-  #page-news > div{flex-direction:column;align-items:flex-start;}
-  #page-news > div > div{width:100%;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;}
-
-  .period-btns{flex-wrap:wrap;}
-  .period-btn{min-width:60px;}
-}
 /* TOAST */
 .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--accent);color:#000;padding:9px 22px;font-family:'Space Mono',monospace;font-size:0.7rem;font-weight:700;letter-spacing:2px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999;}
 .toast.show{opacity:1;}
@@ -318,8 +225,6 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <div class="nav">
   <button class="nav-btn active" onclick="showPage('radar',this)">📡 РАДАР</button>
   <button class="nav-btn" onclick="showPage('stats',this)">📊 СТАТИСТИКА</button>
-  <button class="nav-btn" onclick="showPage('news',this)">📰 НОВОСТИ</button>
-  <button class="nav-btn" onclick="showPage('backtest',this)">🔬 БЭКТЕСТ</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -443,55 +348,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
         </div>
       </div>
       <div class="side-card">
-        <div class="side-title">📈 PnL по дням</div>
-        <canvas id="pnlChart" style="width:100%;height:140px;"></canvas>
-        <div id="pnlEmpty" class="no-data" style="display:none;">Нет данных</div>
-      </div>
-      <div class="side-card">
         <div class="side-title">🏆 Топ стратегии</div>
         <div id="stratStats"><div class="no-data">Нет данных</div></div>
       </div>
     </div>
   </div>
-</div>
-
-<!-- ═══════════════════ PAGE 3: NEWS ═══════════════════ -->
-<div id="page-news" class="page">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-    <div class="sec-title">Крипто и макро новости</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-      <button class="filter-btn news-filter-btn active" onclick="setNewsFilter('all',this)">ВСЕ</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('BTC',this)">BTC</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('ETH',this)">ETH</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('SOL',this)">SOL</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('XRP',this)">XRP</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('macro',this)">🌍 МАКРО</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('regulation',this)">⚖️ РЕГУЛЯЦИЯ</button>
-      <button class="refresh-btn" onclick="loadNews()">↻ ОБНОВИТЬ</button>
-    </div>
-  </div>
-  <div id="newsBody">
-    <div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>
-  </div>
-</div>
-
-<!-- ═══════════════════ PAGE 4: BACKTEST ═══════════════════ -->
-<div id="page-backtest" class="page">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-    <div class="sec-title">🔬 Бэктестинг стратегий</div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <input type="text" class="search-box" id="btCoins" placeholder="BTC,ETH,SOL,XRP" style="width:200px;">
-      <select id="btLimit" style="background:var(--panel);border:1px solid var(--border);color:var(--text);padding:7px 12px;font-family:'Space Mono',monospace;font-size:0.65rem;">
-        <option value="100">~4 дня</option>
-        <option value="200">~8 дней</option>
-        <option value="300" selected>~12 дней</option>
-        <option value="500">~20 дней</option>
-      </select>
-      <button class="refresh-btn" id="btRunBtn" onclick="runBacktest()">▶ ЗАПУСТИТЬ</button>
-    </div>
-  </div>
-  <div id="btStatus" style="font-size:0.65rem;color:var(--dim);margin-bottom:12px;"></div>
-  <div id="btResults"></div>
 </div>
 
 </div>
@@ -514,9 +375,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   btn.classList.add('active');
-   if (id === 'stats') loadStats();
-  if (id === 'news' && !allNews.length) loadNews();
-  if (id === 'backtest') document.getElementById('btStatus').textContent = 'Введи монеты и нажми ▶ ЗАПУСТИТЬ';
+  if (id === 'stats' && !allTrades.length) loadStats();
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -678,15 +537,8 @@ async function loadRadar() {
 // ══════════════════════════════════════════════════════════════
 //  STATS PAGE
 // ══════════════════════════════════════════════════════════════
-async function sbFetch(table, params='') {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
-    headers: {
-      'apikey':        SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Content-Type':  'application/json',
-    }
-  });
-  if (!r.ok) throw new Error(`Supabase ${table}: ${r.status} ${r.statusText}`);
+async function sbFetch(table,params='') {
+  const r=await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`,{headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}});
   return r.json();
 }
 function fmtTs(ts){ if(!ts)return'—'; const d=new Date(+ts+5*60*60*1000); return d.toISOString().replace('T',' ').substr(0,16); }
@@ -694,10 +546,7 @@ function fmtP(p){ return p?'$'+parseFloat(p).toFixed(4):'—'; }
 function fmtPnl(p){ if(p==null)return'<span style="color:var(--dim)">—</span>'; const v=parseFloat(p); return`<span class="${v>=0?'pnl-pos':'pnl-neg'}">${v>=0?'+':''}${v.toFixed(1)}%</span>`; }
 function confCol(c){ return c>=90?'var(--accent)':c>=75?'var(--yellow)':'var(--blue)'; }
 function outHTML(o){ const m={tp1:['out-tp','✅ TP1'],tp2:['out-tp','🏆 TP2'],sl:['out-sl','❌ SL'],expired:['out-exp','⏰ ИСТ']}; const[cl,lb]=m[o]||['out-open','⏳ ОТКР']; return`<span class="out-badge ${cl}">${lb}</span>`; }
-function shortStrat(s){
-  if(!s) return '—';
-  return s.replace(/^.{1,3}️⃣\s*/u, '').replace(/\(.*?\)/g, '').trim();
-}
+function shortStrat(s){ if(!s)return'—'; return s.replace(/\d️⃣\s*/,'').replace(/\(.*?\)/g,'').trim(); }
 function periodMs(){ return{day:86400000,week:7*86400000,month:30*86400000,all:Infinity}[statPeriod]||86400000; }
 function filterByPeriod(items,tsField){ const ms=periodMs(); if(ms===Infinity)return items; const since=Date.now()-ms; return items.filter(i=>(+i[tsField]||0)>=since); }
 function filterByDir(items){
@@ -819,76 +668,6 @@ function renderStatsBar(){
     </div>`;
   }).join('');
 }
-function renderPnlChart() {
-  const canvas = document.getElementById('pnlChart');
-  const empty  = document.getElementById('pnlEmpty');
-  if (!canvas) return;
-
-  // Группируем PnL по дням
-  const byDay = {};
-  allTrades.forEach(t => {
-    if (!t.closed_at || !t.pnl) return;
-    const d = new Date(+t.closed_at + 5*60*60*1000).toISOString().substr(0,10);
-    byDay[d] = (byDay[d] || 0) + parseFloat(t.pnl);
-  });
-
-  const days = Object.keys(byDay).sort().slice(-14); // последние 14 дней
-  if (!days.length) {
-    canvas.style.display = 'none';
-    empty.style.display  = 'block';
-    return;
-  }
-
-  canvas.style.display = 'block';
-  empty.style.display  = 'none';
-
-  const vals   = days.map(d => byDay[d]);
-  const maxAbs = Math.max(...vals.map(Math.abs), 1);
-  const ctx    = canvas.getContext('2d');
-  const W      = canvas.offsetWidth || 300;
-  const H      = 140;
-  canvas.width  = W;
-  canvas.height = H;
-
-  ctx.clearRect(0, 0, W, H);
-
-  // Нулевая линия
-  const midY = H / 2;
-  ctx.strokeStyle = '#1a2540';
-  ctx.lineWidth   = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, midY);
-  ctx.lineTo(W, midY);
-  ctx.stroke();
-
-  // Bars
-  const barW   = (W / days.length) * 0.6;
-  const gap    = W / days.length;
-
-  days.forEach((d, i) => {
-    const val   = vals[i];
-    const x     = i * gap + gap / 2 - barW / 2;
-    const barH  = Math.abs(val) / maxAbs * (H / 2 - 10);
-    const y     = val >= 0 ? midY - barH : midY;
-    ctx.fillStyle = val >= 0 ? '#00ff88' : '#ff3366';
-    ctx.fillRect(x, y, barW, barH);
-  });
-
-  // Labels (первый и последний день)
-  ctx.fillStyle  = '#4a5a7a';
-  ctx.font       = '9px Space Mono, monospace';
-  ctx.textAlign  = 'left';
-  ctx.fillText(days[0].substr(5), 2, H - 2);
-  ctx.textAlign  = 'right';
-  ctx.fillText(days[days.length-1].substr(5), W - 2, H - 2);
-
-  // Cumulative PnL
-  const total = vals.reduce((a, b) => a + b, 0);
-  ctx.fillStyle  = total >= 0 ? '#00ff88' : '#ff3366';
-  ctx.font       = '10px Space Mono, monospace';
-  ctx.textAlign  = 'left';
-  ctx.fillText(`Итого: ${total >= 0 ? '+' : ''}${total.toFixed(1)}%`, 4, 12);
-}
 async function loadStats(){
   try{
     const [trades,signals,open]=await Promise.all([
@@ -899,174 +678,13 @@ async function loadStats(){
     allTrades=Array.isArray(trades)?trades:[];
     allSignals=Array.isArray(signals)?signals:[];
     openTrades=Array.isArray(open)?open:[];
-    renderStatsBar(); renderPnlChart(); renderTrades(); renderSignals(); renderOpenTrades();
-  }catch(e){
-    console.error('loadStats error:', e);
-    document.getElementById('tradesBody').innerHTML=`<div class="no-data">Ошибка: ${e.message}</div>`;
-  }
+    renderStatsBar(); renderTrades(); renderSignals(); renderOpenTrades();
+  }catch(e){document.getElementById('tradesBody').innerHTML='<div class="no-data">Ошибка загрузки</div>';}
 }
 function setPeriod(p,btn){statPeriod=p;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function setStatFilter(f,btn){statFilter=f;document.querySelectorAll('#page-stats .tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function toggleSignals(btn){const w=document.getElementById('signalsWrap');if(w.style.display==='none'){w.style.display='block';btn.textContent='Свернуть ▲';renderSignals();}else{w.style.display='none';btn.textContent='Развернуть ▼';}}
 
-// ══════════════════════════════════════════════════════════════
-//  NEWS PAGE
-// ══════════════════════════════════════════════════════════════
-let allNews = [], newsFilter = 'all';
-const CC_KEY = '%%CRYPTOCOMPARE_KEY%%';
-
-const NEWS_CATEGORIES = {
-  'all':        'BTC,ETH,SOL,XRP,Macro,Regulation,Business',
-  'BTC':        'BTC',
-  'ETH':        'ETH',
-  'SOL':        'SOL',
-  'XRP':        'XRP',
-  'macro':      'Macro,Business,Economics',
-  'regulation': 'Regulation,Government',
-};
-
-async function loadNews() {
-  const body = document.getElementById('newsBody');
-  body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
-  try {
-    const cat = NEWS_CATEGORIES[newsFilter] || 'BTC,ETH,Macro';
-    const url = `https://min-api.cryptocompare.com/data/v2/news/?categories=${cat}&excludeCategories=Sponsored&lang=EN&api_key=${CC_KEY}&limit=30`;
-    const r   = await fetch(url);
-    const d   = await r.json();
-    allNews   = d.Data || [];
-    renderNews();
-  } catch(e) {
-    document.getElementById('newsBody').innerHTML = `<div class="no-data">Ошибка загрузки</div>`;
-  }
-}
-
-function renderNews() {
-  const body = document.getElementById('newsBody');
-  if (!allNews.length) { body.innerHTML = '<div class="no-data">Нет новостей</div>'; return; }
-
-  body.innerHTML = `<div class="news-grid">${allNews.map(n => {
-    const diff    = Math.round((Date.now() - n.published_on * 1000) / 60000);
-    const timeStr = diff < 60
-      ? `${diff} мин назад`
-      : diff < 1440
-      ? `${Math.round(diff/60)} ч назад`
-      : `${Math.round(diff/1440)} д назад`;
-    const isFresh = diff < 60;
-
-    const cats = (n.categories || '').toUpperCase();
-    let cardCat = 'cat-macro';
-    if (cats.includes('BTC')) cardCat = 'cat-btc';
-    else if (cats.includes('ETH')) cardCat = 'cat-eth';
-    else if (cats.includes('SOL')) cardCat = 'cat-sol';
-    else if (cats.includes('XRP')) cardCat = 'cat-xrp';
-    else if (cats.includes('REGULATION')) cardCat = 'cat-regulation';
-
-    const tags = (n.categories || '').split('|').filter(Boolean).slice(0, 4);
-    const tagHtml = tags.map(t => {
-      const tc = t.trim().toLowerCase();
-      const cls = ['btc','eth','sol','xrp','business','market','regulation','macro'].includes(tc) ? `t-${tc}` : '';
-      return `<span class="news-tag ${cls}">${t.trim()}</span>`;
-    }).join('');
-
-    const safeUrl = encodeURI(n.url);
-    const source  = n.source_info?.name || n.source || '—';
-
-    return `<div class="news-card ${cardCat}" onclick="window.open('${safeUrl}','_blank')">
-      <div class="news-source">
-        <span>${source}</span>
-        <span class="news-time-badge ${isFresh ? 'fresh' : ''}">${timeStr}</span>
-      </div>
-      <div class="news-title">${n.title}</div>
-      <div class="news-body">${(n.body || '').substr(0, 130)}...</div>
-      <div class="news-footer">${tagHtml}</div>
-    </div>`;
-  }).join('')}</div>`;
-}
-
-function setNewsFilter(f, btn) {
-  newsFilter = f;
-  document.querySelectorAll('#page-news .news-filter-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  loadNews();
-}
-// ══════════════════════════════════════════════════════════════
-//  BACKTEST PAGE
-// ══════════════════════════════════════════════════════════════
-async function runBacktest() {
-  const btn    = document.getElementById('btRunBtn');
-  const status = document.getElementById('btStatus');
-  const results= document.getElementById('btResults');
-  const coins  = document.getElementById('btCoins').value || 'BTC,ETH,SOL,XRP,DOGE';
-  const limit  = document.getElementById('btLimit').value;
-
-  btn.disabled = true;
-  btn.textContent = '⏳ Загрузка...';
-  status.textContent = 'Загружаем исторические данные и прогоняем стратегии...';
-  results.innerHTML = '<div class="loading-anim">АНАЛИЗ<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
-
-  try {
-    const r = await fetch(`/backtest/run?coins=${encodeURIComponent(coins)}&limit=${limit}`);
-    const data = await r.json();
-
-    if (data.error) throw new Error(data.error);
-
-    status.textContent = `✅ Готово — монеты: ${coins} | свечей: ${limit}`;
-
-    results.innerHTML = data.map(s => {
-      const wrColor = s.winRate >= 55 ? 'var(--accent)' : s.winRate >= 40 ? 'var(--yellow)' : 'var(--red)';
-      const pnlColor= s.pnl >= 0 ? 'var(--accent)' : 'var(--red)';
-      const emoji   = s.winRate >= 55 ? '🟢' : s.winRate >= 40 ? '🟡' : '🔴';
-
-      const tradesHtml = s.trades.slice(-10).reverse().map(t => {
-        const oc = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
-        const pc = t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
-        return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(26,37,64,.3);font-size:0.58rem;">
-          <span style="color:var(--dim)">${t.symbol}</span>
-          <span style="color:${t.direction==='long'?'var(--accent)':'var(--red)'};">${t.direction==='long'?'▲':'▼'}</span>
-          <span>${oc} ${t.outcome.toUpperCase()}</span>
-          <span class="${pc}">${t.pnl>=0?'+':''}${t.pnl}%</span>
-        </div>`;
-      }).join('');
-
-      return `<div class="tbl-wrap" style="margin-bottom:14px;padding:16px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-          <div style="font-size:0.75rem;color:#fff;font-weight:500;">${emoji} ${s.name}</div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;">
-            <div style="text-align:center;">
-              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">СИГНАЛОВ</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--blue);">${s.signals}</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">WIN RATE</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${wrColor};">${s.winRate}%</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">PnL</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${pnlColor};">${s.pnl>=0?'+':''}${s.pnl}%</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">AVG/СДЕЛКА</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${s.avgPnl>=0?'var(--accent)':'var(--red)'};">${s.avgPnl>=0?'+':''}${s.avgPnl}%</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">TP/SL</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--text);">${s.wins}/${s.losses}</div>
-            </div>
-          </div>
-        </div>
-        <div style="font-size:0.55rem;color:var(--dim);margin-bottom:8px;letter-spacing:1px;">ПОСЛЕДНИЕ 10 СДЕЛОК</div>
-        ${tradesHtml || '<div class="no-data">Нет сделок</div>'}
-      </div>`;
-    }).join('');
-
-  } catch(e) {
-    status.textContent = `❌ Ошибка: ${e.message}`;
-    results.innerHTML = '';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '▶ ЗАПУСТИТЬ';
-  }
-}
 // ── INIT ─────────────────────────────────────────────────────
 loadRadar();
 setInterval(loadRadar, 60000);

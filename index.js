@@ -21,6 +21,7 @@ const STRATEGY_SL = {
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
+  '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -31,13 +32,14 @@ const COOLDOWN_MIN   = 30;
 
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
-  '1️⃣ Пробой на импульсе (15m)':  { color: '#4a5a7a', rating: 'C', wr: '~40% (откл.)' },
-  '2️⃣ Liquidity Bounce (1h)':      { color: '#fbbf24', rating: 'B', wr: '~55%' },
+  '1️⃣ Пробой на импульсе (15m)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
+  '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
   '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~65%' },
   '5️⃣ RSI Дивергенция (1h)':       { color: '#34d399', rating: 'A', wr: '~67%' },
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
+  '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -970,59 +972,104 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
-    // S1: Пробой 15m 
-    /* if (!asianSession && k15m.length >= 2 && oi15m.length >= 2) {
-      const pc  = calcPriceChangePct(k15m);
-      const oi  = calcOiChangePct(oi15m);
-      const vd  = tf15m ? tf15m.delta : calcVolumeDelta(k15m);
-      const vol = k15m.reduce((s, c) => s + c.quoteVolume, 0);
-      const iL  = pc >= S1.priceMin && oi >= S1.oiMin && vd >= S1.vdeltaMin && vol >= S1.volMin;
-      const iS  = pc <= -S1.priceMin && oi >= S1.oiMin && vd <= -S1.vdeltaMin && vol >= S1.volMin;
-      if (iL || iS) {
-        const dir = iL ? 'long' : 'short';
-        const met = [Math.abs(pc)>=S1.priceMin, oi>=S1.oiMin, Math.abs(vd)>=S1.vdeltaMin, vol>=S1.volMin].filter(Boolean).length;
-         // MACD и Bollinger подтверждение для S1
-        const macd15 = calcMACD(k15m);
-        const bb15   = calcBollinger(k15m);
-        let confS1   = met * 25;
+// S1: Пробой на импульсе (15m) — с подтверждением объёма и S/R
+    if (!asianSession && k15m.length >= 10) {
+      const pc    = calcPriceChangePct(k15m);
+      const vd    = tf5m ? tf5m.delta : calcVolumeDelta(k15m);
+      const last  = k15m[k15m.length - 1];
+      const atr   = calcATR(k15m, 14);
 
-        if (dir === 'long') {
-          if (macd15.hist > 0)              confS1 = Math.min(confS1 + 10, 100); // MACD бычий
-          if (k15m[k15m.length-1].close > bb15.upper) confS1 = Math.min(confS1 + 10, 100); // пробой BB вверх
-        } else {
-          if (macd15.hist < 0)              confS1 = Math.min(confS1 + 10, 100); // MACD медвежий
-          if (k15m[k15m.length-1].close < bb15.lower) confS1 = Math.min(confS1 + 10, 100); // пробой BB вниз
+      // Объём минимум 3x выше среднего за 20 свечей
+      const avgVol  = k15m.slice(-11, -1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
+      const lastVol = last.quoteVolume;
+      const volSpike = lastVol >= avgVol * 3.0;
+
+      if (!volSpike) {
+        // нет объёма — пропускаем
+      } else {
+        const iL = pc >= 1.5 && vd > 0;
+        const iS = pc <= -1.5 && vd < 0;
+
+        if (iL || iS) {
+          const dir = iL ? 'long' : 'short';
+
+          // Проверяем S/R — нет ли сопротивления рядом
+          const sr = await getSupportResistanceLevels(instId);
+          const nearResistance = dir === 'long'
+            ? sr.resistances.some(r => Math.abs(r - price) / price < 0.008)
+            : sr.supports.some(s => Math.abs(s - price) / price < 0.008);
+
+          if (nearResistance) {
+            console.log(`[S1 BLOCK] ${instId} — рядом уровень S/R`);
+          } else {
+            const macd15 = calcMACD(k15m);
+            let conf = 65;
+            if (macd15.hist > 0 && dir === 'long')  conf += 10;
+            if (macd15.hist < 0 && dir === 'short') conf += 10;
+            conf += Math.min(Math.round((lastVol / avgVol - 3) * 5), 15);
+
+            signals.push({
+              strategy:  '1️⃣ Пробой на импульсе (15m)',
+              instId, direction: dir,
+              signal:    dir==='long'?'🟢 LONG':'🔴 SHORT',
+              price, confidence: Math.min(conf, 90),
+              metrics:   `Цена:${pc.toFixed(2)}% Vol:${(lastVol/avgVol).toFixed(1)}x MACD:${macd15.hist.toFixed(4)}`,
+              ...calcSLTP(price, dir, '1️⃣ Пробой на импульсе (15m)', atr)
+            });
+          }
         }
-        signals.push({ strategy: '1️⃣ Пробой на импульсе (15m)', instId, direction: dir,
-          signal: dir==='long'?'🟢 LONG':'🔴 SHORT', price, confidence: confS1,
-          metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% VΔ:$${(vd/1e6).toFixed(2)}M Vol:$${(vol/1e6).toFixed(1)}M MACD:${macd15.hist.toFixed(4)} BB:${bb15.width.toFixed(1)}%`,
-          ...calcSLTP(price, dir, '1️⃣ Пробой на импульсе (15m)') });
       }
-    } */
+    }
 
-    // S2: Bounce 1h
-    /*if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
+// S2: Liquidity Bounce (1h) — только в боковике или развороте
+    if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
       const oi   = calcOiChangePct(oi1h);
       const vd   = tf1h ? tf1h.delta : calcVolumeDelta(k1h);
       const vol  = k1h.reduce((s, c) => s + c.quoteVolume, 0);
       const tick = Math.round(k1h[k1h.length-1].quoteVolume / 10000);
       const rsi  = k1h.length >= 15 ? calcRSI(k1h, 14) : 50;
-      const lc   = [pc<=S2.priceMax, oi>=S2.oiMin, vd<=S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
-      const sc   = [pc>=-S2.priceMax, oi>=S2.oiMin, vd>=-S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
-      const ml   = lc.filter(Boolean).length, ms = sc.filter(Boolean).length;
+
+      // ── 4H тренд фильтр — только боковик или разворот ──
+      const k4h  = await getOKXKlines(instId, '4H', 55);
+      const ma20_4h = k4h.length >= 20 ? calcSMA(k4h, 20) : 0;
+      const ma50_4h = k4h.length >= 50 ? calcSMA(k4h, 50) : 0;
+      const trend4h = ma20_4h > ma50_4h ? 'bullish' : 'bearish';
+      const trendStrength = ma50_4h ? Math.abs(ma20_4h - ma50_4h) / ma50_4h * 100 : 0;
+
+      // Боковик = разница MA меньше 1% — безопасно для bounce
+      const isSideways = trendStrength < 1.0;
+
+      const lc = [pc<=S2.priceMax, oi>=S2.oiMin, vd<=S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
+      const sc = [pc>=-S2.priceMax, oi>=S2.oiMin, vd>=-S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
+      const ml = lc.filter(Boolean).length;
+      const ms = sc.filter(Boolean).length;
+
       if (ml >= 4 || ms >= 4) {
         const dir = ml >= ms ? 'long' : 'short';
-        let conf  = Math.max(ml, ms) * 20;
-        if (dir==='long' && rsi<35)  conf = Math.min(conf+10, 100);
-        if (dir==='short' && rsi>65) conf = Math.min(conf+10, 100);
-        signals.push({ strategy: '2️⃣ Liquidity Bounce (1h)', instId, direction: dir,
-          signal: dir==='long'?'🟢 LONG':'🔴 SHORT', price, confidence: Math.round(conf),
-          metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% VΔ:$${(vd/1e6).toFixed(2)}M Тики:~${tick} RSI:${rsi}`,
-          ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)') });
+
+        // Блокируем если торгуем против сильного тренда
+        if (!isSideways && dir === 'long'  && trend4h === 'bearish') {
+          console.log(`[S2 BLOCK] ${instId} — лонг против медвежьего 4H тренда`);
+        } else if (!isSideways && dir === 'short' && trend4h === 'bullish') {
+          console.log(`[S2 BLOCK] ${instId} — шорт против бычьего 4H тренда`);
+        } else {
+          let conf = Math.max(ml, ms) * 20;
+          if (dir==='long'  && rsi < 35) conf = Math.min(conf+10, 100);
+          if (dir==='short' && rsi > 65) conf = Math.min(conf+10, 100);
+          if (isSideways) conf = Math.min(conf+10, 100); // бонус за боковик
+
+          signals.push({
+            strategy: '2️⃣ Liquidity Bounce (1h)',
+            instId, direction: dir,
+            signal: dir==='long'?'🟢 LONG':'🔴 SHORT',
+            price, confidence: Math.round(conf),
+            metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi} 4H:${isSideways?'Боковик':'Тренд'} Сила:${trendStrength.toFixed(2)}%`,
+            ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', calcATR(k1h, 14))
+          });
+        }
       }
     }
-    */
 
     // S3: Ранний вход 5m
     /* if (k5m.length >= 7 && oi5m.length >= 2) {
@@ -1185,9 +1232,44 @@ async function runStrategies(instId, coinData, asianSession) {
       }
     }
 
+    // S8: Basis Farming — разница фьючерс/спот
+    try {
+      const spotData = await httpGet(`https://www.okx.com/api/v5/market/ticker?instId=${coinData.symbol}-USDT`);
+      if (spotData?.code === '0' && spotData.data?.length) {
+        const spotPrice    = parseFloat(spotData.data[0].last);
+        const futurePrice  = price;
+        const basis        = (futurePrice - spotPrice) / spotPrice * 100;
+        const rsi1h        = calcRSI(k1h, 14);
+        const atr          = calcATR(k1h, 14);
+
+        // Сильное контанго → шортисты будут закрываться → SHORT
+        if (basis > 0.3 && rsi1h > 55 && atr) {
+          signals.push({
+            strategy:  '8️⃣ Basis Farming (1h)',
+            instId, direction: 'short',
+            signal:    '🔴 SHORT', price, confidence: 75,
+            metrics:   `Basis:+${basis.toFixed(3)}% (фьюч дороже спота) RSI:${rsi1h}`,
+            ...calcSLTP(price, 'short', '8️⃣ Basis Farming (1h)', atr)
+          });
+        }
+
+        // Сильная бэквордация → лонгисты будут закрываться → LONG
+        if (basis < -0.3 && rsi1h < 45 && atr) {
+          signals.push({
+            strategy:  '8️⃣ Basis Farming (1h)',
+            instId, direction: 'long',
+            signal:    '🟢 LONG', price, confidence: 75,
+            metrics:   `Basis:${basis.toFixed(3)}% (фьюч дешевле спота) RSI:${rsi1h}`,
+            ...calcSLTP(price, 'long', '8️⃣ Basis Farming (1h)', atr)
+          });
+        }
+      }
+    } catch(e) { console.error('S8 error:', e.message); }
+
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
 }
+
 
 
 // ============================================================

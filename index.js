@@ -2034,13 +2034,16 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 // Загружаем открытые сделки из Supabase при старте
 supabase.from('open_trades').select('*').then(({ data }) => {
   if (data?.length) {
-    store.openTrades = data.map(t => ({
+    // Берём только сделки за последние 4 часа
+    const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+    const recent = data.filter(t => +t.ts >= fourHoursAgo);
+    store.openTrades = recent.map(t => ({
       ts: t.ts, instId: t.inst_id, symbol: t.symbol,
       strategy: t.strategy, direction: t.direction,
       price: t.price, sl: t.sl, tp1: t.tp1, tp2: t.tp2,
       confidence: t.confidence,
     }));
-    console.log(`[START] Загружено ${data.length} открытых сделок из БД`);
+    console.log(`[START] Загружено ${recent.length} из ${data.length} открытых сделок (только за 4ч)`);
   }
 });
 

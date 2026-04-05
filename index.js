@@ -1099,35 +1099,57 @@ async function runStrategies(instId, coinData, asianSession) {
       }
     } */
 
-  // S4: MA20/MA50 + RSI (1h) — долгосрочный разворот тренда
-    if (k1h.length >= 55) {
-      const cross = calcMACross(k1h, 20, 50);
-      const rsi   = calcRSI(k1h, 14);
-      const ma20  = calcSMA(k1h, 20);
-      const ma50  = calcSMA(k1h, 50);
-      const iL    = cross === 'bullish' && rsi < 55; // RSI не перегрет
-      const iS    = cross === 'bearish' && rsi > 45; // RSI не перепродан
+  // S4: MA20/MA50 + RSI — улучшенная версия
+if (k1h.length >= 55) {
+  const cross  = calcMACross(k1h, 20, 50);
+  const rsi    = calcRSI(k1h, 14);
+  const ma20   = calcSMA(k1h, 20);
+  const ma50   = calcSMA(k1h, 50);
+  const macd   = calcMACD(k1h);
+  const bb     = calcBollinger(k1h);
+  const closes = k1h.map(c => c.close);
+  const price  = coinData.price;
 
-      if (iL || iS) {
-        const dir = iL ? 'long' : 'short';
-        let conf  = 70;
-        if (iL && rsi < 50) conf += 10; // RSI не перекуплен — хорошо
-        if (iS && rsi > 50) conf += 10; // RSI не перепродан — хорошо
-        if (iL && cross === 'bullish') conf += 5; // Golden Cross бонус
-        if (iS && cross === 'bearish') conf += 5; // Death Cross бонус
+  // Расстояние между MA — чем меньше тем свежее крест
+  const maDist = Math.abs(ma20 - ma50) / ma50 * 100;
+  const freshCross = maDist < 0.5; // крест произошёл недавно
 
-        signals.push({
-          strategy:  '4️⃣ MA20/MA50+RSI (1h)',
-          instId,
-          direction: dir,
-          signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-          price,
-          confidence: Math.min(conf, 100),
-          metrics: `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'}`,
-          ...calcSLTP(price, dir, '4️⃣ MA20/MA50+RSI (1h)', atr1h),
-        });
-      }
-    }
+  // Цена не должна быть далеко от MA20 — значит мы не опоздали
+  const priceNearMA = Math.abs(price - ma20) / ma20 * 100 < 1.5;
+
+  // RSI дивергенция как подтверждение разворота
+  const lows   = k1h.map(c => c.low);
+  const rsiPrev = calcRSI(k1h.slice(0, -5), 14);
+  const bullDiv = lows[lows.length-1] < Math.min(...lows.slice(-10,-1)) && rsi > rsiPrev + 2;
+  const bearDiv = closes[closes.length-1] > Math.max(...closes.slice(-10,-1)) && rsi < rsiPrev - 2;
+
+  const iL = cross === 'bullish' && rsi < 55 && rsi > 30 && macd.hist > 0;
+  const iS = cross === 'bearish' && rsi > 45 && rsi < 70 && macd.hist < 0;
+
+  if ((iL || iS) && (freshCross || priceNearMA)) {
+    const dir = iL ? 'long' : 'short';
+    let conf  = 68;
+
+    // Бонусы за подтверждения
+    if (freshCross)  conf += 8;  // свежий крест
+    if (priceNearMA) conf += 5;  // цена рядом с MA
+    if (iL && bullDiv) conf += 10; // бычья дивергенция RSI
+    if (iS && bearDiv) conf += 10; // медвежья дивергенция RSI
+    if (iL && rsi < 45) conf += 7; // RSI перепродан
+    if (iS && rsi > 55) conf += 7; // RSI перекуплен
+    if (iL && price < bb.lower * 1.01) conf += 5; // цена у нижней BB
+    if (iS && price > bb.upper * 0.99) conf += 5; // цена у верхней BB
+
+    signals.push({
+      strategy:  '4️⃣ MA20/MA50+RSI (1h)',
+      instId, direction: dir,
+      signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+      price, confidence: Math.min(conf, 100),
+      metrics:   `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} MACD:${macd.hist > 0 ? '▲' : '▼'} Dist:${maDist.toFixed(2)}% ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'}`,
+      ...calcSLTP(price, dir, '4️⃣ MA20/MA50+RSI (1h)', atr1h),
+    });
+  }
+}
 
     // S5: RSI Дивергенция (1h) — цена новый минимум, RSI нет = разворот вверх
     if (k1h.length >= 20) {
@@ -1647,6 +1669,13 @@ async function checkSignals() {
     for (const coin of candidates) {
       if (isCoinOnCooldown(coin.instId)) continue;
 
+// Блокируем если монета уже в открытых сделках
+const alreadyOpen = store.openTrades.some(t => t.instId === coin.instId);
+if (alreadyOpen) {
+  console.log(`[SKIP] ${coin.instId} уже в открытой сделке`);
+  continue;
+}
+
       let signals = await runStrategies(coin.instId, coin, asianSession);
       if (!signals.length) continue;
 
@@ -1924,6 +1953,19 @@ cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('che
 
 // Каждый день в 07:00 UTC = 12:00 Алматы
 cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('dailyReport error:', e.message)); });
+
+// Загружаем открытые сделки из Supabase при старте
+supabase.from('open_trades').select('*').then(({ data }) => {
+  if (data?.length) {
+    store.openTrades = data.map(t => ({
+      ts: t.ts, instId: t.inst_id, symbol: t.symbol,
+      strategy: t.strategy, direction: t.direction,
+      price: t.price, sl: t.sl, tp1: t.tp1, tp2: t.tp2,
+      confidence: t.confidence,
+    }));
+    console.log(`[START] Загружено ${data.length} открытых сделок из БД`);
+  }
+});
 
 // Первый запуск сразу при старте для проверки
 setTimeout(() => {

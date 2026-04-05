@@ -319,6 +319,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   <button class="nav-btn active" onclick="showPage('radar',this)">📡 РАДАР</button>
   <button class="nav-btn" onclick="showPage('stats',this)">📊 СТАТИСТИКА</button>
   <button class="nav-btn" onclick="showPage('news',this)">📰 НОВОСТИ</button>
+  <button class="nav-btn" onclick="showPage('backtest',this)">🔬 БЭКТЕСТ</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -474,6 +475,25 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   </div>
 </div>
 
+<!-- ═══════════════════ PAGE 4: BACKTEST ═══════════════════ -->
+<div id="page-backtest" class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+    <div class="sec-title">🔬 Бэктестинг стратегий</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <input type="text" class="search-box" id="btCoins" placeholder="BTC,ETH,SOL,XRP" style="width:200px;">
+      <select id="btLimit" style="background:var(--panel);border:1px solid var(--border);color:var(--text);padding:7px 12px;font-family:'Space Mono',monospace;font-size:0.65rem;">
+        <option value="100">~4 дня</option>
+        <option value="200">~8 дней</option>
+        <option value="300" selected>~12 дней</option>
+        <option value="500">~20 дней</option>
+      </select>
+      <button class="refresh-btn" id="btRunBtn" onclick="runBacktest()">▶ ЗАПУСТИТЬ</button>
+    </div>
+  </div>
+  <div id="btStatus" style="font-size:0.65rem;color:var(--dim);margin-bottom:12px;"></div>
+  <div id="btResults"></div>
+</div>
+
 </div>
 <div class="toast" id="toast">СКОПИРОВАНО ✓</div>
 
@@ -496,6 +516,7 @@ function showPage(id, btn) {
   btn.classList.add('active');
    if (id === 'stats') loadStats();
   if (id === 'news' && !allNews.length) loadNews();
+  if (id === 'backtest') document.getElementById('btStatus').textContent = 'Введи монеты и нажми ▶ ЗАПУСТИТЬ';
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -967,6 +988,84 @@ function setNewsFilter(f, btn) {
   document.querySelectorAll('#page-news .news-filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   loadNews();
+}
+// ══════════════════════════════════════════════════════════════
+//  BACKTEST PAGE
+// ══════════════════════════════════════════════════════════════
+async function runBacktest() {
+  const btn    = document.getElementById('btRunBtn');
+  const status = document.getElementById('btStatus');
+  const results= document.getElementById('btResults');
+  const coins  = document.getElementById('btCoins').value || 'BTC,ETH,SOL,XRP,DOGE';
+  const limit  = document.getElementById('btLimit').value;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Загрузка...';
+  status.textContent = 'Загружаем исторические данные и прогоняем стратегии...';
+  results.innerHTML = '<div class="loading-anim">АНАЛИЗ<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
+
+  try {
+    const r = await fetch(`/backtest/run?coins=${encodeURIComponent(coins)}&limit=${limit}`);
+    const data = await r.json();
+
+    if (data.error) throw new Error(data.error);
+
+    status.textContent = `✅ Готово — монеты: ${coins} | свечей: ${limit}`;
+
+    results.innerHTML = data.map(s => {
+      const wrColor = s.winRate >= 55 ? 'var(--accent)' : s.winRate >= 40 ? 'var(--yellow)' : 'var(--red)';
+      const pnlColor= s.pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+      const emoji   = s.winRate >= 55 ? '🟢' : s.winRate >= 40 ? '🟡' : '🔴';
+
+      const tradesHtml = s.trades.slice(-10).reverse().map(t => {
+        const oc = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+        const pc = t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+        return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(26,37,64,.3);font-size:0.58rem;">
+          <span style="color:var(--dim)">${t.symbol}</span>
+          <span style="color:${t.direction==='long'?'var(--accent)':'var(--red)'};">${t.direction==='long'?'▲':'▼'}</span>
+          <span>${oc} ${t.outcome.toUpperCase()}</span>
+          <span class="${pc}">${t.pnl>=0?'+':''}${t.pnl}%</span>
+        </div>`;
+      }).join('');
+
+      return `<div class="tbl-wrap" style="margin-bottom:14px;padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:0.75rem;color:#fff;font-weight:500;">${emoji} ${s.name}</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div style="text-align:center;">
+              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">СИГНАЛОВ</div>
+              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--blue);">${s.signals}</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">WIN RATE</div>
+              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${wrColor};">${s.winRate}%</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">PnL</div>
+              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${pnlColor};">${s.pnl>=0?'+':''}${s.pnl}%</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">AVG/СДЕЛКА</div>
+              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${s.avgPnl>=0?'var(--accent)':'var(--red)'};">${s.avgPnl>=0?'+':''}${s.avgPnl}%</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">TP/SL</div>
+              <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--text);">${s.wins}/${s.losses}</div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:0.55rem;color:var(--dim);margin-bottom:8px;letter-spacing:1px;">ПОСЛЕДНИЕ 10 СДЕЛОК</div>
+        ${tradesHtml || '<div class="no-data">Нет сделок</div>'}
+      </div>`;
+    }).join('');
+
+  } catch(e) {
+    status.textContent = `❌ Ошибка: ${e.message}`;
+    results.innerHTML = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ ЗАПУСТИТЬ';
+  }
 }
 // ── INIT ─────────────────────────────────────────────────────
 loadRadar();

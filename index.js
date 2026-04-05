@@ -349,7 +349,12 @@ async function getOKXCandidates() {
       fundingRate: parseFloat(t.fundingRate || 0),
     }))
     .filter(t => t.volume24h >= MIN_VOLUME_24H)
-    .sort((a, b) => b.volume24h - a.volume24h)
+    .sort((a, b) => {
+    // Сортируем по комбинации объёма и движения цены
+    const scoreA = b.volume24h + Math.abs(a.change24h) * 1e8;
+    const scoreB = a.volume24h + Math.abs(b.change24h) * 1e8;
+    return scoreA - scoreB;
+    })
     .slice(0, TOP_N);
 }
 
@@ -1331,6 +1336,140 @@ const app     = express();
 const fs = require('fs');
 const path = require('path');
 
+// ============================================================
+//  BACKTESTING API
+// ============================================================
+app.get('/backtest', async (req, res) => {
+  try {
+    res.json({ status: 'running', message: 'Backtesting запущен...' });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/backtest/run', async (req, res) => {
+  try {
+    const coins  = req.query.coins
+      ? req.query.coins.split(',').map(c => `${c}-USDT-SWAP`)
+      : ['BTC-USDT-SWAP','ETH-USDT-SWAP','SOL-USDT-SWAP','XRP-USDT-SWAP','DOGE-USDT-SWAP'];
+    const limit  = parseInt(req.query.limit) || 300;
+    const result = await runBacktest(coins, limit);
+    res.json(result);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+async function runBacktest(coins, limit = 300) {
+  const strategies = {
+    'S4 MA/RSI':        { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+    'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+    'S7 Поглощение':    { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  };
+
+  for (const instId of coins) {
+    const symbol = instId.replace('-USDT-SWAP','');
+    const data   = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=1H&limit=${limit}`);
+    if (!data || data.code !== '0') continue;
+    const klines = data.data.reverse().map(c => ({
+      ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4],
+      volume:+c[5], quoteVolume:+c[7],
+    }));
+    if (klines.length < 60) continue;
+
+    const runs = [
+      { name:'S4 MA/RSI',         fn: btS4 },
+      { name:'S5 RSI Дивергенция', fn: btS5 },
+      { name:'S7 Поглощение',      fn: btS7 },
+    ];
+
+    for (const { name, fn } of runs) {
+      let lastI = -10;
+      for (let i = 55; i < klines.length - 15; i++) {
+        if (i - lastI < 5) continue;
+        const direction = fn(klines, i);
+        if (!direction) continue;
+
+        const price = klines[i].close;
+        const atr   = calcATR(klines.slice(0, i+1), 14);
+        if (!atr || atr === 0) continue;
+
+        const sl  = direction === 'long' ? price - atr*1.5 : price + atr*1.5;
+        const tp1 = direction === 'long' ? price + atr*3.0 : price - atr*3.0;
+        const tp2 = direction === 'long' ? price + atr*4.5 : price - atr*4.5;
+
+        const future = klines.slice(i+1, i+25);
+        let outcome  = 'expired', pnl = 0;
+
+        for (const c of future) {
+          if (direction === 'long') {
+            if (c.low  <= sl)  { outcome='sl';  pnl=(sl -price)/price*100; break; }
+            if (c.high >= tp2) { outcome='tp2'; pnl=(tp2-price)/price*100; break; }
+            if (c.high >= tp1) { outcome='tp1'; pnl=(tp1-price)/price*100; break; }
+          } else {
+            if (c.high >= sl)  { outcome='sl';  pnl=(price-sl )/price*100; break; }
+            if (c.low  <= tp2) { outcome='tp2'; pnl=(price-tp2)/price*100; break; }
+            if (c.low  <= tp1) { outcome='tp1'; pnl=(price-tp1)/price*100; break; }
+          }
+        }
+
+        strategies[name].signals++;
+        strategies[name].pnl += pnl;
+        strategies[name].trades.push({ symbol, direction, price, outcome, pnl: parseFloat(pnl.toFixed(2)) });
+        if (outcome==='tp1'||outcome==='tp2') strategies[name].wins++;
+        else if (outcome==='sl') strategies[name].losses++;
+        else strategies[name].expired++;
+        lastI = i;
+      }
+    }
+  }
+
+  return Object.entries(strategies).map(([name, s]) => ({
+    name,
+    signals: s.signals,
+    wins:    s.wins,
+    losses:  s.losses,
+    expired: s.expired,
+    winRate: s.signals ? Math.round(s.wins/s.signals*100) : 0,
+    pnl:     parseFloat(s.pnl.toFixed(2)),
+    avgPnl:  s.signals ? parseFloat((s.pnl/s.signals).toFixed(2)) : 0,
+    trades:  s.trades.slice(-20),
+  }));
+}
+
+function btS4(klines, i) {
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 55) return null;
+  const cross = calcMACross(slice, 20, 50);
+  const rsi   = calcRSI(slice, 14);
+  if (cross==='bullish' && rsi<55) return 'long';
+  if (cross==='bearish' && rsi>45) return 'short';
+  return null;
+}
+
+function btS5(klines, i) {
+  const slice  = klines.slice(0, i+1);
+  if (slice.length < 20) return null;
+  const closes = slice.map(c => c.close);
+  const lows   = slice.map(c => c.low);
+  const rsiNow = calcRSI(slice, 14);
+  const rsiPrev= calcRSI(slice.slice(0,-5), 14);
+  if (lows[lows.length-1] < Math.min(...lows.slice(-10,-1)) && rsiNow > rsiPrev+3 && rsiNow < 45) return 'long';
+  if (closes[closes.length-1] > Math.max(...closes.slice(-10,-1)) && rsiNow < rsiPrev-3 && rsiNow > 55) return 'short';
+  return null;
+}
+
+function btS7(klines, i) {
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 10) return null;
+  const last = slice[slice.length-1], prev = slice[slice.length-2];
+  const engulfL = last.close>last.open && prev.close<prev.open && last.open<=prev.close && last.close>=prev.open;
+  const engulfS = last.close<last.open && prev.close>prev.open && last.open>=prev.close && last.close<=prev.open;
+  if (!engulfL && !engulfS) return null;
+  const avgVol = slice.slice(-10,-1).reduce((a,c)=>a+c.quoteVolume,0)/9;
+  if (last.quoteVolume < avgVol*2.5) return null;
+  return engulfL ? 'long' : 'short';
+}
 app.get('/', async (req, res) => {
   try {
     let html = fs.readFileSync(path.join(__dirname, 'unified_dashboard.html'), 'utf8');

@@ -1292,7 +1292,7 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S8 error:', e.message); }
 
-    // S9: Pairs Trading — корреляция BTC/ETH
+    /*/ S9: Pairs Trading — корреляция BTC/ETH
     try {
       if (coinData.symbol === 'ETH' || coinData.symbol === 'BTC') {
         const btcData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=1H&limit=24');
@@ -1365,7 +1365,7 @@ if (k1h.length >= 55) {
           }
         }
       }
-    } catch(e) { console.error('S9 error:', e.message); }
+    } catch(e) { console.error('S9 error:', e.message); } */
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
@@ -1589,7 +1589,6 @@ if (klines1h.length < 60) continue;
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
-  { name:'S9 Pairs Trading',   fn: btS9 },
 ];
 
     for (const { name, fn } of runs) {
@@ -1722,8 +1721,10 @@ function btS9(klines, i) {
   const prev4   = slice[slice.length-5];
   if (!prev4) return null;
   const change4h = (last.close - prev4.close) / prev4.close * 100;
-  if (change4h < -2.0 && rsiNow > rsiPrev + 2) return 'long';
-  if (change4h > 2.0  && rsiNow < rsiPrev - 2) return 'short';
+
+  // Снизили пороги до минимума
+  if (change4h < -1.5 && rsiNow > rsiPrev + 1) return 'long';
+  if (change4h > 1.5  && rsiNow < rsiPrev - 1) return 'short';
   return null;
 }
 

@@ -811,38 +811,13 @@ async function loadNews() {
   const body = document.getElementById('newsBody');
   body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
   try {
-    // Пробуем несколько способов загрузки новостей
-    const apiUrl = `https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=50${CRYPTOCOMPARE_KEY ? '&api_key=' + CRYPTOCOMPARE_KEY : ''}`;
-    
-    // Способ 1: прямой запрос
-    let data = null;
-    try {
-      const r = await fetch(apiUrl);
-      data = await r.json();
-    } catch(e) {}
-
-    // Способ 2: через corsproxy если прямой не работает
-    if (!data?.Data?.length) {
-      try {
-        const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(apiUrl)}`);
-        data = await r.json();
-      } catch(e) {}
-    }
-
-    // Способ 3: через allorigins
-    if (!data?.Data?.length) {
-      try {
-        const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`);
-        const j = await r.json();
-        data = JSON.parse(j.contents);
-      } catch(e) {}
-    }
-
-    if (data?.Data?.length) {
-      allNews = data.Data;
+    const resp = await fetch('/api/news');
+    const json = await resp.json();
+    if (json.ok && json.data?.length) {
+      allNews = json.data;
       renderNews();
     } else {
-      body.innerHTML = '<div class="no-data">Не удалось загрузить новости.<br>Проверь что CRYPTOCOMPARE_KEY настроен в Render → Environment</div>';
+      body.innerHTML = '<div class="no-data">Нет новостей. Проверь CRYPTOCOMPARE_KEY в Render</div>';
     }
   } catch(e) {
     body.innerHTML = `<div class="no-data">Ошибка: ${e.message}</div>`;
@@ -912,116 +887,31 @@ function setTwFilter(f, btn) {
 async function loadTwitter() {
   const body = document.getElementById('twBody');
   const status = document.getElementById('twStatus');
-  body.innerHTML = '<div class="no-data">Загружаем новости...</div>';
+  body.innerHTML = '<div class="no-data">Загружаем...</div>';
   status.textContent = 'Загружаем крипто медиа...';
-  allTweets = [];
-  let loaded = 0;
-  const PROXIES = [
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-  ];
-
-  await Promise.all(RSS_SOURCES.map(async src => {
-    for (const proxyFn of PROXIES) {
-      try {
-        const resp = await fetch(proxyFn(src.url), { signal: AbortSignal.timeout(8000) });
-        if (!resp.ok) continue;
-        const txt = await resp.text();
-        let xml;
-        try { xml = JSON.parse(txt).contents; } catch { xml = txt; }
-        if (!xml || xml.length < 100) continue;
-
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xml, 'text/xml');
-        const items = doc.querySelectorAll('item');
-
-        items.forEach((item, idx) => {
-          if (idx >= 10) return;
-          const title = item.querySelector('title')?.textContent?.trim() || '';
-          const pubDate = item.querySelector('pubDate')?.textContent || '';
-          const link = item.querySelector('link')?.textContent?.trim() || '';
-          if (!title || title.length < 5) return;
-
-          const diffMin = pubDate ? Math.round((Date.now() - new Date(pubDate).getTime()) / 60000) : 999;
-          const timeStr = diffMin < 60 ? diffMin + 'м назад' :
-                          diffMin < 1440 ? Math.floor(diffMin/60) + 'ч назад' :
-                          Math.floor(diffMin/1440) + 'д назад';
-          const coins = WATCH_COINS_TW.filter(coin => title.toUpperCase().includes(coin) || title.includes('$'+coin));
-          const upper = title.toUpperCase();
-          const isBull = ['BULLISH','PUMP','ATH','MOON','SURGE','RALLY','RISE','GAIN'].some(w => upper.includes(w));
-          const isBear = ['BEARISH','DUMP','CRASH','SELL','DROP','FALL','FEAR','WARN'].some(w => upper.includes(w));
-          const acc = { name: src.name, avatar: src.avatar, color: src.color };
-          allTweets.push({ handle: src.handle, acc, text: title, coins, sentiment: isBull?'bullish':isBear?'bearish':'neutral', timeStr, isFresh: diffMin < 60, link, pubDate });
-        });
-        loaded++;
-        status.textContent = 'Загружено: ' + loaded + '/' + RSS_SOURCES.length + ' источников...';
-        break;
-      } catch(e) { continue; }
+  try {
+    const resp = await fetch('/api/rss');
+    const json = await resp.json();
+    if (json.ok && json.data?.length) {
+      allTweets = json.data.map(a => {
+        const diffMin = a.pubDate ? Math.round((Date.now() - new Date(a.pubDate).getTime()) / 60000) : 999;
+        const timeStr = diffMin < 60 ? diffMin+'м назад' : diffMin < 1440 ? Math.floor(diffMin/60)+'ч назад' : Math.floor(diffMin/1440)+'д назад';
+        const upper = a.title.toUpperCase();
+        const coins = ['BTC','ETH','SOL','XRP','DOGE','PEPE','AVAX','LINK','BNB','ADA'].filter(c => upper.includes(c));
+        const isBull = ['BULLISH','PUMP','ATH','MOON','SURGE','RISE','GAIN'].some(w => upper.includes(w));
+        const isBear = ['BEARISH','DUMP','CRASH','SELL','DROP','FALL','FEAR'].some(w => upper.includes(w));
+        return { handle: a.source.handle, acc: a.source, text: a.title, coins, sentiment: isBull?'bullish':isBear?'bearish':'neutral', timeStr, isFresh: diffMin < 60, link: a.link, pubDate: a.pubDate };
+      });
+      status.textContent = `✅ Загружено ${allTweets.length} статей`;
+      renderTweets();
+    } else {
+      body.innerHTML = '<div class="no-data">Нет данных</div>';
+      status.textContent = '❌ Ошибка загрузки';
     }
-  }));
-
-  allTweets.sort((a,b) => new Date(b.pubDate) - new Date(a.pubDate));
-  status.textContent = allTweets.length ? ('✅ Загружено ' + allTweets.length + ' статей') : '❌ Не удалось загрузить. Попробуй позже.';
-  renderTweets();
-}
-
-async function loadTwitter() {
-  const body = document.getElementById('twBody');
-  const status = document.getElementById('twStatus');
-  body.innerHTML = '<div class="no-data">Загружаем твиты...</div>';
-  status.textContent = 'Загружаем крипто медиа...';
-  allTweets = [];
-  let loaded = 0;
-  const CORS_PROXIES = [
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://cors-anywhere.herokuapp.com/${url}`,
-  ];
-  const NITTER = ['https://nitter.privacydev.net','https://nitter.poast.org','https://nitter.lucahammer.com','https://nitter.1d4.us'];
-
-  await Promise.all(TW_ACCOUNTS.map(async acc => {
-    for (const instance of NITTER) {
-      try {
-        const url = `${instance}/${acc.handle}/rss`;
-        let xml = null;
-        for (const proxyFn of CORS_PROXIES) {
-          try {
-            const resp = await fetch(proxyFn(url), { signal: AbortSignal.timeout(5000) });
-            if (!resp.ok) continue;
-            const text = await resp.text();
-            // allorigins возвращает JSON, corsproxy возвращает текст напрямую
-            try { xml = JSON.parse(text).contents; } catch { xml = text; }
-            if (xml && xml.length > 100) break;
-          } catch(e) { continue; }
-        }
-        if (!xml || xml.length < 100) continue;
-        if (!xml || xml.length < 100) continue;
-        const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-        items.slice(0, 8).forEach(item => {
-          const c = item[1];
-          const title = (c.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) || c.match(/<title>([\s\S]*?)<\/title>/))?.[1]?.trim() || '';
-          const pubDate = (c.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
-          const link = (c.match(/<link>(.*?)<\/link>/))?.[1] || '';
-          const text = title.replace(/^[^:]+:\s*/, '').trim();
-          if (!text || text.length < 5) return;
-          const diffMin = pubDate ? Math.round((Date.now() - new Date(pubDate).getTime()) / 60000) : 999;
-          const timeStr = diffMin < 60 ? `${diffMin}м назад` : diffMin < 1440 ? `${Math.floor(diffMin/60)}ч назад` : `${Math.floor(diffMin/1440)}д назад`;
-          const coins = WATCH_COINS_TW.filter(coin => text.toUpperCase().includes(coin));
-          const upper = text.toUpperCase();
-          const isBull = ['BULLISH','PUMP','ATH','MOON','SURGE','RALLY','LONG','HODL'].some(w => upper.includes(w));
-          const isBear = ['BEARISH','DUMP','CRASH','SELL','DROP','SHORT','FEAR'].some(w => upper.includes(w));
-          allTweets.push({ handle: acc.handle, acc, text, coins, sentiment: isBull?'bullish':isBear?'bearish':'neutral', timeStr, isFresh: diffMin < 60, link, pubDate });
-        });
-        loaded++;
-        status.textContent = `Загружено: ${loaded}/${TW_ACCOUNTS.length} аккаунтов...`;
-        break;
-      } catch(e) { continue; }
-    }
-  }));
-
-  allTweets.sort((a,b) => new Date(b.pubDate) - new Date(a.pubDate));
-  status.textContent = `✅ Загружено ${allTweets.length} твитов`;
-  renderTweets();
+  } catch(e) {
+    body.innerHTML = `<div class="no-data">Ошибка: ${e.message}</div>`;
+    status.textContent = '❌ ' + e.message;
+  }
 }
 
 function renderTweets() {

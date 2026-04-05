@@ -1519,6 +1519,57 @@ const app     = express();
 const fs = require('fs');
 const path = require('path');
 
+// ── NEWS API ──────────────────────────────────────────────────
+app.get('/api/news', async (req, res) => {
+  try {
+    const key = process.env.CRYPTOCOMPARE_KEY || '';
+    const url = `https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=50${key ? '&api_key=' + key : ''}`;
+    const data = await httpGet(url);
+    if (data?.Data?.length) {
+      res.json({ ok: true, data: data.Data });
+    } else {
+      res.json({ ok: false, error: 'No data' });
+    }
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── RSS MEDIA API ─────────────────────────────────────────────
+app.get('/api/rss', async (req, res) => {
+  try {
+    const feeds = [
+      { name: 'CoinTelegraph', handle: 'cointelegraph', url: 'https://cointelegraph.com/rss',                   avatar: 'CT', color: '#00cc88' },
+      { name: 'CoinDesk',      handle: 'coindesk',      url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', avatar: 'CD', color: '#1d9bf0' },
+      { name: 'Decrypt',       handle: 'decrypt',       url: 'https://decrypt.co/feed',                        avatar: 'DC', color: '#9945ff' },
+      { name: 'The Block',     handle: 'theblock',      url: 'https://www.theblock.co/rss.xml',                avatar: 'TB', color: '#ff8c00' },
+      { name: 'Bitcoin Mag',   handle: 'bitcoinmag',    url: 'https://bitcoinmagazine.com/.rss/full/',          avatar: 'BM', color: '#f7931a' },
+    ];
+
+    const articles = [];
+    for (const feed of feeds) {
+      try {
+        const xml = await httpGet(feed.url);
+        if (!xml || typeof xml !== 'string') continue;
+        const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+        for (const item of items.slice(0, 8)) {
+          const c = item[1];
+          const title   = (c.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) || c.match(/<title>([\s\S]*?)<\/title>/))?.[1]?.trim() || '';
+          const pubDate = (c.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
+          const link    = (c.match(/<link>(.*?)<\/link>/))?.[1]?.trim() || '';
+          if (!title || title.length < 5) continue;
+          articles.push({ title, pubDate, link, source: feed });
+        }
+      } catch(e) { continue; }
+    }
+
+    articles.sort((a,b) => new Date(b.pubDate) - new Date(a.pubDate));
+    res.json({ ok: true, data: articles });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ============================================================
 //  BACKTESTING API
 // ============================================================

@@ -987,16 +987,27 @@ function priceInFVG(price, zones, direction) {
   });
 }
 
-function calcFibonacci(klines, direction) {
+function calcFibonacci(klines, direction, entryPrice) {
   if (!klines || klines.length < 20) return null;
   const slice = klines.slice(-20);
   const high  = Math.max(...slice.map(c => c.high));
   const low   = Math.min(...slice.map(c => c.low));
   const range = high - low;
   if (range === 0) return null;
-  return direction === 'long'
-    ? { tp1: low + range * 0.618, tp2: low + range * 0.786, key: '61.8%/78.6%' }
-    : { tp1: high - range * 0.618, tp2: high - range * 0.786, key: '61.8%/78.6%' };
+
+  if (direction === 'long') {
+    const tp1 = low + range * 0.618;
+    const tp2 = low + range * 0.786;
+    // Проверяем что TP выше цены входа
+    if (tp1 <= entryPrice || tp2 <= entryPrice) return null;
+    return { tp1, tp2, key: '61.8%/78.6%' };
+  } else {
+    const tp1 = high - range * 0.618;
+    const tp2 = high - range * 0.786;
+    // Проверяем что TP ниже цены входа
+    if (tp1 >= entryPrice || tp2 >= entryPrice) return null;
+    return { tp1, tp2, key: '61.8%/78.6%' };
+  }
 }
 
 function calcATR(klines, period = 14) {
@@ -1943,16 +1954,41 @@ if (alreadyOpen) {
           }
         }
 
-        // Fibonacci TP если уровни лучше ATR
-        const fib = calcFibonacci(
-          await getOKXKlines(coin.instId, '1H', 20),
-          sig.direction
-        );
-        if (fib && fib.tp1 && Math.abs(fib.tp1 - sig.price) / sig.price > 0.005) {
+        // Fibonacci TP — только если уровни логичны
+        const fibKlines = await getOKXKlines(coin.instId, '1H', 20);
+        const fib = calcFibonacci(fibKlines, sig.direction, sig.price);
+        if (fib) {
           sig.tp1 = fib.tp1.toFixed(4);
           sig.tp2 = fib.tp2.toFixed(4);
           sig.fibNote = `📐 Fibonacci TP: ${fib.key}`;
         }
+        // Финальная проверка логики SL/TP
+        const entry = sig.price;
+        const sl    = parseFloat(sig.sl);
+        const tp1   = parseFloat(sig.tp1);
+        const tp2   = parseFloat(sig.tp2);
+
+        if (sig.direction === 'long') {
+          // Для лонга: SL < entry < TP1 < TP2
+          if (sl >= entry || tp1 <= entry || tp2 <= tp1) {
+            const atr = calcATR(await getOKXKlines(coin.instId, '1H', 20), 14);
+            sig.sl  = (entry - atr * 1.5).toFixed(4);
+            sig.tp1 = (entry + atr * 3.0).toFixed(4);
+            sig.tp2 = (entry + atr * 4.5).toFixed(4);
+            sig.slNote = '📏 ATR стоп (fallback)';
+          }
+        } else {
+          // Для шорта: SL > entry > TP1 > TP2
+          if (sl <= entry || tp1 >= entry || tp2 >= tp1) {
+            const atr = calcATR(await getOKXKlines(coin.instId, '1H', 20), 14);
+            sig.sl  = (entry + atr * 1.5).toFixed(4);
+            sig.tp1 = (entry - atr * 3.0).toFixed(4);
+            sig.tp2 = (entry - atr * 4.5).toFixed(4);
+            sig.slNote = '📏 ATR стоп (fallback)';
+          }
+        }
+
+        filtered.push(sig);
 
         filtered.push(sig);
       }

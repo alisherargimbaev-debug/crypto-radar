@@ -950,6 +950,34 @@ function detectFVG(klines) {
   return zones.slice(-5); // последние 5 зон
 }
 
+function calcFVGStopLoss(price, direction, fvgZones, atr) {
+  if (!fvgZones || !fvgZones.length) return null;
+
+  if (direction === 'long') {
+    // Ищем ближайший медвежий FVG ниже цены входа
+    const below = fvgZones
+      .filter(z => z.type === 'bearish' && z.top < price)
+      .sort((a, b) => b.top - a.top); // ближайший снизу
+    if (below.length) {
+      const sl = below[0].bottom * 0.998; // чуть ниже FVG зоны
+      // Проверяем что стоп не слишком далеко (максимум 3x ATR)
+      if (atr && (price - sl) > atr * 3) return null;
+      return { sl: sl.toFixed(4), note: `📊 SL за FVG зоной $${below[0].bottom.toFixed(4)}` };
+    }
+  } else {
+    // Ищем ближайший бычий FVG выше цены входа
+    const above = fvgZones
+      .filter(z => z.type === 'bullish' && z.bottom > price)
+      .sort((a, b) => a.bottom - b.bottom); // ближайший сверху
+    if (above.length) {
+      const sl = above[0].top * 1.002; // чуть выше FVG зоны
+      if (atr && (sl - price) > atr * 3) return null;
+      return { sl: sl.toFixed(4), note: `📊 SL за FVG зоной $${above[0].top.toFixed(4)}` };
+    }
+  }
+  return null;
+}
+
 function priceInFVG(price, zones, direction) {
   return zones.some(z => {
     const inZone = price >= z.bottom && price <= z.top;
@@ -1887,14 +1915,32 @@ if (alreadyOpen) {
         sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
 
-        // FVG буст
-        const fvgZones = detectFVG(
-          (await getOKXKlines(coin.instId, '1H', 30)).slice(-30)
-        );
+        // FVG зоны
+        const fvgKlines = await getOKXKlines(coin.instId, '1H', 30);
+        const fvgZones  = detectFVG(fvgKlines.slice(-30));
+        const atrForFVG = calcATR(fvgKlines, 14);
+
+        // FVG буст уверенности
         const inFVG = priceInFVG(sig.price, fvgZones, sig.direction);
         if (inFVG) {
           sig.confidence = Math.min(sig.confidence + 12, 100);
           sig.fvgNote    = `📊 Цена в FVG зоне → +12%`;
+        }
+
+        // FVG стоп-лосс
+        const fvgSL = calcFVGStopLoss(sig.price, sig.direction, fvgZones, atrForFVG);
+        if (fvgSL) {
+          sig.sl     = fvgSL.sl;
+          sig.slNote = fvgSL.note;
+          // Пересчитываем TP на основе нового SL (RR 1:2 и 1:3)
+          const slDist = Math.abs(sig.price - parseFloat(fvgSL.sl));
+          if (sig.direction === 'long') {
+            sig.tp1 = (sig.price + slDist * 2).toFixed(4);
+            sig.tp2 = (sig.price + slDist * 3).toFixed(4);
+          } else {
+            sig.tp1 = (sig.price - slDist * 2).toFixed(4);
+            sig.tp2 = (sig.price - slDist * 3).toFixed(4);
+          }
         }
 
         // Fibonacci TP если уровни лучше ATR

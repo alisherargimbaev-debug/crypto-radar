@@ -929,6 +929,48 @@ function calcSLTP(price, direction, strategy, atr = null) {
         tp2: (price * (1 - tp2 / 100)).toFixed(4),
       };
 }
+
+// ============================================================
+//  FVG (Fair Value Gap) и FIBONACCI
+// ============================================================
+function detectFVG(klines) {
+  const zones = [];
+  for (let i = 2; i < klines.length; i++) {
+    const c1 = klines[i-2];
+    const c3 = klines[i];
+    // Бычий FVG — gap между high свечи 1 и low свечи 3
+    if (c3.low > c1.high) {
+      zones.push({ type: 'bullish', top: c3.low, bottom: c1.high, ts: c3.ts });
+    }
+    // Медвежий FVG — gap между low свечи 1 и high свечи 3
+    if (c3.high < c1.low) {
+      zones.push({ type: 'bearish', top: c1.low, bottom: c3.high, ts: c3.ts });
+    }
+  }
+  return zones.slice(-5); // последние 5 зон
+}
+
+function priceInFVG(price, zones, direction) {
+  return zones.some(z => {
+    const inZone = price >= z.bottom && price <= z.top;
+    if (direction === 'long')  return inZone && z.type === 'bullish';
+    if (direction === 'short') return inZone && z.type === 'bearish';
+    return false;
+  });
+}
+
+function calcFibonacci(klines, direction) {
+  if (!klines || klines.length < 20) return null;
+  const slice = klines.slice(-20);
+  const high  = Math.max(...slice.map(c => c.high));
+  const low   = Math.min(...slice.map(c => c.low));
+  const range = high - low;
+  if (range === 0) return null;
+  return direction === 'long'
+    ? { tp1: low + range * 0.618, tp2: low + range * 0.786, key: '61.8%/78.6%' }
+    : { tp1: high - range * 0.618, tp2: high - range * 0.786, key: '61.8%/78.6%' };
+}
+
 function calcATR(klines, period = 14) {
   if (klines.length < period + 1) return 0;
   const trs = [];
@@ -1103,6 +1145,9 @@ async function runStrategies(instId, coinData, asianSession) {
       }
     } */
 
+      // Вычисляем FVG зоны один раз для всех стратегий
+    const fvgZones1h  = detectFVG(k1h.slice(-30));
+    const fvgZones15m = detectFVG(k15m.slice(-20));
   // S4: MA20/MA50 + RSI — улучшенная версия
 if (k1h.length >= 55) {
   const cross  = calcMACross(k1h, 20, 50);
@@ -1390,7 +1435,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -1841,6 +1886,28 @@ if (alreadyOpen) {
         sig = await applyWhaleBoost(sig);
         sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
+
+        // FVG буст
+        const fvgZones = detectFVG(
+          (await getOKXKlines(coin.instId, '1H', 30)).slice(-30)
+        );
+        const inFVG = priceInFVG(sig.price, fvgZones, sig.direction);
+        if (inFVG) {
+          sig.confidence = Math.min(sig.confidence + 12, 100);
+          sig.fvgNote    = `📊 Цена в FVG зоне → +12%`;
+        }
+
+        // Fibonacci TP если уровни лучше ATR
+        const fib = calcFibonacci(
+          await getOKXKlines(coin.instId, '1H', 20),
+          sig.direction
+        );
+        if (fib && fib.tp1 && Math.abs(fib.tp1 - sig.price) / sig.price > 0.005) {
+          sig.tp1 = fib.tp1.toFixed(4);
+          sig.tp2 = fib.tp2.toFixed(4);
+          sig.fibNote = `📐 Fibonacci TP: ${fib.key}`;
+        }
+
         filtered.push(sig);
       }
 

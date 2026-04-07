@@ -1193,6 +1193,303 @@ function calcFibonacci(klines, direction, entryPrice) {
   }
 }
 
+// ============================================================
+//  OBV, BOLLINGER SQUEEZE, МУЛЬТИТАЙМФРЕЙМ, CHART PATTERNS
+// ============================================================
+
+// OBV — On Balance Volume
+function calcOBV(klines) {
+  if (!klines || klines.length < 2) return null;
+  let obv = 0;
+  const obvValues = [0];
+  for (let i = 1; i < klines.length; i++) {
+    if (klines[i].close > klines[i-1].close)      obv += klines[i].volume;
+    else if (klines[i].close < klines[i-1].close) obv -= klines[i].volume;
+    obvValues.push(obv);
+  }
+  // Тренд OBV — сравниваем последние 5 и предыдущие 5
+  const recentOBV = obvValues.slice(-5).reduce((a,b) => a+b, 0) / 5;
+  const prevOBV   = obvValues.slice(-10, -5).reduce((a,b) => a+b, 0) / 5;
+  return {
+    value:    obv,
+    trend:    recentOBV > prevOBV ? 'up' : 'down',
+    diverge:  null, // заполним ниже
+  };
+}
+
+function applyOBV(sig, klines) {
+  const obv = calcOBV(klines);
+  if (!obv) return sig;
+
+  const closes = klines.map(c => c.close);
+  const priceUp = closes[closes.length-1] > closes[closes.length-5];
+
+  // Бычья дивергенция OBV: цена падает но OBV растёт → разворот вверх
+  if (sig.direction === 'long' && !priceUp && obv.trend === 'up') {
+    sig.confidence = Math.min(sig.confidence + 10, 100);
+    sig.obvNote    = `📊 OBV бычья дивергенция (накопление) → +10%`;
+  }
+  // Медвежья дивергенция: цена растёт но OBV падает → разворот вниз
+  else if (sig.direction === 'short' && priceUp && obv.trend === 'down') {
+    sig.confidence = Math.min(sig.confidence + 10, 100);
+    sig.obvNote    = `📊 OBV медвежья дивергенция (распределение) → +10%`;
+  }
+  // OBV подтверждает направление
+  else if (sig.direction === 'long' && obv.trend === 'up') {
+    sig.confidence = Math.min(sig.confidence + 5, 100);
+    sig.obvNote    = `📊 OBV растёт — подтверждает лонг → +5%`;
+  }
+  else if (sig.direction === 'short' && obv.trend === 'down') {
+    sig.confidence = Math.min(sig.confidence + 5, 100);
+    sig.obvNote    = `📊 OBV падает — подтверждает шорт → +5%`;
+  }
+  // OBV против сигнала
+  else if (sig.direction === 'long' && obv.trend === 'down') {
+    sig.confidence = Math.max(sig.confidence - 8, 0);
+    sig.obvNote    = `📊 OBV падает — против лонга → -8%`;
+  }
+  else if (sig.direction === 'short' && obv.trend === 'up') {
+    sig.confidence = Math.max(sig.confidence - 8, 0);
+    sig.obvNote    = `📊 OBV растёт — против шорта → -8%`;
+  }
+  return sig;
+}
+
+// Bollinger Squeeze — сужение полос предсказывает взрыв
+function applyBollingerSqueeze(sig, klines) {
+  try {
+    if (!klines || klines.length < 25) return sig;
+
+    const curr = calcBollinger(klines, 20, 2);
+    const prev = calcBollinger(klines.slice(0, -5), 20, 2);
+    if (!curr || !prev) return sig;
+
+    const isSqueeze  = curr.width < prev.width * 0.7; // полосы сузились на 30%+
+    const isExpand   = curr.width > prev.width * 1.3; // полосы расширились
+    const price      = sig.price;
+
+    if (isSqueeze) {
+      // Сжатие — скоро взрывное движение, ждём подтверждения
+      sig.confidence = Math.min(sig.confidence + 8, 100);
+      sig.bbNote     = `🔲 Bollinger Squeeze — взрывное движение скоро → +8%`;
+    }
+
+    if (isExpand) {
+      // Расширение — движение уже началось, подтверждаем направление
+      if (sig.direction === 'long' && price > curr.mid) {
+        sig.confidence = Math.min(sig.confidence + 7, 100);
+        sig.bbNote     = `📈 BB расширение вверх → +7%`;
+      } else if (sig.direction === 'short' && price < curr.mid) {
+        sig.confidence = Math.min(sig.confidence + 7, 100);
+        sig.bbNote     = `📉 BB расширение вниз → +7%`;
+      }
+    }
+
+    // Цена у края BB — перекупленность/перепроданность
+    if (sig.direction === 'long' && price <= curr.lower * 1.005) {
+      sig.confidence = Math.min(sig.confidence + 8, 100);
+      sig.bbNote     = `📊 Цена у нижней BB — перепродан → +8%`;
+    }
+    if (sig.direction === 'short' && price >= curr.upper * 0.995) {
+      sig.confidence = Math.min(sig.confidence + 8, 100);
+      sig.bbNote     = `📊 Цена у верхней BB — перекуплен → +8%`;
+    }
+  } catch(e) {}
+  return sig;
+}
+
+// Мультитаймфреймовый анализ (15m + 1H + 4H + 1D)
+async function applyMultiTimeframe(sig, instId) {
+  try {
+    const k15m = await getOKXKlines(instId, '15m', 55);
+    const k1d  = await getOKXKlines(instId, '1D',  55);
+
+    let score = 0;
+    const notes = [];
+
+    // 15m тренд
+    if (k15m.length >= 20) {
+      const ma20_15m = calcSMA(k15m, 20);
+      const price    = sig.price;
+      if (sig.direction === 'long' && price > ma20_15m) {
+        score++; notes.push('15m ▲');
+      } else if (sig.direction === 'short' && price < ma20_15m) {
+        score++; notes.push('15m ▼');
+      } else {
+        score--; notes.push('15m ✗');
+      }
+    }
+
+    // Дневной тренд
+    if (k1d.length >= 20) {
+      const ma20_1d = calcSMA(k1d, 20);
+      const price   = sig.price;
+      if (sig.direction === 'long' && price > ma20_1d) {
+        score++; notes.push('1D ▲');
+      } else if (sig.direction === 'short' && price < ma20_1d) {
+        score++; notes.push('1D ▼');
+      } else {
+        score--; notes.push('1D ✗');
+      }
+    }
+
+    // Применяем результат
+    if (score >= 2) {
+      sig.confidence  = Math.min(sig.confidence + 12, 100);
+      sig.mtfNote     = `📊 Мультитаймфрейм [${notes.join(' | ')}] → +12%`;
+    } else if (score === 1) {
+      sig.confidence  = Math.min(sig.confidence + 5, 100);
+      sig.mtfNote     = `📊 Мультитаймфрейм [${notes.join(' | ')}] → +5%`;
+    } else if (score <= -1) {
+      sig.confidence  = Math.max(sig.confidence - 12, 0);
+      sig.mtfNote     = `📊 Мультитаймфрейм [${notes.join(' | ')}] → -12%`;
+    }
+  } catch(e) { console.error('applyMultiTimeframe error:', e.message); }
+  return sig;
+}
+
+// Chart Patterns — треугольник, клин, флаг
+function detectChartPatterns(klines) {
+  if (!klines || klines.length < 20) return null;
+
+  const slice  = klines.slice(-20);
+  const highs  = slice.map(c => c.high);
+  const lows   = slice.map(c => c.low);
+  const closes = slice.map(c => c.close);
+
+  // Восходящий треугольник — highs flat, lows растут → бычий
+  const highFlat    = Math.max(...highs.slice(-5)) - Math.min(...highs.slice(-5));
+  const highRange   = Math.max(...highs) * 0.005; // 0.5% допуск
+  const lowsRising  = lows[lows.length-1] > lows[0] * 1.005;
+  if (highFlat < highRange && lowsRising) {
+    return { pattern: 'ascending_triangle', direction: 'bullish', desc: '📐 Восходящий треугольник → бычий' };
+  }
+
+  // Нисходящий треугольник — lows flat, highs падают → медвежий
+  const lowFlat      = Math.max(...lows.slice(-5)) - Math.min(...lows.slice(-5));
+  const lowRange     = Math.min(...lows) * 0.005;
+  const highsFalling = highs[highs.length-1] < highs[0] * 0.995;
+  if (lowFlat < lowRange && highsFalling) {
+    return { pattern: 'descending_triangle', direction: 'bearish', desc: '📐 Нисходящий треугольник → медвежий' };
+  }
+
+  // Симметричный треугольник — highs падают, lows растут → нейтральный
+  const highsFall2 = highs[highs.length-1] < highs[0] * 0.998;
+  const lowsRise2  = lows[lows.length-1]  > lows[0]  * 1.002;
+  if (highsFall2 && lowsRise2) {
+    return { pattern: 'symmetric_triangle', direction: 'neutral', desc: '📐 Симметричный треугольник → прорыв скоро' };
+  }
+
+  // Бычий флаг — резкий рост потом боковик
+  const prevHigh = Math.max(...closes.slice(0, 10));
+  const currLow  = Math.min(...closes.slice(-5));
+  const flag     = prevHigh > closes[0] * 1.03 && currLow > closes[0] * 1.01;
+  if (flag) {
+    return { pattern: 'bull_flag', direction: 'bullish', desc: '🚩 Бычий флаг → продолжение роста' };
+  }
+
+  return null;
+}
+
+function applyChartPatterns(sig, klines) {
+  const pattern = detectChartPatterns(klines);
+  if (!pattern) return sig;
+
+  const confirms    = (sig.direction === 'long'  && pattern.direction === 'bullish') ||
+                      (sig.direction === 'short' && pattern.direction === 'bearish');
+  const contradicts = (sig.direction === 'long'  && pattern.direction === 'bearish') ||
+                      (sig.direction === 'short' && pattern.direction === 'bullish');
+  const neutral     = pattern.direction === 'neutral';
+
+  if (confirms) {
+    sig.confidence    = Math.min(sig.confidence + 12, 100);
+    sig.chartPatNote  = `${pattern.desc} → +12%`;
+  } else if (contradicts) {
+    sig.confidence    = Math.max(sig.confidence - 15, 0);
+    sig.chartPatNote  = `${pattern.desc} — против сигнала → -15%`;
+  } else if (neutral) {
+    sig.confidence    = Math.min(sig.confidence + 5, 100);
+    sig.chartPatNote  = `${pattern.desc} → +5%`;
+  }
+  return sig;
+}
+
+// ============================================================
+//  VWAP и MA200
+// ============================================================
+function calcVWAP(klines) {
+  if (!klines || klines.length < 2) return null;
+  let cumTPV = 0, cumVol = 0;
+  for (const c of klines) {
+    const tp  = (c.high + c.low + c.close) / 3;
+    cumTPV   += tp * c.volume;
+    cumVol   += c.volume;
+  }
+  return cumVol > 0 ? cumTPV / cumVol : null;
+}
+
+function applyVWAP(sig, klines) {
+  const vwap = calcVWAP(klines);
+  if (!vwap) return sig;
+
+  const price = sig.price;
+  const dist  = ((price - vwap) / vwap * 100).toFixed(2);
+
+  if (sig.direction === 'long') {
+    if (price > vwap) {
+      // Цена выше VWAP — тренд бычий, подтверждает лонг
+      sig.confidence = Math.min(sig.confidence + 7, 100);
+      sig.vwapNote   = `📊 Цена выше VWAP ($${vwap.toFixed(4)}) +${dist}% → +7%`;
+    } else {
+      // Цена ниже VWAP — торгуем против тренда
+      sig.confidence = Math.max(sig.confidence - 10, 0);
+      sig.vwapNote   = `📊 Цена ниже VWAP ($${vwap.toFixed(4)}) ${dist}% → -10%`;
+    }
+  } else {
+    if (price < vwap) {
+      sig.confidence = Math.min(sig.confidence + 7, 100);
+      sig.vwapNote   = `📊 Цена ниже VWAP ($${vwap.toFixed(4)}) ${dist}% → +7%`;
+    } else {
+      sig.confidence = Math.max(sig.confidence - 10, 0);
+      sig.vwapNote   = `📊 Цена выше VWAP ($${vwap.toFixed(4)}) +${dist}% → -10%`;
+    }
+  }
+  return sig;
+}
+
+async function applyMA200(sig, instId) {
+  try {
+    // MA200 на дневном таймфрейме — главный тренд
+    const kD = await getOKXKlines(instId, '1D', 210);
+    if (kD.length < 200) return sig;
+
+    const ma200 = calcSMA(kD, 200);
+    const price = sig.price;
+    const dist  = ((price - ma200) / ma200 * 100).toFixed(2);
+
+    if (sig.direction === 'long') {
+      if (price > ma200) {
+        // Выше MA200 — глобальный бычий тренд
+        sig.confidence = Math.min(sig.confidence + 8, 100);
+        sig.ma200Note  = `📈 Выше MA200 дневной ($${ma200.toFixed(2)}) → +8%`;
+      } else {
+        // Ниже MA200 — глобальный медвежий тренд, лонги опасны
+        sig.confidence = Math.max(sig.confidence - 15, 0);
+        sig.ma200Note  = `⚠️ Ниже MA200 дневной ($${ma200.toFixed(2)}) → -15%`;
+      }
+    } else {
+      if (price < ma200) {
+        sig.confidence = Math.min(sig.confidence + 8, 100);
+        sig.ma200Note  = `📉 Ниже MA200 дневной ($${ma200.toFixed(2)}) → +8%`;
+      } else {
+        sig.confidence = Math.max(sig.confidence - 15, 0);
+        sig.ma200Note  = `⚠️ Выше MA200 дневной ($${ma200.toFixed(2)}) → -15%`;
+      }
+    }
+  } catch(e) { console.error('applyMA200 error:', e.message); }
+  return sig;
+}
+
 function calcATR(klines, period = 14) {
   if (klines.length < period + 1) return 0;
   const trs = [];
@@ -1657,7 +1954,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -2113,6 +2410,12 @@ if (alreadyOpen) {
         sig = await applyWhaleBoost(sig);
         sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
+        sig = applyVWAP(sig, await getOKXKlines(coin.instId, '1H', 24));
+        sig = await applyMA200(sig, coin.instId);
+        sig = applyOBV(sig, await getOKXKlines(coin.instId, '1H', 20));
+        sig = applyBollingerSqueeze(sig, await getOKXKlines(coin.instId, '1H', 25));
+        sig = await applyMultiTimeframe(sig, coin.instId);
+        sig = applyChartPatterns(sig, await getOKXKlines(coin.instId, '1H', 20));
         sig = applyMacroFilter(sig, macroEvent);
         sig = applyETFFlow(sig, etfFlow);
         sig = applyDayOfWeekFilter(sig);

@@ -1328,7 +1328,7 @@ if (k1h.length >= 55) {
       if (engulfing) {
         const avgVol  = k15m.slice(-10, -1).reduce((a, c) => a + c.quoteVolume, 0) / 9;
         const lastVol = k15m[k15m.length-1].quoteVolume;
-        const volBoost = lastVol >= avgVol * 2.5;
+        const volBoost = lastVol >= avgVol * 3.5;
 
         if (volBoost) {
           const dir = engulfing.direction === 'bullish' ? 'long' : 'short';
@@ -2302,30 +2302,47 @@ async function checkRSSNews() {
     console.error('checkRSSNews error:', e.message);
   }
 }
-// Раз в день — дневной отчёт
 async function dailyReport() {
-  const since   = Date.now() - 24*60*60*1000;
-  const signals = store.signalLog.filter(s => s.ts >= since);
-  const trades  = store.tradeHistory.filter(t => t.closedAt >= since);
-  const fng     = await getFearAndGreed();
+  const since = Date.now() - 24*60*60*1000;
+  const fng   = await getFearAndGreed();
 
-  if (!signals.length && !trades.length) {
-    await sendTelegram(`📊 ДНЕВНОЙ ОТЧЁТ | ${getAlmatyDate()}\n😴 Сигналов не было.`); return;
+  try {
+    // Читаем из Supabase а не из памяти
+    const { data: trades } = await supabase
+      .from('trades')
+      .select('*')
+      .gte('closed_at', since);
+
+    const { data: signals } = await supabase
+      .from('signals')
+      .select('*')
+      .gte('ts', since);
+
+    const t = trades || [];
+    const s = signals || [];
+
+    if (!t.length && !s.length) {
+      await sendTelegram(`📊 ДНЕВНОЙ ОТЧЁТ | ${getAlmatyDate()}\n😴 Сигналов не было.`);
+      return;
+    }
+
+    const wins   = t.filter(x => x.outcome==='tp1'||x.outcome==='tp2');
+    const losses = t.filter(x => x.outcome==='sl');
+    const wr     = t.length ? Math.round(wins.length/t.length*100) : 0;
+    const pnl    = t.reduce((a,x) => a+(parseFloat(x.pnl)||0), 0);
+    const longs  = s.filter(x => x.direction==='long').length;
+    const shorts = s.filter(x => x.direction==='short').length;
+
+    let msg = `📊 ДНЕВНОЙ ОТЧЁТ v4.0\n━━━━━━━━━━━━━━━━━━━━━━\n🗓 ${getAlmatyDate()}\n😐 F&G: ${fng.value} (${fng.label})\n\n`;
+    if (t.length) msg += `📈 Сделки: ${t.length} | ✅ TP: ${wins.length} ❌ SL: ${losses.length}\n🏆 Win Rate: ${wr}%  💰 PnL: ${pnl>=0?'+':''}${pnl.toFixed(1)}%\n\n`;
+    if (s.length) msg += `📨 Сигналов: ${s.length} (🟢 ${longs} / 🔴 ${shorts})\n`;
+    msg += '\n⚠️ Статистика бота, не реальных сделок.';
+
+    await sendTelegram(msg);
+  } catch(e) {
+    console.error('dailyReport error:', e.message);
+    await sendTelegram(`📊 ДНЕВНОЙ ОТЧЁТ | ${getAlmatyDate()}\n❌ Ошибка загрузки данных.`);
   }
-
-  const wins   = trades.filter(t => t.outcome==='tp1'||t.outcome==='tp2');
-  const losses = trades.filter(t => t.outcome==='sl');
-  const wr     = trades.length ? Math.round(wins.length/trades.length*100) : 0;
-  const pnl    = trades.reduce((a, t) => a + (t.pnl||0), 0);
-  const lc     = signals.filter(s => s.direction==='long').length;
-  const sc     = signals.filter(s => s.direction==='short').length;
-
-  let msg = `📊 ДНЕВНОЙ ОТЧЁТ v4.0\n━━━━━━━━━━━━━━━━━━━━━━\n🗓 ${getAlmatyDate()}\n😐 F&G: ${fng.value} (${fng.label})\n\n`;
-  if (trades.length) msg += `📈 Сделки: ${trades.length} | ✅ TP: ${wins.length} ❌ SL: ${losses.length}\n🏆 Win Rate: ${wr}%  💰 PnL: ${pnl>=0?'+':''}${pnl.toFixed(1)}%\n\n`;
-  if (signals.length) msg += `📨 Сигналов: ${signals.length} (🟢 ${lc} / 🔴 ${sc})\n`;
-  msg += '\n⚠️ Статистика бота, не реальных сделок.';
-
-  await sendTelegram(msg);
 }
 
 

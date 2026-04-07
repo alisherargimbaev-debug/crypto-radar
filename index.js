@@ -37,7 +37,7 @@ const STRATEGY_META = {
   '1️⃣ Пробой на импульсе (15m)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
-  '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~65%' },
+  '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~40%' },
   '5️⃣ RSI Дивергенция (1h)':       { color: '#34d399', rating: 'A', wr: '~67%' },
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
@@ -1078,38 +1078,49 @@ function calcBollinger(klines, period = 20, mult = 2) {
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
 function calcSLTP(price, direction, strategy, atr = null) {
-  // Если есть ATR — используем его для динамического SL
-  if (atr && atr > 0) {
-    const slDist  = atr * 1.5;  // SL = 1.5x ATR
-    const tp1Dist = atr * 3.0;  // TP1 = 3x ATR (RR 1:2)
-    const tp2Dist = atr * 4.5;  // TP2 = 4.5x ATR (RR 1:3)
+  // Минимальные пороги
+  const MIN_SL_PCT  = 1.0; // минимум 1% стоп
+  const MAX_SL_PCT  = 2.7; // максимум 2.7% стоп
+  const MIN_TP1_PCT = 3.0; // минимум 3% TP1
+  const MIN_TP2_PCT = 5.0; // минимум 5% TP2
 
-    return direction === 'long'
-      ? {
-          sl:  (price - slDist).toFixed(4),
-          tp1: (price + tp1Dist).toFixed(4),
-          tp2: (price + tp2Dist).toFixed(4),
-        }
-      : {
-          sl:  (price + slDist).toFixed(4),
-          tp1: (price - tp1Dist).toFixed(4),
-          tp2: (price - tp2Dist).toFixed(4),
-        };
+  let slDist, tp1Dist, tp2Dist;
+
+  if (atr && atr > 0) {
+    slDist  = atr * 1.5;
+    tp1Dist = atr * 3.0;
+    tp2Dist = atr * 4.5;
+  } else {
+    const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 3.0, tp2: 4.5 };
+    slDist  = price * params.sl  / 100;
+    tp1Dist = price * params.tp1 / 100;
+    tp2Dist = price * params.tp2 / 100;
   }
 
-  // Fallback — фиксированные проценты из STRATEGY_SL
-  const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 3.0, tp2: 4.5 };
-  const { sl, tp1, tp2 } = params;
+  // Применяем ограничения
+  const minSL  = price * MIN_SL_PCT  / 100;
+  const maxSL  = price * MAX_SL_PCT  / 100;
+  const minTP1 = price * MIN_TP1_PCT / 100;
+  const minTP2 = price * MIN_TP2_PCT / 100;
+
+  slDist  = Math.min(Math.max(slDist,  minSL),  maxSL);
+  tp1Dist = Math.max(tp1Dist, minTP1);
+  tp2Dist = Math.max(tp2Dist, minTP2);
+
+  // Гарантируем RR минимум 1:2
+  if (tp1Dist < slDist * 2) tp1Dist = slDist * 2;
+  if (tp2Dist < slDist * 3) tp2Dist = slDist * 3;
+
   return direction === 'long'
     ? {
-        sl:  (price * (1 - sl  / 100)).toFixed(4),
-        tp1: (price * (1 + tp1 / 100)).toFixed(4),
-        tp2: (price * (1 + tp2 / 100)).toFixed(4),
+        sl:  (price - slDist).toFixed(4),
+        tp1: (price + tp1Dist).toFixed(4),
+        tp2: (price + tp2Dist).toFixed(4),
       }
     : {
-        sl:  (price * (1 + sl  / 100)).toFixed(4),
-        tp1: (price * (1 - tp1 / 100)).toFixed(4),
-        tp2: (price * (1 - tp2 / 100)).toFixed(4),
+        sl:  (price + slDist).toFixed(4),
+        tp1: (price - tp1Dist).toFixed(4),
+        tp2: (price - tp2Dist).toFixed(4),
       };
 }
 
@@ -1610,34 +1621,18 @@ async function runStrategies(instId, coinData, asianSession) {
       const ml = lc.filter(Boolean).length;
       const ms = sc.filter(Boolean).length;
 
-      if (ml >= 4 || ms >= 4) {
-        const dir = ml >= ms ? 'long' : 'short';
+      if ((iL || iS) && (freshCross || priceNearMA)) {
+    const dir = iL ? 'long' : 'short';
 
-        // Фильтр 1 — RSI должен быть в зоне перепроданности/перекупленности
-        const rsiOk = (dir === 'long' && rsi < 40) || (dir === 'short' && rsi > 60);
-        if (!rsiOk) {
-          console.log(`[S2 SKIP] ${instId} — RSI не в зоне (${rsi})`);
-          continue; // пропускаем
-        }
+    // Дополнительный фильтр — RSI не должен быть против нас
+    if (dir === 'long'  && rsi > 65) {
+      console.log(`[S4 SKIP] ${instId} — RSI перекуплен (${rsi}) при лонге`);
+      // не добавляем сигнал
+    } else if (dir === 'short' && rsi < 35) {
+      console.log(`[S4 SKIP] ${instId} — RSI перепродан (${rsi}) при шорте`);
+    } else {
 
-        // Фильтр 2 — объём должен быть выше среднего
-        const avgVol = k1h.slice(-11,-1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
-        const lastVol = k1h[k1h.length-1].quoteVolume;
-        if (lastVol < avgVol * 1.5) {
-          console.log(`[S2 SKIP] ${instId} — слабый объём (${(lastVol/avgVol).toFixed(1)}x)`);
-          continue;
-        }
-
-        // Фильтр 3 — свеча поглощения или пин-бар как подтверждение
-        const patterns = detectCandlePatterns(k1h);
-        const hasConfirm = patterns.some(p =>
-          (dir === 'long'  && (p.name === 'hammer' || p.name === 'bullish_engulfing' || p.name === 'pin_bar_bull')) ||
-          (dir === 'short' && (p.name === 'shooting_star' || p.name === 'bearish_engulfing' || p.name === 'pin_bar_bear'))
-        );
-        if (!hasConfirm) {
-          console.log(`[S2 SKIP] ${instId} — нет подтверждающего паттерна`);
-          continue;
-        }
+    let conf  = 68;
 
         // Блокируем если торгуем против сильного тренда
         if (!isSideways && dir === 'long'  && trend4h === 'bearish') {
@@ -1658,7 +1653,7 @@ async function runStrategies(instId, coinData, asianSession) {
             metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi} 4H:${isSideways?'Боковик':'Тренд'} Сила:${trendStrength.toFixed(2)}%`,
             ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', calcATR(k1h, 14))
           });
-        }
+        } //конец RSI фильтра 
       }
     }
 

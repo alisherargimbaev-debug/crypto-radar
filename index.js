@@ -734,6 +734,85 @@ function applyDayOfWeekFilter(sig) {
   return sig;
 }
 
+// ============================================================
+//  МАКРО КАЛЕНДАРЬ
+// ============================================================
+async function checkMacroEvents() {
+  try {
+    // Используем бесплатный API экономического календаря
+    const today = new Date().toISOString().split('T')[0];
+    const data  = await httpGet(
+      `https://economic-calendar.tradingeconomics.com/calendar?c=united+states&d1=${today}&d2=${today}`
+    );
+    if (!data || !Array.isArray(data)) return null;
+
+    // Ищем важные события (impact = 3 = красные)
+    const highImpact = data.filter(e =>
+      e.importance === 3 &&
+      ['Federal Reserve','CPI','NFP','GDP','PCE','FOMC'].some(k =>
+        (e.event || '').includes(k)
+      )
+    );
+
+    if (!highImpact.length) return null;
+
+    return {
+      events: highImpact.map(e => e.event).join(', '),
+      count:  highImpact.length,
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+// BTC ETF потоки — когда институционалы покупают/продают
+async function getBTCETFFlow() {
+  try {
+    const data = await httpGet('https://api.coinglass.com/api/etf/flow/list');
+    if (!data || data.code !== '0') return null;
+
+    const today     = data.data?.[0];
+    if (!today) return null;
+
+    const netFlow   = parseFloat(today.netFlow || 0);
+    const flowM     = (netFlow / 1e6).toFixed(1);
+
+    return {
+      netFlow,
+      label: netFlow > 0
+        ? `🟢 ETF приток $${flowM}M сегодня`
+        : `🔴 ETF отток $${Math.abs(flowM)}M сегодня`,
+      bullish: netFlow > 0,
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+function applyETFFlow(sig, etfFlow) {
+  if (!etfFlow) return sig;
+
+  if (sig.direction === 'long' && etfFlow.bullish) {
+    sig.confidence = Math.min(sig.confidence + 8, 100);
+    sig.etfNote    = `${etfFlow.label} → +8%`;
+  } else if (sig.direction === 'short' && !etfFlow.bullish) {
+    sig.confidence = Math.min(sig.confidence + 8, 100);
+    sig.etfNote    = `${etfFlow.label} → +8%`;
+  } else if (sig.direction === 'long' && !etfFlow.bullish) {
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.etfNote    = `${etfFlow.label} → -10%`;
+  }
+  return sig;
+}
+
+function applyMacroFilter(sig, macroEvent) {
+  if (!macroEvent) return sig;
+
+  // За 2 часа до и после важного события — снижаем уверенность
+  sig.confidence  = Math.max(sig.confidence - 20, 0);
+  sig.macroNote   = `⚠️ Макро событие: ${macroEvent.events} → -20%`;
+  return sig;
+}
 
 // ============================================================
 //  LIQUIDATION BOOST
@@ -1578,7 +1657,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote, sig.liqLevelNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -2005,6 +2084,11 @@ async function checkSignals() {
     const fng          = await getFearAndGreed();
     const session      = getCurrentSession();
     const asianSession = isAsianSession();
+    const macroEvent   = await checkMacroEvents();
+    const etfFlow      = await getBTCETFFlow();
+    if (macroEvent) {
+      console.log(`[MACRO] Важное событие сегодня: ${macroEvent.events}`);
+    }
 
     for (const coin of candidates) {
       if (isCoinOnCooldown(coin.instId)) continue;
@@ -2029,7 +2113,8 @@ if (alreadyOpen) {
         sig = await applyWhaleBoost(sig);
         sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
-        sig = applyDayOfWeekFilter(sig);
+        sig = applyMacroFilter(sig, macroEvent);
+        sig = applyETFFlow(sig, etfFlow);
         sig = applyDayOfWeekFilter(sig);
         sig = await applyLiquidationLevels(sig);
 

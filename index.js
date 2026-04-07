@@ -1613,6 +1613,32 @@ async function runStrategies(instId, coinData, asianSession) {
       if (ml >= 4 || ms >= 4) {
         const dir = ml >= ms ? 'long' : 'short';
 
+        // Фильтр 1 — RSI должен быть в зоне перепроданности/перекупленности
+        const rsiOk = (dir === 'long' && rsi < 40) || (dir === 'short' && rsi > 60);
+        if (!rsiOk) {
+          console.log(`[S2 SKIP] ${instId} — RSI не в зоне (${rsi})`);
+          continue; // пропускаем
+        }
+
+        // Фильтр 2 — объём должен быть выше среднего
+        const avgVol = k1h.slice(-11,-1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
+        const lastVol = k1h[k1h.length-1].quoteVolume;
+        if (lastVol < avgVol * 1.5) {
+          console.log(`[S2 SKIP] ${instId} — слабый объём (${(lastVol/avgVol).toFixed(1)}x)`);
+          continue;
+        }
+
+        // Фильтр 3 — свеча поглощения или пин-бар как подтверждение
+        const patterns = detectCandlePatterns(k1h);
+        const hasConfirm = patterns.some(p =>
+          (dir === 'long'  && (p.name === 'hammer' || p.name === 'bullish_engulfing' || p.name === 'pin_bar_bull')) ||
+          (dir === 'short' && (p.name === 'shooting_star' || p.name === 'bearish_engulfing' || p.name === 'pin_bar_bear'))
+        );
+        if (!hasConfirm) {
+          console.log(`[S2 SKIP] ${instId} — нет подтверждающего паттерна`);
+          continue;
+        }
+
         // Блокируем если торгуем против сильного тренда
         if (!isSideways && dir === 'long'  && trend4h === 'bearish') {
           console.log(`[S2 BLOCK] ${instId} — лонг против медвежьего 4H тренда`);

@@ -703,6 +703,37 @@ function applySessionFilter(sig, session) {
   return sig;
 }
 
+function applyDayOfWeekFilter(sig) {
+  const day = new Date().getUTCDay(); // 0=вс, 1=пн, ..., 6=сб
+  const hour = new Date().getUTCHours();
+
+  // Понедельник — рынок часто слабый после выходных
+  if (day === 1 && hour < 12) {
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.dowNote = '📅 Понедельник утро (слабый рынок) → -10%';
+  }
+
+  // Пятница вечер — закрытие позиций перед выходными
+  if (day === 5 && hour >= 18) {
+    sig.confidence = Math.max(sig.confidence - 8, 0);
+    sig.dowNote = '📅 Пятница вечер (закрытие позиций) → -8%';
+  }
+
+  // Пятница 08:00 UTC — экспирация опционов, высокая волатильность
+  if (day === 5 && hour >= 7 && hour <= 9) {
+    sig.confidence = Math.max(sig.confidence - 15, 0);
+    sig.dowNote = '📅 Экспирация опционов (пятница 08 UTC) → -15%';
+  }
+
+  // Вторник/среда US сессия — исторически лучшие дни
+  if ((day === 2 || day === 3) && hour >= 14 && hour <= 21) {
+    sig.confidence = Math.min(sig.confidence + 5, 100);
+    sig.dowNote = '📅 Вт/Ср US сессия (сильные дни) → +5%';
+  }
+
+  return sig;
+}
+
 
 // ============================================================
 //  LIQUIDATION BOOST
@@ -719,6 +750,79 @@ async function getLiquidationData(instId) {
     if (d.side === 'sell') longLiqs  += usd;
   });
   return { longLiqs, shortLiqs, totalUsd, dominant: longLiqs > shortLiqs ? 'longs' : 'shorts' };
+}
+
+// Ликвидационные уровни — где скопились стопы
+async function getLiquidationLevels(symbol) {
+  try {
+    const data = await httpGet(
+      `https://open-api.coinglass.com/public/v2/liquidation_map?symbol=${symbol}&range=12h`
+    );
+    if (!data || data.code !== '0' || !data.data) return null;
+
+    const levels = data.data;
+    let longLiqTotal  = 0;
+    let shortLiqTotal = 0;
+    let bigLongLevel  = null;
+    let bigShortLevel = null;
+    let maxLong  = 0;
+    let maxShort = 0;
+
+    // Находим уровни с максимальными ликвидациями
+    Object.entries(levels).forEach(([price, liq]) => {
+      const p = parseFloat(price);
+      const longLiq  = parseFloat(liq.buyLiquidation  || 0);
+      const shortLiq = parseFloat(liq.sellLiquidation || 0);
+      longLiqTotal  += longLiq;
+      shortLiqTotal += shortLiq;
+      if (longLiq  > maxLong)  { maxLong  = longLiq;  bigLongLevel  = p; }
+      if (shortLiq > maxShort) { maxShort = shortLiq; bigShortLevel = p; }
+    });
+
+    return {
+      bigLongLevel,   // уровень с макс лонг ликвидациями (цена упадёт сюда)
+      bigShortLevel,  // уровень с макс шорт ликвидациями (цена вырастет сюда)
+      maxLong:  (maxLong  / 1e6).toFixed(2),
+      maxShort: (maxShort / 1e6).toFixed(2),
+    };
+  } catch(e) {
+    console.error('getLiquidationLevels error:', e.message);
+    return null;
+  }
+}
+
+async function applyLiquidationLevels(sig) {
+  try {
+    const symbol = sig.instId.replace('-USDT-SWAP', '');
+    const liq    = await getLiquidationLevels(symbol);
+    if (!liq) return sig;
+
+    const price = sig.price;
+
+    if (sig.direction === 'long' && liq.bigShortLevel) {
+      const dist = (liq.bigShortLevel - price) / price * 100;
+      // Большое скопление шорт-стопов выше — цена пойдёт туда → подтверждает LONG
+      if (dist > 0 && dist < 5) {
+        sig.confidence = Math.min(sig.confidence + 12, 100);
+        sig.liqLevelNote = `🎯 Шорт-стопы $${liq.bigShortLevel.toFixed(2)} (+${dist.toFixed(1)}%) $${liq.maxShort}M → +12%`;
+        // Используем уровень как TP
+        sig.tp1 = (liq.bigShortLevel * 0.998).toFixed(4);
+      }
+    }
+
+    if (sig.direction === 'short' && liq.bigLongLevel) {
+      const dist = (price - liq.bigLongLevel) / price * 100;
+      // Большое скопление лонг-стопов ниже — цена пойдёт туда → подтверждает SHORT
+      if (dist > 0 && dist < 5) {
+        sig.confidence = Math.min(sig.confidence + 12, 100);
+        sig.liqLevelNote = `🎯 Лонг-стопы $${liq.bigLongLevel.toFixed(2)} (-${dist.toFixed(1)}%) $${liq.maxLong}M → +12%`;
+        sig.tp1 = (liq.bigLongLevel * 1.002).toFixed(4);
+      }
+    }
+  } catch(e) {
+    console.error('applyLiquidationLevels error:', e.message);
+  }
+  return sig;
 }
 
 // ============================================================
@@ -1474,7 +1578,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.liqNote, sig.patternNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote, sig.liqLevelNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -1925,6 +2029,9 @@ if (alreadyOpen) {
         sig = await applyWhaleBoost(sig);
         sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
+        sig = applyDayOfWeekFilter(sig);
+        sig = applyDayOfWeekFilter(sig);
+        sig = await applyLiquidationLevels(sig);
 
         // FVG зоны
         const fvgKlines = await getOKXKlines(coin.instId, '1H', 30);

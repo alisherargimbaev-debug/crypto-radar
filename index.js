@@ -919,7 +919,6 @@ function applyMacroFilter(sig, macroEvent) {
 // ============================================================
 //  LIQUIDATION BOOST
 // ============================================================
-// Ликвидационные уровни — где скопились стопы
 // Ликвидационные уровни — через OKX
 async function getLiquidationLevels(symbol) {
   try {

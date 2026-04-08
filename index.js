@@ -1621,6 +1621,10 @@ async function runStrategies(instId, coinData, asianSession) {
       const ml = lc.filter(Boolean).length;
       const ms = sc.filter(Boolean).length;
 
+      // S4 работает только на ликвидных монетах
+if (coinData.volume24h < 100000000) { // минимум $100M объём
+  console.log(`[S4 SKIP] ${instId} — низкий объём для S4`);
+} else
       if ((iL || iS) && (freshCross || priceNearMA)) {
     const dir = iL ? 'long' : 'short';
 
@@ -1752,7 +1756,7 @@ if (k1h.length >= 55) {
       const priceNewHigh = closes[closes.length-1] > Math.max(...closes.slice(-10, -1));
       const rsiLower     = rsiNow < rsiPrev - 3;
 
-      if (priceNewLow && rsiHigher && rsiNow < 45) {
+      if (priceNewLow && rsiHigher && rsiNow < 42) {
         // Бычья дивергенция → LONG
         signals.push({
           strategy: '5️⃣ RSI Дивергенция (1h)', instId, direction: 'long',
@@ -1877,7 +1881,7 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S8 error:', e.message); }
 
-    // S9: Pairs Trading — корреляция BTC/ETH
+    /*/ S9: Pairs Trading — корреляция BTC/ETH
     try {
       if (coinData.symbol === 'ETH' || coinData.symbol === 'BTC') {
         const btcData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=1H&limit=24');
@@ -1950,7 +1954,7 @@ if (k1h.length >= 55) {
           }
         }
       }
-    } catch(e) { console.error('S9 error:', e.message); } 
+    } catch(e) { console.error('S9 error:', e.message); } */
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
@@ -2196,7 +2200,7 @@ async function runBacktest(coins, limit = 300) {
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-  'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  //'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
 };
 
   for (const instId of coins) {
@@ -2220,7 +2224,7 @@ if (klines1h.length < 60) continue;
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
-  { name:'S9 Pairs Trading',   fn: btS9 },
+  //{ name:'S9 Pairs Trading',   fn: btS9 },
 ];
 
     for (const { name, fn } of runs) {
@@ -2344,7 +2348,7 @@ function btS5(klines, i) {
   return null;
 }
 
-function btS9(klines, i) {
+/*function btS9(klines, i) {
   if (i < 10) return null;
   const slice  = klines.slice(0, i+1);
   const last   = slice[slice.length-1];
@@ -2360,7 +2364,7 @@ function btS9(klines, i) {
   if (change4h > 1.5 && change8h < 0 && rsi > 50) return 'short';
 
   return null;
-}
+} */
 
 function btS7(klines, i) {
   const slice = klines.slice(0, i+1);

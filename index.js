@@ -919,10 +919,13 @@ function applyMacroFilter(sig, macroEvent) {
 // ============================================================
 //  LIQUIDATION BOOST
 // ============================================================
+// Ликвидационные уровни — где скопились стопы
+// Ликвидационные уровни — через OKX
 async function getLiquidationLevels(symbol) {
   try {
     const SUPPORTED = ['BTC','ETH','SOL','XRP','BNB','DOGE','PEPE','AVAX',
-      'LINK','ADA','MATIC','DOT','LTC','ATOM','NEAR','APT','ARB','OP','INJ','TIA'];
+      'LINK','ADA','MATIC','DOT','LTC','ATOM','NEAR','APT','ARB','OP','INJ',
+      'TIA','HYPE','WIF','SHIB','HBAR','FIL','AAVE','XLM','BCH'];
     if (!SUPPORTED.includes(symbol)) return null;
 
     const data = await httpGet(
@@ -946,52 +949,10 @@ async function getLiquidationLevels(symbol) {
     return {
       bigLongLevel:  bigLong?.px  || null,
       bigShortLevel: bigShort?.px || null,
-      maxLong:  (longLevels.reduce((a,b) => a + b.usd, 0) / 1e6).toFixed(2),
+      maxLong:  (longLevels.reduce((a,b)  => a + b.usd, 0) / 1e6).toFixed(2),
       maxShort: (shortLevels.reduce((a,b) => a + b.usd, 0) / 1e6).toFixed(2),
     };
   } catch(e) { return null; }
-}
-
-// Ликвидационные уровни — где скопились стопы
-async function getLiquidationLevels(symbol) {
-  try {
-    const data = await httpGet(
-      `https://open-api.coinglass.com/public/v2/liquidation_map?symbol=${symbol}&range=12h`
-    );
-    if (!data || data.code !== '0' || !data.data) return null;
-
-    const levels = data.data;
-    let longLiqTotal  = 0;
-    let shortLiqTotal = 0;
-    let bigLongLevel  = null;
-    let bigShortLevel = null;
-    let maxLong  = 0;
-    let maxShort = 0;
-
-    // Находим уровни с максимальными ликвидациями
-    Object.entries(levels).forEach(([price, liq]) => {
-      const p = parseFloat(price);
-      const longLiq  = parseFloat(liq.buyLiquidation  || 0);
-      const shortLiq = parseFloat(liq.sellLiquidation || 0);
-      longLiqTotal  += longLiq;
-      shortLiqTotal += shortLiq;
-      if (longLiq  > maxLong)  { maxLong  = longLiq;  bigLongLevel  = p; }
-      if (shortLiq > maxShort) { maxShort = shortLiq; bigShortLevel = p; }
-    });
-
-    return {
-      bigLongLevel,   // уровень с макс лонг ликвидациями (цена упадёт сюда)
-      bigShortLevel,  // уровень с макс шорт ликвидациями (цена вырастет сюда)
-      maxLong:  (maxLong  / 1e6).toFixed(2),
-      maxShort: (maxShort / 1e6).toFixed(2),
-    };
-  } catch(e) {
-    // Не логируем 500 ошибки — это нормально для неподдерживаемых символов
-    if (!e.message.includes('500')) {
-      console.error('getLiquidationLevels error:', e.message);
-    }
-    return null;
-  }
 }
 
 async function applyLiquidationLevels(sig) {

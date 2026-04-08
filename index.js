@@ -858,60 +858,37 @@ function applyDayOfWeekFilter(sig) {
 // ============================================================
 async function checkMacroEvents() {
   try {
-    // Используем бесплатный API без ключа
-    const today = new Date().toISOString().split('T')[0];
-    const data  = await httpGet(
-      `https://nfs.faireconomy.media/ff_calendar_thisweek.json`
-    );
+    const data = await httpGet('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
     if (!data || !Array.isArray(data)) return null;
-
-    const now     = Date.now();
+    const now = Date.now();
     const twoHours = 2 * 60 * 60 * 1000;
-
     const highImpact = data.filter(e => {
       if (e.impact !== 'High') return false;
       if (e.country !== 'USD') return false;
       const eventTime = new Date(e.date).getTime();
-      // Событие в ближайшие 2 часа или прошло менее 2 часов назад
       return Math.abs(now - eventTime) < twoHours;
     });
-
     if (!highImpact.length) return null;
-    return {
-      events: highImpact.map(e => e.title).join(', '),
-      count:  highImpact.length,
-    };
-  } catch(e) {
-    return null; // молча игнорируем
-  }
+    return { events: highImpact.map(e => e.title).join(', '), count: highImpact.length };
+  } catch(e) { return null; }
 }
 
 // BTC ETF потоки — когда институционалы покупают/продают
 async function getBTCETFFlow() {
   try {
-    // Используем публичный API CoinGecko для BTC доминации как прокси
-    const data = await httpGet(
-      'https://api.coingecko.com/api/v3/global'
-    );
+    const data = await httpGet('https://api.coingecko.com/api/v3/global');
     if (!data?.data) return null;
-
     const btcDom = data.data.market_cap_percentage?.btc || 0;
     const change = data.data.market_cap_change_percentage_24h_usd || 0;
-
-    // Рынок растёт и BTC доминация высокая = институционалы активны
     const bullish = change > 0;
-    const flowM   = Math.abs(change * 10).toFixed(1); // условный объём
-
     return {
       netFlow: change,
-      label:   bullish
+      label: bullish
         ? `🟢 Рынок +${change.toFixed(1)}% за 24h (BTC dom: ${btcDom.toFixed(1)}%)`
         : `🔴 Рынок ${change.toFixed(1)}% за 24h (BTC dom: ${btcDom.toFixed(1)}%)`,
       bullish,
     };
-  } catch(e) {
-    return null;
-  }
+  } catch(e) { return null; }
 }
 
 function applyETFFlow(sig, etfFlow) {
@@ -944,46 +921,35 @@ function applyMacroFilter(sig, macroEvent) {
 // ============================================================
 async function getLiquidationLevels(symbol) {
   try {
-    // Используем OKX ликвидации вместо Coinglass
+    const SUPPORTED = ['BTC','ETH','SOL','XRP','BNB','DOGE','PEPE','AVAX',
+      'LINK','ADA','MATIC','DOT','LTC','ATOM','NEAR','APT','ARB','OP','INJ','TIA'];
+    if (!SUPPORTED.includes(symbol)) return null;
+
     const data = await httpGet(
       `https://www.okx.com/api/v5/public/liquidation-orders?instType=SWAP&instId=${symbol}-USDT-SWAP&state=filled&limit=100`
     );
     if (!data || data.code !== '0' || !data.data?.length) return null;
-
     const details = data.data[0]?.details || [];
     if (!details.length) return null;
 
-    let longLiqs = 0, shortLiqs = 0;
     let longLevels = [], shortLevels = [];
-
     details.forEach(d => {
       const usd = parseFloat(d.sz) * parseFloat(d.bkPx);
       const px  = parseFloat(d.bkPx);
-      if (d.side === 'sell') {
-        longLiqs += usd;
-        longLevels.push({ px, usd });
-      }
-      if (d.side === 'buy') {
-        shortLiqs += usd;
-        shortLevels.push({ px, usd });
-      }
+      if (d.side === 'sell') longLevels.push({ px, usd });
+      if (d.side === 'buy')  shortLevels.push({ px, usd });
     });
 
-    if (!longLevels.length && !shortLevels.length) return null;
-
-    // Находим уровень с макс ликвидациями
     const bigLong  = longLevels.sort((a,b)  => b.usd - a.usd)[0];
     const bigShort = shortLevels.sort((a,b) => b.usd - a.usd)[0];
 
     return {
       bigLongLevel:  bigLong?.px  || null,
       bigShortLevel: bigShort?.px || null,
-      maxLong:  (longLiqs  / 1e6).toFixed(2),
-      maxShort: (shortLiqs / 1e6).toFixed(2),
+      maxLong:  (longLevels.reduce((a,b) => a + b.usd, 0) / 1e6).toFixed(2),
+      maxShort: (shortLevels.reduce((a,b) => a + b.usd, 0) / 1e6).toFixed(2),
     };
-  } catch(e) {
-    return null; // молча игнорируем
-  }
+  } catch(e) { return null; }
 }
 
 // Ликвидационные уровни — где скопились стопы

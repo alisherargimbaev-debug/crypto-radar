@@ -703,6 +703,125 @@ function applySessionFilter(sig, session) {
   return sig;
 }
 
+// ============================================================
+//  LONG/SHORT RATIO, BTC DOMINANCE, COINBASE PREMIUM
+// ============================================================
+
+// Long/Short Ratio — соотношение лонгов и шортов
+async function getLongShortRatio(symbol) {
+  try {
+    const data = await httpGet(
+      `https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy=${symbol}&period=1H&limit=2`
+    );
+    if (!data || data.code !== '0' || !data.data?.length) return null;
+    const latest = data.data[0];
+    const ratio  = parseFloat(latest[1]); // longRatio
+    return {
+      longPct:  (ratio * 100).toFixed(1),
+      shortPct: ((1 - ratio) * 100).toFixed(1),
+      extreme:  ratio > 0.75 ? 'long_extreme' : ratio < 0.25 ? 'short_extreme' : 'neutral',
+    };
+  } catch(e) { return null; }
+}
+
+function applyLongShortRatio(sig, lsr) {
+  if (!lsr) return sig;
+
+  // Если 75%+ лонгов — рынок перегрет лонгами → скоро шорт-сквиз → SHORT
+  if (lsr.extreme === 'long_extreme') {
+    if (sig.direction === 'short') {
+      sig.confidence = Math.min(sig.confidence + 10, 100);
+      sig.lsrNote    = `👥 ${lsr.longPct}% лонгов — перегрев → подтверждает шорт +10%`;
+    } else {
+      sig.confidence = Math.max(sig.confidence - 10, 0);
+      sig.lsrNote    = `👥 ${lsr.longPct}% лонгов — опасно открывать лонг → -10%`;
+    }
+  }
+
+  // Если 75%+ шортов — рынок перегрет шортами → скоро лонг-сквиз → LONG
+  if (lsr.extreme === 'short_extreme') {
+    if (sig.direction === 'long') {
+      sig.confidence = Math.min(sig.confidence + 10, 100);
+      sig.lsrNote    = `👥 ${lsr.shortPct}% шортов — перегрев → подтверждает лонг +10%`;
+    } else {
+      sig.confidence = Math.max(sig.confidence - 10, 0);
+      sig.lsrNote    = `👥 ${lsr.shortPct}% шортов — опасно открывать шорт → -10%`;
+    }
+  }
+  return sig;
+}
+
+// BTC Dominance — когда доминация растёт альты падают
+async function getBTCDominance() {
+  try {
+    const data = await httpGet('https://api.coingecko.com/api/v3/global');
+    if (!data?.data) return null;
+    const dom    = parseFloat(data.data.market_cap_percentage?.btc || 0);
+    const change = data.data.market_cap_change_percentage_24h_usd || 0;
+    return { dom: dom.toFixed(1), change: change.toFixed(2), rising: dom > 55 };
+  } catch(e) { return null; }
+}
+
+function applyBTCDominance(sig, btcDom, symbol) {
+  if (!btcDom) return sig;
+  // Если BTC доминация высокая (>55%) и монета не BTC — альты под давлением
+  if (btcDom.rising && symbol !== 'BTC') {
+    if (sig.direction === 'long') {
+      sig.confidence = Math.max(sig.confidence - 8, 0);
+      sig.btcDomNote = `📊 BTC Dom ${btcDom.dom}% высокая — альты под давлением → -8%`;
+    } else {
+      sig.confidence = Math.min(sig.confidence + 5, 100);
+      sig.btcDomNote = `📊 BTC Dom ${btcDom.dom}% высокая — подтверждает шорт альта → +5%`;
+    }
+  }
+  return sig;
+}
+
+// Coinbase Premium — разница BTC цены на Coinbase vs OKX
+// Положительный = американцы покупают = рост
+async function getCoinbasePremium() {
+  try {
+    const [okxData, cbData] = await Promise.all([
+      httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP'),
+      httpGet('https://api.coinbase.com/v2/prices/BTC-USD/spot'),
+    ]);
+    if (!okxData?.data?.[0] || !cbData?.data?.amount) return null;
+
+    const okxPrice = parseFloat(okxData.data[0].last);
+    const cbPrice  = parseFloat(cbData.data.amount);
+    const premium  = ((cbPrice - okxPrice) / okxPrice * 100);
+
+    return {
+      premium:  premium.toFixed(3),
+      positive: premium > 0.05,
+      negative: premium < -0.05,
+    };
+  } catch(e) { return null; }
+}
+
+function applyCoinbasePremium(sig, cbPremium) {
+  if (!cbPremium) return sig;
+
+  // Положительный premium = американцы покупают BTC = бычий сигнал
+  if (cbPremium.positive) {
+    if (sig.direction === 'long') {
+      sig.confidence  = Math.min(sig.confidence + 7, 100);
+      sig.cbNote      = `🇺🇸 Coinbase Premium +${cbPremium.premium}% — США покупают → +7%`;
+    }
+  }
+  // Отрицательный premium = американцы продают = медвежий сигнал
+  if (cbPremium.negative) {
+    if (sig.direction === 'short') {
+      sig.confidence  = Math.min(sig.confidence + 7, 100);
+      sig.cbNote      = `🇺🇸 Coinbase Premium ${cbPremium.premium}% — США продают → +7%`;
+    } else if (sig.direction === 'long') {
+      sig.confidence  = Math.max(sig.confidence - 7, 0);
+      sig.cbNote      = `🇺🇸 Coinbase Premium ${cbPremium.premium}% — США продают → -7%`;
+    }
+  }
+  return sig;
+}
+
 function applyDayOfWeekFilter(sig) {
   const day = new Date().getUTCDay(); // 0=вс, 1=пн, ..., 6=сб
   const hour = new Date().getUTCHours();
@@ -739,50 +858,56 @@ function applyDayOfWeekFilter(sig) {
 // ============================================================
 async function checkMacroEvents() {
   try {
-    // Используем бесплатный API экономического календаря
+    // Используем бесплатный API без ключа
     const today = new Date().toISOString().split('T')[0];
     const data  = await httpGet(
-      `https://economic-calendar.tradingeconomics.com/calendar?c=united+states&d1=${today}&d2=${today}`
+      `https://nfs.faireconomy.media/ff_calendar_thisweek.json`
     );
     if (!data || !Array.isArray(data)) return null;
 
-    // Ищем важные события (impact = 3 = красные)
-    const highImpact = data.filter(e =>
-      e.importance === 3 &&
-      ['Federal Reserve','CPI','NFP','GDP','PCE','FOMC'].some(k =>
-        (e.event || '').includes(k)
-      )
-    );
+    const now     = Date.now();
+    const twoHours = 2 * 60 * 60 * 1000;
+
+    const highImpact = data.filter(e => {
+      if (e.impact !== 'High') return false;
+      if (e.country !== 'USD') return false;
+      const eventTime = new Date(e.date).getTime();
+      // Событие в ближайшие 2 часа или прошло менее 2 часов назад
+      return Math.abs(now - eventTime) < twoHours;
+    });
 
     if (!highImpact.length) return null;
-
     return {
-      events: highImpact.map(e => e.event).join(', '),
+      events: highImpact.map(e => e.title).join(', '),
       count:  highImpact.length,
     };
   } catch(e) {
-    return null;
+    return null; // молча игнорируем
   }
 }
 
 // BTC ETF потоки — когда институционалы покупают/продают
 async function getBTCETFFlow() {
   try {
-    const data = await httpGet('https://api.coinglass.com/api/etf/flow/list');
-    if (!data || data.code !== '0') return null;
+    // Используем публичный API CoinGecko для BTC доминации как прокси
+    const data = await httpGet(
+      'https://api.coingecko.com/api/v3/global'
+    );
+    if (!data?.data) return null;
 
-    const today     = data.data?.[0];
-    if (!today) return null;
+    const btcDom = data.data.market_cap_percentage?.btc || 0;
+    const change = data.data.market_cap_change_percentage_24h_usd || 0;
 
-    const netFlow   = parseFloat(today.netFlow || 0);
-    const flowM     = (netFlow / 1e6).toFixed(1);
+    // Рынок растёт и BTC доминация высокая = институционалы активны
+    const bullish = change > 0;
+    const flowM   = Math.abs(change * 10).toFixed(1); // условный объём
 
     return {
-      netFlow,
-      label: netFlow > 0
-        ? `🟢 ETF приток $${flowM}M сегодня`
-        : `🔴 ETF отток $${Math.abs(flowM)}M сегодня`,
-      bullish: netFlow > 0,
+      netFlow: change,
+      label:   bullish
+        ? `🟢 Рынок +${change.toFixed(1)}% за 24h (BTC dom: ${btcDom.toFixed(1)}%)`
+        : `🔴 Рынок ${change.toFixed(1)}% за 24h (BTC dom: ${btcDom.toFixed(1)}%)`,
+      bullish,
     };
   } catch(e) {
     return null;
@@ -817,18 +942,48 @@ function applyMacroFilter(sig, macroEvent) {
 // ============================================================
 //  LIQUIDATION BOOST
 // ============================================================
-async function getLiquidationData(instId) {
-  const data = await httpGet(`https://www.okx.com/api/v5/public/liquidation-orders?instType=SWAP&instId=${instId}&state=filled&limit=50`);
-  if (!data || data.code !== '0' || !data.data?.length) return { longLiqs: 0, shortLiqs: 0, totalUsd: 0, dominant: 'none' };
-  const details = data.data[0].details || [];
-  let longLiqs = 0, shortLiqs = 0, totalUsd = 0;
-  details.forEach(d => {
-    const usd = parseFloat(d.sz) * parseFloat(d.bkPx);
-    totalUsd += usd;
-    if (d.side === 'buy')  shortLiqs += usd;
-    if (d.side === 'sell') longLiqs  += usd;
-  });
-  return { longLiqs, shortLiqs, totalUsd, dominant: longLiqs > shortLiqs ? 'longs' : 'shorts' };
+async function getLiquidationLevels(symbol) {
+  try {
+    // Используем OKX ликвидации вместо Coinglass
+    const data = await httpGet(
+      `https://www.okx.com/api/v5/public/liquidation-orders?instType=SWAP&instId=${symbol}-USDT-SWAP&state=filled&limit=100`
+    );
+    if (!data || data.code !== '0' || !data.data?.length) return null;
+
+    const details = data.data[0]?.details || [];
+    if (!details.length) return null;
+
+    let longLiqs = 0, shortLiqs = 0;
+    let longLevels = [], shortLevels = [];
+
+    details.forEach(d => {
+      const usd = parseFloat(d.sz) * parseFloat(d.bkPx);
+      const px  = parseFloat(d.bkPx);
+      if (d.side === 'sell') {
+        longLiqs += usd;
+        longLevels.push({ px, usd });
+      }
+      if (d.side === 'buy') {
+        shortLiqs += usd;
+        shortLevels.push({ px, usd });
+      }
+    });
+
+    if (!longLevels.length && !shortLevels.length) return null;
+
+    // Находим уровень с макс ликвидациями
+    const bigLong  = longLevels.sort((a,b)  => b.usd - a.usd)[0];
+    const bigShort = shortLevels.sort((a,b) => b.usd - a.usd)[0];
+
+    return {
+      bigLongLevel:  bigLong?.px  || null,
+      bigShortLevel: bigShort?.px || null,
+      maxLong:  (longLiqs  / 1e6).toFixed(2),
+      maxShort: (shortLiqs / 1e6).toFixed(2),
+    };
+  } catch(e) {
+    return null; // молча игнорируем
+  }
 }
 
 // Ликвидационные уровни — где скопились стопы
@@ -865,7 +1020,10 @@ async function getLiquidationLevels(symbol) {
       maxShort: (maxShort / 1e6).toFixed(2),
     };
   } catch(e) {
-    console.error('getLiquidationLevels error:', e.message);
+    // Не логируем 500 ошибки — это нормально для неподдерживаемых символов
+    if (!e.message.includes('500')) {
+      console.error('getLiquidationLevels error:', e.message);
+    }
     return null;
   }
 }
@@ -1979,7 +2137,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
@@ -2408,6 +2566,8 @@ async function checkSignals() {
     const asianSession = isAsianSession();
     const macroEvent   = await checkMacroEvents();
     const etfFlow      = await getBTCETFFlow();
+    const btcDom       = await getBTCDominance();
+    const cbPremium    = await getCoinbasePremium();
     if (macroEvent) {
       console.log(`[MACRO] Важное событие сегодня: ${macroEvent.events}`);
     }
@@ -2443,6 +2603,10 @@ if (alreadyOpen) {
         sig = applyChartPatterns(sig, await getOKXKlines(coin.instId, '1H', 20));
         sig = applyMacroFilter(sig, macroEvent);
         sig = applyETFFlow(sig, etfFlow);
+        const lsr = await getLongShortRatio(coin.symbol);
+        sig = applyLongShortRatio(sig, lsr);
+        sig = applyBTCDominance(sig, btcDom, coin.symbol);
+        sig = applyCoinbasePremium(sig, cbPremium);
         sig = applyDayOfWeekFilter(sig);
         sig = await applyLiquidationLevels(sig);
 

@@ -14,7 +14,6 @@ const CHAT_ID        = process.env.CHAT_ID;
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
-  '1️⃣ Пробой на импульсе (15m)':   { sl: 1.5, tp1: 3.0, tp2: 4.5 },
   '2️⃣ Liquidity Bounce (1h)':       { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 2.0, tp2: 3.0 },
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 3.0, tp1: 6.0, tp2: 9.0 },
@@ -22,8 +21,6 @@ const STRATEGY_SL = {
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
-  '9️⃣ Pairs Trading (ETH/BTC)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
-  '9️⃣ Pairs Trading (BTC/ETH)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -34,7 +31,6 @@ const COOLDOWN_MIN   = 30;
 
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
-  '1️⃣ Пробой на импульсе (15m)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
   '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~40%' },
@@ -42,8 +38,6 @@ const STRATEGY_META = {
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
-  '9️⃣ Pairs Trading (ETH/BTC)': { color: '#34d399', rating: 'A', wr: 'Новая' },
-  '9️⃣ Pairs Trading (BTC/ETH)': { color: '#34d399', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -1632,55 +1626,6 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
-/*/ S1: Пробой на импульсе (15m) — с подтверждением объёма и S/R
-    if (!asianSession && k15m.length >= 10) {
-      const pc    = calcPriceChangePct(k15m);
-      const vd    = tf5m ? tf5m.delta : calcVolumeDelta(k15m);
-      const last  = k15m[k15m.length - 1];
-      const atr   = calcATR(k15m, 14);
-
-      // Объём минимум 3x выше среднего за 20 свечей
-      const avgVol  = k15m.slice(-11, -1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
-      const lastVol = last.quoteVolume;
-      const volSpike = lastVol >= avgVol * 3.0;
-
-      if (!volSpike) {
-        // нет объёма — пропускаем
-      } else {
-        const iL = pc >= 1.5 && vd > 0;
-        const iS = pc <= -1.5 && vd < 0;
-
-        if (iL || iS) {
-          const dir = iL ? 'long' : 'short';
-
-          // Проверяем S/R — нет ли сопротивления рядом
-          const sr = await getSupportResistanceLevels(instId);
-          const nearResistance = dir === 'long'
-            ? sr.resistances.some(r => Math.abs(r - price) / price < 0.008)
-            : sr.supports.some(s => Math.abs(s - price) / price < 0.008);
-
-          if (nearResistance) {
-            console.log(`[S1 BLOCK] ${instId} — рядом уровень S/R`);
-          } else {
-            const macd15 = calcMACD(k15m);
-            let conf = 65;
-            if (macd15.hist > 0 && dir === 'long')  conf += 10;
-            if (macd15.hist < 0 && dir === 'short') conf += 10;
-            conf += Math.min(Math.round((lastVol / avgVol - 3) * 5), 15);
-
-            signals.push({
-              strategy:  '1️⃣ Пробой на импульсе (15m)',
-              instId, direction: dir,
-              signal:    dir==='long'?'🟢 LONG':'🔴 SHORT',
-              price, confidence: Math.min(conf, 90),
-              metrics:   `Цена:${pc.toFixed(2)}% Vol:${(lastVol/avgVol).toFixed(1)}x MACD:${macd15.hist.toFixed(4)}`,
-              ...calcSLTP(price, dir, '1️⃣ Пробой на импульсе (15m)', atr)
-            });
-          }
-        }
-      }
-    }
-*/
 // S2: Liquidity Bounce (1h) — только в боковике или развороте
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
@@ -1690,14 +1635,11 @@ async function runStrategies(instId, coinData, asianSession) {
       const tick = Math.round(k1h[k1h.length-1].quoteVolume / 10000);
       const rsi  = k1h.length >= 15 ? calcRSI(k1h, 14) : 50;
 
-      // ── 4H тренд фильтр — только боковик или разворот ──
       const k4h  = await getOKXKlines(instId, '4H', 55);
       const ma20_4h = k4h.length >= 20 ? calcSMA(k4h, 20) : 0;
       const ma50_4h = k4h.length >= 50 ? calcSMA(k4h, 50) : 0;
       const trend4h = ma20_4h > ma50_4h ? 'bullish' : 'bearish';
       const trendStrength = ma50_4h ? Math.abs(ma20_4h - ma50_4h) / ma50_4h * 100 : 0;
-
-      // Боковик = разница MA меньше 1% — безопасно для bounce
       const isSideways = trendStrength < 1.0;
 
       const lc = [pc<=S2.priceMax, oi>=S2.oiMin, vd<=S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
@@ -1705,43 +1647,39 @@ async function runStrategies(instId, coinData, asianSession) {
       const ml = lc.filter(Boolean).length;
       const ms = sc.filter(Boolean).length;
 
-      // S4 работает только на ликвидных монетах
-if (coinData.volume24h < 100000000) { // минимум $100M объём
-  console.log(`[S4 SKIP] ${instId} — низкий объём для S4`);
-} else
-      if ((iL || iS) && (freshCross || priceNearMA)) {
-    const dir = iL ? 'long' : 'short';
+      if (ml >= 4 || ms >= 4) {
+        const dir = ml >= ms ? 'long' : 'short';
 
-    // Дополнительный фильтр — RSI не должен быть против нас
-    if (dir === 'long'  && rsi > 65) {
-      console.log(`[S4 SKIP] ${instId} — RSI перекуплен (${rsi}) при лонге`);
-      // не добавляем сигнал
-    } else if (dir === 'short' && rsi < 35) {
-      console.log(`[S4 SKIP] ${instId} — RSI перепродан (${rsi}) при шорте`);
-    } else {
-
-    let conf  = 68;
-
-        // Блокируем если торгуем против сильного тренда
-        if (!isSideways && dir === 'long'  && trend4h === 'bearish') {
-          console.log(`[S2 BLOCK] ${instId} — лонг против медвежьего 4H тренда`);
-        } else if (!isSideways && dir === 'short' && trend4h === 'bullish') {
-          console.log(`[S2 BLOCK] ${instId} — шорт против бычьего 4H тренда`);
+        // Фильтр 1 — RSI в зоне перепроданности/перекупленности
+        const rsiOk = (dir === 'long' && rsi < 40) || (dir === 'short' && rsi > 60);
+        if (!rsiOk) {
+          console.log(`[S2 SKIP] ${instId} — RSI не в зоне (${rsi})`);
         } else {
-          let conf = Math.max(ml, ms) * 20;
-          if (dir==='long'  && rsi < 35) conf = Math.min(conf+10, 100);
-          if (dir==='short' && rsi > 65) conf = Math.min(conf+10, 100);
-          if (isSideways) conf = Math.min(conf+10, 100); // бонус за боковик
+          // Фильтр 2 — объём выше среднего
+          const avgVol2  = k1h.slice(-11,-1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
+          const lastVol2 = k1h[k1h.length-1].quoteVolume;
+          if (lastVol2 < avgVol2 * 1.5) {
+            console.log(`[S2 SKIP] ${instId} — слабый объём`);
+          } else if (!isSideways && dir === 'long' && trend4h === 'bearish') {
+            console.log(`[S2 BLOCK] ${instId} — лонг против медвежьего 4H тренда`);
+          } else if (!isSideways && dir === 'short' && trend4h === 'bullish') {
+            console.log(`[S2 BLOCK] ${instId} — шорт против бычьего 4H тренда`);
+          } else {
+            let conf = Math.max(ml, ms) * 20;
+            if (dir==='long'  && rsi < 35) conf = Math.min(conf+10, 100);
+            if (dir==='short' && rsi > 65) conf = Math.min(conf+10, 100);
+            if (isSideways) conf = Math.min(conf+10, 100);
 
-          signals.push({
-            strategy: '2️⃣ Liquidity Bounce (1h)',
-            instId, direction: dir,
-            signal: dir==='long'?'🟢 LONG':'🔴 SHORT',
-            price, confidence: Math.round(conf),
-            metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi} 4H:${isSideways?'Боковик':'Тренд'} Сила:${trendStrength.toFixed(2)}%`,
-            ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', calcATR(k1h, 14))
-          });
-        } //конец RSI фильтра 
+            signals.push({
+              strategy: '2️⃣ Liquidity Bounce (1h)',
+              instId, direction: dir,
+              signal: dir==='long'?'🟢 LONG':'🔴 SHORT',
+              price, confidence: Math.round(conf),
+              metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi} 4H:${isSideways?'Боковик':'Тренд'} Сила:${trendStrength.toFixed(2)}%`,
+              ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', calcATR(k1h, 14))
+            });
+          }
+        }
       }
     }
 
@@ -1965,80 +1903,7 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S8 error:', e.message); }
 
-    /*/ S9: Pairs Trading — корреляция BTC/ETH
-    try {
-      if (coinData.symbol === 'ETH' || coinData.symbol === 'BTC') {
-        const btcData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=1H&limit=24');
-        const ethData = await httpGet('https://www.okx.com/api/v5/market/candles?instId=ETH-USDT-SWAP&bar=1H&limit=24');
 
-        if (btcData?.code === '0' && ethData?.code === '0') {
-          const btcKlines = btcData.data.reverse().map(c => ({ close: +c[4] }));
-          const ethKlines = ethData.data.reverse().map(c => ({ close: +c[4] }));
-
-          if (btcKlines.length >= 24 && ethKlines.length >= 24) {
-            // Изменение за последние 3 часа
-            const btcChange3h = (btcKlines[btcKlines.length-1].close - btcKlines[btcKlines.length-4].close) / btcKlines[btcKlines.length-4].close * 100;
-            const ethChange3h = (ethKlines[ethKlines.length-1].close - ethKlines[ethKlines.length-4].close) / ethKlines[ethKlines.length-4].close * 100;
-
-            // Расхождение между BTC и ETH
-            const divergence = btcChange3h - ethChange3h;
-            const rsi1h = calcRSI(k1h, 14);
-            const atr   = calcATR(k1h, 14);
-
-            // ETH отстал от BTC на 3%+ → ETH догонит → LONG ETH
-            if (
-              coinData.symbol === 'ETH' &&
-              divergence > 3.0 &&
-              btcChange3h > 0 &&
-              rsi1h < 60 &&
-              atr
-            ) {
-              signals.push({
-                strategy:  '9️⃣ Pairs Trading (ETH/BTC)',
-                instId, direction: 'long',
-                signal:    '🟢 LONG', price, confidence: 74,
-                metrics:   `BTC 3h:+${btcChange3h.toFixed(2)}% ETH 3h:${ethChange3h.toFixed(2)}% Расхождение:${divergence.toFixed(2)}% RSI:${rsi1h}`,
-                ...calcSLTP(price, 'long', '9️⃣ Pairs Trading (ETH/BTC)', atr)
-              });
-            }
-
-            // ETH вырос а BTC нет → ETH упадёт → SHORT ETH
-            if (
-              coinData.symbol === 'ETH' &&
-              divergence < -3.0 &&
-              btcChange3h < 0 &&
-              rsi1h > 40 &&
-              atr
-            ) {
-              signals.push({
-                strategy:  '9️⃣ Pairs Trading (ETH/BTC)',
-                instId, direction: 'short',
-                signal:    '🔴 SHORT', price, confidence: 74,
-                metrics:   `BTC 3h:${btcChange3h.toFixed(2)}% ETH 3h:+${ethChange3h.toFixed(2)}% Расхождение:${divergence.toFixed(2)}% RSI:${rsi1h}`,
-                ...calcSLTP(price, 'short', '9️⃣ Pairs Trading (ETH/BTC)', atr)
-              });
-            }
-
-            // BTC отстал от ETH → BTC догонит → LONG BTC
-            if (
-              coinData.symbol === 'BTC' &&
-              divergence < -3.0 &&
-              ethChange3h > 0 &&
-              rsi1h < 60 &&
-              atr
-            ) {
-              signals.push({
-                strategy:  '9️⃣ Pairs Trading (BTC/ETH)',
-                instId, direction: 'long',
-                signal:    '🟢 LONG', price, confidence: 74,
-                metrics:   `ETH 3h:+${ethChange3h.toFixed(2)}% BTC 3h:${btcChange3h.toFixed(2)}% Расхождение:${Math.abs(divergence).toFixed(2)}% RSI:${rsi1h}`,
-                ...calcSLTP(price, 'long', '9️⃣ Pairs Trading (BTC/ETH)', atr)
-              });
-            }
-          }
-        }
-      }
-    } catch(e) { console.error('S9 error:', e.message); } */
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;

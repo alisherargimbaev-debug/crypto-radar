@@ -1910,6 +1910,27 @@ if (k1h.length >= 55) {
 }
 
 
+// Ориентировочное время сделки на основе ATR и таймфрейма
+function estimateTradeDuration(strategy, atr, price) {
+  // Базовое время по стратегии
+  const base = {
+    '2️⃣ Liquidity Bounce (1h)':      { min: 2,  max: 8  },
+    '4️⃣ MA20/MA50+RSI (1h)':         { min: 4,  max: 12 },
+    '5️⃣ RSI Дивергенция (1h)':       { min: 3,  max: 10 },
+    '6️⃣ Funding Extreme (1h)':       { min: 2,  max: 8  },
+    '7️⃣ Поглощение на объёме (15m)': { min: 1,  max: 4  },
+    '8️⃣ Basis Farming (1h)':         { min: 4,  max: 16 },
+  };
+  const t = base[strategy] || { min: 2, max: 8 };
+
+  // Если ATR большой — рынок волатильный — сделка закроется быстрее
+  if (atr && price) {
+    const atrPct = atr / price * 100;
+    if (atrPct > 2.0) return `~${t.min}-${Math.round(t.max * 0.6)}ч`;
+    if (atrPct > 1.0) return `~${t.min}-${t.max}ч`;
+  }
+  return `~${t.min}-${t.max}ч`;
+}
 
 // ============================================================
 //  ФОРМАТИРОВАНИЕ
@@ -1930,12 +1951,14 @@ function buildSignalAlert(sig) {
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
   const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
+  const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
     `📌 ${sig.strategy}\n` +
     `${ratingLine}\n` +
     `⏰ ${timeStr} Алматы\n` +
+    `⌛️ Ориентир: ${duration} в позиции\n` +
     (fngLine ? fngLine + '\n' : '') +
     `\n💰 Вход: $${sig.price}\n` +
     `🛡 Стоп-лосс:    $${sig.sl}\n` +
@@ -2529,42 +2552,93 @@ async function checkTradeTimers() {
   for (const trade of store.openTrades) {
     const ageMin  = Math.round((Date.now() - trade.ts) / 60000);
     const ageHour = Math.floor(ageMin / 60);
+    const ageStr  = ageHour > 0 ? `${ageHour}ч ${ageMin % 60}мин` : `${ageMin}мин`;
 
-    // Напоминаем через 2 часа и через 4 часа
     const reminded2h = trade.reminded2h || false;
     const reminded4h = trade.reminded4h || false;
 
     if (ageMin >= 120 && !reminded2h) {
       trade.reminded2h = true;
-      const dir = trade.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+
+      // Получаем текущую цену для PnL
+      const currentPrice = await getCurrentPrice(trade.instId) || trade.price;
+      const entry  = parseFloat(trade.price);
+      const sl     = parseFloat(trade.sl);
+      const tp1    = parseFloat(trade.tp1);
+      const tp2    = parseFloat(trade.tp2);
+
+      let pnlPct;
+      if (trade.direction === 'long') {
+        pnlPct = (currentPrice - entry) / entry * 100;
+      } else {
+        pnlPct = (entry - currentPrice) / entry * 100;
+      }
+
+      const pnlStr    = pnlPct >= 0 ? `+${pnlPct.toFixed(2)}%` : `${pnlPct.toFixed(2)}%`;
+      const pnlEmoji  = pnlPct >= 1.5 ? '🟢' : pnlPct >= 0 ? '🟡' : pnlPct >= -1 ? '🟠' : '🔴';
+      const dir       = trade.direction === 'long' ? '🚀 LONG' : '🩸 SHORT';
+
+      // Расстояние до SL и TP
+      const distSL  = trade.direction === 'long'
+        ? ((currentPrice - sl) / currentPrice * 100).toFixed(2)
+        : ((sl - currentPrice) / currentPrice * 100).toFixed(2);
+      const distTP1 = trade.direction === 'long'
+        ? ((tp1 - currentPrice) / currentPrice * 100).toFixed(2)
+        : ((currentPrice - tp1) / currentPrice * 100).toFixed(2);
+
+      const status = pnlPct >= 1.5
+        ? '✅ Хорошо идёт — держи позицию'
+        : pnlPct >= 0
+        ? '😐 В небольшом плюсе — следи за SL'
+        : pnlPct >= -1
+        ? '⚠️ Небольшой минус — нормально, держи'
+        : '🔴 В заметном минусе — оцени риски';
+
       await sendTelegram(
-        `⏰ НАПОМИНАНИЕ — сделка висит 2 часа\n` +
+        `⏰ НАПОМИНАНИЕ 2ч — ${trade.symbol}/USDT\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `${dir} ${trade.symbol}/USDT\n` +
-        `💰 Вход: $${trade.price}\n` +
-        `🛡 SL: $${trade.sl}\n` +
-        `🎯 TP1: $${trade.tp1} | TP2: $${trade.tp2}\n` +
-        `⏱ Открыта: ${ageHour}ч ${ageMin % 60}мин\n\n` +
-        `📌 ${trade.strategy}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `Проверь позицию — возможно стоит закрыть вручную.`
+        `${dir} | 📌 ${trade.strategy?.split(' ')[0] || ''}\n\n` +
+        `💰 Вход:    $${trade.price}\n` +
+        `📍 Сейчас: $${currentPrice.toFixed(4)}\n\n` +
+        `${pnlEmoji} PnL сейчас: ${pnlStr}\n` +
+        `🛡 До SL:  ${distSL}%\n` +
+        `🎯 До TP1: ${distTP1}%\n\n` +
+        `🛡 SL:  $${trade.sl}\n` +
+        `🎯 TP1: $${trade.tp1}\n` +
+        `🎯 TP2: $${trade.tp2}\n\n` +
+        `⏱ В позиции: ${ageStr}\n` +
+        `${status}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━`
       );
     }
 
     if (ageMin >= 480 && !reminded4h) {
       trade.reminded4h = true;
-      const dir = trade.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+
+      const currentPrice = await getCurrentPrice(trade.instId) || trade.price;
+      const entry  = parseFloat(trade.price);
+
+      let pnlPct;
+      if (trade.direction === 'long') {
+        pnlPct = (currentPrice - entry) / entry * 100;
+      } else {
+        pnlPct = (entry - currentPrice) / entry * 100;
+      }
+
+      const pnlStr   = pnlPct >= 0 ? `+${pnlPct.toFixed(2)}%` : `${pnlPct.toFixed(2)}%`;
+      const pnlEmoji = pnlPct >= 1.5 ? '🟢' : pnlPct >= 0 ? '🟡' : pnlPct >= -1 ? '🟠' : '🔴';
+      const dir      = trade.direction === 'long' ? '🚀 LONG' : '🩸 SHORT';
+
       await sendTelegram(
-        `⚠️ СДЕЛКА ВИСИТ 4 ЧАСА — скоро истечёт\n` +
+        `⚠️ СДЕЛКА ВИСИТ 8Ч — истекает скоро!\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `${dir} ${trade.symbol}/USDT\n` +
-        `💰 Вход: $${trade.price}\n` +
-        `🛡 SL: $${trade.sl}\n` +
-        `🎯 TP1: $${trade.tp1} | TP2: $${trade.tp2}\n` +
-        `⏱ Открыта: ${ageHour}ч ${ageMin % 60}мин\n\n` +
-        `📌 ${trade.strategy}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🔴 Сделка будет автоматически закрыта как expired через несколько минут.`
+        `${dir} ${trade.symbol}/USDT\n\n` +
+        `💰 Вход:    $${trade.price}\n` +
+        `📍 Сейчас: $${currentPrice.toFixed(4)}\n\n` +
+        `${pnlEmoji} PnL сейчас: ${pnlStr}\n\n` +
+        `⏱ В позиции: ${ageStr}\n` +
+        `🔴 Скоро закроется автоматически как EXPIRED\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━`
       );
     }
   }

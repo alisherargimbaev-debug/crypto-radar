@@ -327,9 +327,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 
   <!-- Stats top bar -->
   <div class="stats-row">
-    <div class="stat-card blue"><div class="stat-label">Сигналов сегодня</div><div class="stat-value" id="s-today">—</div></div>
-    <div class="stat-card green"><div class="stat-label">Win Rate (день)</div><div class="stat-value" id="s-wr-day">—</div></div>
-    <div class="stat-card green"><div class="stat-label">PnL (день)</div><div class="stat-value" id="s-pnl-day">—</div><div class="stat-sub" id="s-tpsl-day">TP — / SL —</div></div>
+    <div class="stat-card blue"><div class="stat-label" id="lbl-today">Сигналов сегодня</div><div class="stat-value" id="s-today">—</div></div>
+    <div class="stat-card green"><div class="stat-label" id="lbl-wr-day">Win Rate (день)</div><div class="stat-value" id="s-wr-day">—</div></div>
+    <div class="stat-card green"><div class="stat-label" id="lbl-pnl-day">PnL (день)</div><div class="stat-value" id="s-pnl-day">—</div><div class="stat-sub" id="s-tpsl-day">TP — / SL —</div></div>
     <div class="stat-card yellow"><div class="stat-label">Открытых</div><div class="stat-value" id="s-open">—</div></div>
     <div class="stat-card purple"><div class="stat-label">Win Rate (всё время)</div><div class="stat-value" id="s-wr-all">—</div></div>
     <div class="stat-card dim"><div class="stat-label">Всего закрыто</div><div class="stat-value" id="s-total">—</div><div class="stat-sub" id="s-pnl-all">PnL: —</div></div>
@@ -346,6 +346,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
             <button class="period-btn" onclick="setPeriod('week',this)">7 дней</button>
             <button class="period-btn" onclick="setPeriod('month',this)">30 дней</button>
             <button class="period-btn" onclick="setPeriod('all',this)">Всё</button>
+            <button class="period-btn" onclick="setPeriod('custom',this)">Период</button>
+          </div>
+          <div id="customRangeWrap" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+            <input type="date" id="dateFrom" style="background:var(--panel);border:1px solid var(--border);color:var(--text);padding:4px 8px;font-family:'Space Mono',monospace;font-size:0.55rem;" onchange="applyCustomRange()">
+            <span style="font-size:0.55rem;color:var(--dim)">—</span>
+            <input type="date" id="dateTo" style="background:var(--panel);border:1px solid var(--border);color:var(--text);padding:4px 8px;font-family:'Space Mono',monospace;font-size:0.55rem;" onchange="applyCustomRange()">
           </div>
           <div class="tabs">
             <button class="tab-btn active" onclick="setStatFilter('all',this)">Все</button>
@@ -655,8 +661,37 @@ function fmtPnl(p){ if(p==null)return'<span style="color:var(--dim)">—</span>'
 function confCol(c){ return c>=90?'var(--accent)':c>=75?'var(--yellow)':'var(--blue)'; }
 function outHTML(o){ const m={tp1:['out-tp','✅ TP1'],tp2:['out-tp','🏆 TP2'],sl:['out-sl','❌ SL'],expired:['out-exp','⏰ ИСТ']}; const[cl,lb]=m[o]||['out-open','⏳ ОТКР']; return`<span class="out-badge ${cl}">${lb}</span>`; }
 function shortStrat(s){ if(!s)return'—'; return s.replace(/\d️⃣\s*/,'').replace(/\(.*?\)/g,'').trim(); }
-function periodMs(){ return{day:86400000,week:7*86400000,month:30*86400000,all:Infinity}[statPeriod]||86400000; }
-function filterByPeriod(items,tsField){ const ms=periodMs(); if(ms===Infinity)return items; const since=Date.now()-ms; return items.filter(i=>(+i[tsField]||0)>=since); }
+// Period helpers
+let customFrom = null, customTo = null;
+
+function periodLabel() {
+  const m = { day:'Сегодня', week:'7 дней', month:'30 дней', all:'Всё время', custom:'Период' };
+  return m[statPeriod] || 'Период';
+}
+
+function filterByPeriod(items, tsField) {
+  if (statPeriod === 'all') return items;
+  if (statPeriod === 'custom') {
+    if (!customFrom && !customTo) return items;
+    return items.filter(i => {
+      const ts = +i[tsField] || 0;
+      const ok1 = customFrom ? ts >= customFrom : true;
+      const ok2 = customTo   ? ts <= customTo   : true;
+      return ok1 && ok2;
+    });
+  }
+  const ms = { day:86400000, week:7*86400000, month:30*86400000 }[statPeriod] || 86400000;
+  const since = Date.now() - ms;
+  return items.filter(i => (+i[tsField]||0) >= since);
+}
+
+function applyCustomRange() {
+  const from = document.getElementById('dateFrom').value;
+  const to   = document.getElementById('dateTo').value;
+  customFrom = from ? new Date(from).getTime() : null;
+  customTo   = to   ? new Date(to + 'T23:59:59').getTime() : null;
+  renderTrades(); renderSignals(); renderStatsBar();
+}
 function filterByDir(items){
   if(statFilter==='all')   return items;
   if(statFilter==='long')  return items.filter(i=>i.direction==='long');
@@ -718,31 +753,51 @@ function renderOpenTrades(){
     </div>`;
   }).join('');
 }
-function renderStatsBar(){
-  const now=Date.now(), s24=now-86400000;
-  const todayT=allTrades.filter(t=>+t.closed_at>=s24);
-  const todayW=todayT.filter(t=>t.outcome==='tp1'||t.outcome==='tp2');
-  const todayL=todayT.filter(t=>t.outcome==='sl');
-  const todayWR=todayT.length?Math.round(todayW.length/todayT.length*100):0;
-  const todayPnl=todayT.reduce((a,t)=>a+(parseFloat(t.pnl)||0),0);
-  const todaySig=allSignals.filter(s=>+s.ts>=s24).length;
-  const allW=allTrades.filter(t=>t.outcome==='tp1'||t.outcome==='tp2');
-  const allWR=allTrades.length?Math.round(allW.length/allTrades.length*100):0;
-  const allPnl=allTrades.reduce((a,t)=>a+(parseFloat(t.pnl)||0),0);
+function renderStatsBar() {
+  // Период для верхней панели = выбранный период
+  const periodT   = filterByPeriod(allTrades, 'closed_at');
+  const periodSig = filterByPeriod(allSignals, 'ts');
+  const periodW   = periodT.filter(t => t.outcome==='tp1'||t.outcome==='tp2');
+  const periodL   = periodT.filter(t => t.outcome==='sl');
+  const periodWR  = periodT.length ? Math.round(periodW.length/periodT.length*100) : 0;
+  const periodPnl = periodT.reduce((a,t) => a+(parseFloat(t.pnl)||0), 0);
 
-  document.getElementById('s-today').textContent=todaySig;
-  document.getElementById('s-wr-day').textContent=todayT.length?todayWR+'%':'—';
-  document.getElementById('s-pnl-day').textContent=todayT.length?(todayPnl>=0?'+':'')+todayPnl.toFixed(1)+'%':'—';
-  document.getElementById('s-tpsl-day').textContent=`TP ${todayW.length} / SL ${todayL.length}`;
+  // Всё время для нижних карточек
+  const allW   = allTrades.filter(t => t.outcome==='tp1'||t.outcome==='tp2');
+  const allWR  = allTrades.length ? Math.round(allW.length/allTrades.length*100) : 0;
+  const allPnl = allTrades.reduce((a,t) => a+(parseFloat(t.pnl)||0), 0);
+
+  // Обновляем лейблы карточек под выбранный период
+  const lbl = periodLabel();
+  const lblToday  = document.getElementById('lbl-today');
+  const lblWrDay  = document.getElementById('lbl-wr-day');
+  const lblPnlDay = document.getElementById('lbl-pnl-day');
+  if (lblToday)  lblToday.textContent  = `Сигналов (${lbl})`;
+  if (lblWrDay)  lblWrDay.textContent  = `Win Rate (${lbl})`;
+  if (lblPnlDay) lblPnlDay.textContent = `PnL (${lbl})`;
+
+  document.getElementById('s-today').textContent=periodSig.length||'0';
+  document.getElementById('s-wr-day').textContent=periodT.length?periodWR+'%':'—';
+  document.getElementById('s-pnl-day').textContent=periodT.length?(periodPnl>=0?'+':'')+periodPnl.toFixed(1)+'%':'—';
+  document.getElementById('s-tpsl-day').textContent=`TP ${periodW.length} / SL ${periodL.length}`;
   document.getElementById('s-open').textContent=openTrades.length;
   document.getElementById('s-wr-all').textContent=allTrades.length?allWR+'%':'—';
   document.getElementById('s-total').textContent=allTrades.length;
   document.getElementById('s-pnl-all').textContent='PnL: '+(allPnl>=0?'+':'')+allPnl.toFixed(1)+'%';
 
   const wrDayEl=document.getElementById('s-wr-day');
-  wrDayEl.style.color=todayWR>=60?'var(--accent)':todayWR>=40?'var(--yellow)':'var(--red)';
+  wrDayEl.style.color=periodWR>=60?'var(--accent)':periodWR>=40?'var(--yellow)':'var(--red)';
   document.getElementById('s-wr-all').style.color=allWR>=60?'var(--accent)':allWR>=40?'var(--yellow)':'var(--red)';
-  document.getElementById('s-pnl-day').style.color=todayPnl>=0?'var(--accent)':'var(--red)';
+  document.getElementById('s-pnl-day').style.color=periodPnl>=0?'var(--accent)':'var(--red)';
+
+  // Итог за день (всегда за сегодня в боковой панели)
+  const s24 = Date.now()-86400000;
+  const todayT = allTrades.filter(t=>+t.closed_at>=s24);
+  const todayW = todayT.filter(t=>t.outcome==='tp1'||t.outcome==='tp2');
+  const todayL = todayT.filter(t=>t.outcome==='sl');
+  const todayWR = todayT.length?Math.round(todayW.length/todayT.length*100):0;
+  const todayPnl = todayT.reduce((a,t)=>a+(parseFloat(t.pnl)||0),0);
+  const todaySig = allSignals.filter(s=>+s.ts>=s24).length;
 
   document.getElementById('d-signals').textContent=todaySig;
   document.getElementById('d-wr').textContent=todayT.length?todayWR+'%':'—';
@@ -789,7 +844,15 @@ async function loadStats(){
     renderStatsBar(); renderTrades(); renderSignals(); renderOpenTrades();
   }catch(e){document.getElementById('tradesBody').innerHTML='<div class="no-data">Ошибка загрузки</div>';}
 }
-function setPeriod(p,btn){statPeriod=p;document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
+function setPeriod(p, btn) {
+  statPeriod = p;
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const wrap = document.getElementById('customRangeWrap');
+  wrap.style.display = p === 'custom' ? 'flex' : 'none';
+  if (p !== 'custom') { customFrom = null; customTo = null; }
+  renderTrades(); renderSignals(); renderStatsBar();
+}
 function setStatFilter(f,btn){statFilter=f;document.querySelectorAll('#page-stats .tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderTrades();}
 function toggleSignals(btn){const w=document.getElementById('signalsWrap');if(w.style.display==='none'){w.style.display='block';btn.textContent='Свернуть ▲';renderSignals();}else{w.style.display='none';btn.textContent='Развернуть ▼';}}
 

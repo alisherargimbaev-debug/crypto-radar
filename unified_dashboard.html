@@ -264,16 +264,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
     <div class="status-line"><div class="live-dot"></div><span id="statusTxt">ИНИЦИАЛИЗАЦИЯ...</span></div>
     <div class="hdr-time" id="hdrTime">—</div>
     <div class="hdr-fng" id="hdrFng">F&G: —</div>
+    <button id="langBtn" onclick="toggleLang()" style="background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:1px;transition:all .2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">EN</button>
   </div>
 </header>
 
 <!-- NAV -->
 <div class="nav">
-  <button class="nav-btn active" onclick="showPage('radar',this)">📡 РАДАР</button>
-  <button class="nav-btn" onclick="showPage('stats',this)">📊 СТАТИСТИКА</button>
-  <button class="nav-btn" onclick="showPage('news',this)">📰 НОВОСТИ</button>
-  <button class="nav-btn" onclick="showPage('twitter',this)">𝕏 TWITTER</button>
-  <button class="nav-btn" onclick="showPage('backtest',this)">🔬 БЭКТЕСТ</button>
+  <button class="nav-btn active" onclick="showPage('radar',this)" data-ru="📡 РАДАР" data-en="📡 RADAR">📡 РАДАР</button>
+  <button class="nav-btn" onclick="showPage('stats',this)" data-ru="📊 СТАТИСТИКА" data-en="📊 STATISTICS">📊 СТАТИСТИКА</button>
+  <button class="nav-btn" onclick="showPage('news',this)" data-ru="📰 НОВОСТИ" data-en="📰 NEWS">📰 НОВОСТИ</button>
+  <button class="nav-btn" onclick="showPage('twitter',this)" data-ru="𝕏 TWITTER" data-en="𝕏 TWITTER">𝕏 TWITTER</button>
+  <button class="nav-btn" onclick="showPage('backtest',this)" data-ru="🔬 БЭКТЕСТ" data-en="🔬 BACKTEST">🔬 БЭКТЕСТ</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -659,7 +660,7 @@ function fmtTs(ts){ if(!ts)return'—'; const d=new Date(+ts+5*60*60*1000); retu
 function fmtP(p){ return p?'$'+parseFloat(p).toFixed(4):'—'; }
 function fmtPnl(p){ if(p==null)return'<span style="color:var(--dim)">—</span>'; const v=parseFloat(p); return`<span class="${v>=0?'pnl-pos':'pnl-neg'}">${v>=0?'+':''}${v.toFixed(1)}%</span>`; }
 function confCol(c){ return c>=90?'var(--accent)':c>=75?'var(--yellow)':'var(--blue)'; }
-function outHTML(o){ const m={tp1:['out-tp','✅ TP1'],tp2:['out-tp','🏆 TP2'],sl:['out-sl','❌ SL'],expired:['out-exp','⏰ ИСТ']}; const[cl,lb]=m[o]||['out-open','⏳ ОТКР']; return`<span class="out-badge ${cl}">${lb}</span>`; }
+function outHTML(o){ const m={tp1:['out-tp','✅ TP1'],tp2:['out-tp','🏆 TP2'],sl:['out-sl','❌ SL'],expired:['out-exp',currentLang==='en'?'⏰ EXP':'⏰ ИСТ']}; const[cl,lb]=m[o]||['out-open',currentLang==='en'?'⏳ OPEN':'⏳ ОТКР']; return`<span class="out-badge ${cl}">${lb}</span>`; }
 function shortStrat(s){ if(!s)return'—'; return s.replace(/\d️⃣\s*/,'').replace(/\(.*?\)/g,'').trim(); }
 // Period helpers
 let customFrom = null, customTo = null;
@@ -1053,7 +1054,228 @@ async function runBacktest() {
   }
 }
 
+
+// ══════════════════════════════════════════════════════════════
+//  LANGUAGE TOGGLE
+// ══════════════════════════════════════════════════════════════
+let currentLang = 'ru';
+
+const TRANSLATIONS = {
+  // Header
+  statusInit:    { ru: 'ИНИЦИАЛИЗАЦИЯ...', en: 'INITIALIZING...' },
+  statusActive:  { ru: 'АКТИВЕН',          en: 'ACTIVE' },
+  statusError:   { ru: 'ОШИБКА API',       en: 'API ERROR' },
+  statusLoading: { ru: 'ЗАГРУЗКА...',      en: 'LOADING...' },
+  subtitle:      { ru: 'АНОМАЛИЯ · СИГНАЛЫ · СТАТИСТИКА', en: 'ANOMALY · SIGNALS · STATISTICS' },
+
+  // Stats bar labels
+  lblToday:   { ru: 'Сигналов сегодня',   en: 'Signals today' },
+  lblWrDay:   { ru: 'Win Rate (день)',     en: 'Win Rate (day)' },
+  lblPnlDay:  { ru: 'PnL (день)',          en: 'PnL (day)' },
+  lblOpen:    { ru: 'Открытых',            en: 'Open' },
+  lblWrAll:   { ru: 'Win Rate (всё время)',en: 'Win Rate (all time)' },
+  lblTotal:   { ru: 'Всего закрыто',       en: 'Total closed' },
+
+  // Period buttons
+  periodDay:   { ru: 'Сегодня', en: 'Today' },
+  periodWeek:  { ru: '7 дней',  en: '7 days' },
+  periodMonth: { ru: '30 дней', en: '30 days' },
+  periodAll:   { ru: 'Всё',     en: 'All' },
+  periodCust:  { ru: 'Период',  en: 'Range' },
+
+  // Filters
+  filterAll:   { ru: 'Все',   en: 'All' },
+  filterLong:  { ru: 'Лонг',  en: 'Long' },
+  filterShort: { ru: 'Шорт',  en: 'Short' },
+
+  // Section titles
+  titleTrades:   { ru: 'История сделок',     en: 'Trade History' },
+  titleSignals:  { ru: 'Лог сигналов',       en: 'Signal Log' },
+  titleOpen:     { ru: '⚡ Открытые сделки', en: '⚡ Open Trades' },
+  titleDaily:    { ru: '📊 Итог за день',    en: '📊 Daily Summary' },
+  titleStrats:   { ru: '🏆 Топ стратегии',   en: '🏆 Top Strategies' },
+  titleRadar:    { ru: '📡 Крипто Радар',    en: '📡 Crypto Radar' },
+  titleNews:     { ru: '📰 Крипто и макро новости', en: '📰 Crypto & Macro News' },
+  titleMedia:    { ru: '📡 Крипто Медиа (RSS)', en: '📡 Crypto Media (RSS)' },
+  titleBacktest: { ru: '🔬 Бэктестинг стратегий', en: '🔬 Strategy Backtesting' },
+
+  // Table headers
+  thNum:     { ru: '#',         en: '#' },
+  thCoin:    { ru: 'Монета',    en: 'Coin' },
+  thDir:     { ru: 'Направл.',  en: 'Direction' },
+  thStrat:   { ru: 'Стратегия', en: 'Strategy' },
+  thEntry:   { ru: 'Вход',      en: 'Entry' },
+  thExit:    { ru: 'Выход',     en: 'Exit' },
+  thPnl:     { ru: 'PnL',       en: 'PnL' },
+  thOutcome: { ru: 'Исход',     en: 'Outcome' },
+  thConf:    { ru: 'Уверен.',   en: 'Conf.' },
+  thTime:    { ru: 'Время',     en: 'Time' },
+
+  // Radar filters
+  radarAll:    { ru: 'ВСЕ',     en: 'ALL' },
+  radarLong:   { ru: 'ЛОНГ',    en: 'LONG' },
+  radarShort:  { ru: 'ШОРТ',    en: 'SHORT' },
+  radarAnomaly:{ ru: 'АНОМАЛИИ',en: 'ANOMALIES' },
+
+  // Buttons
+  btnRefresh: { ru: '↻ ОБНОВИТЬ', en: '↻ REFRESH' },
+  btnRun:     { ru: '▶ ЗАПУСТИТЬ', en: '▶ RUN' },
+  btnExpand:  { ru: 'Развернуть ▼', en: 'Expand ▼' },
+  btnCollapse:{ ru: 'Свернуть ▲',  en: 'Collapse ▲' },
+
+  // Daily stats labels
+  dSignals: { ru: 'Сигналов', en: 'Signals' },
+  dWR:      { ru: 'Win Rate', en: 'Win Rate' },
+  dTP:      { ru: 'TP',       en: 'TP' },
+  dSL:      { ru: 'SL',       en: 'SL' },
+  dPnl:     { ru: 'PnL за день', en: 'Daily PnL' },
+
+  // No data
+  noData:       { ru: 'Нет данных',                       en: 'No data' },
+  noTrades:     { ru: 'Нет сделок за выбранный период',   en: 'No trades for selected period' },
+  noSignals:    { ru: 'Нет сигналов',                     en: 'No signals' },
+  noOpen:       { ru: 'Нет открытых сделок',              en: 'No open trades' },
+  loadingData:  { ru: 'Загрузка...',                      en: 'Loading...' },
+
+  // Backtest
+  btCoinsPlaceholder: { ru: 'BTC,ETH,SOL,XRP', en: 'BTC,ETH,SOL,XRP' },
+  bt4days:   { ru: '~4 дня',  en: '~4 days' },
+  bt8days:   { ru: '~8 дней', en: '~8 days' },
+  bt12days:  { ru: '~12 дней',en: '~12 days' },
+  bt20days:  { ru: '~20 дней',en: '~20 days' },
+  btSignals: { ru: 'СИГНАЛОВ', en: 'SIGNALS' },
+  btWR:      { ru: 'WIN RATE', en: 'WIN RATE' },
+  btPnL:     { ru: 'PnL',      en: 'PnL' },
+  btTPSL:    { ru: 'TP/SL',    en: 'TP/SL' },
+  btLast10:  { ru: 'ПОСЛЕДНИЕ 10 СДЕЛОК', en: 'LAST 10 TRADES' },
+
+  // Dir badges
+  dirLong:  { ru: '▲ ЛОНГ', en: '▲ LONG' },
+  dirShort: { ru: '▼ ШОРТ', en: '▼ SHORT' },
+
+  // Outcomes
+  outTP1:  { ru: '✅ TP1', en: '✅ TP1' },
+  outTP2:  { ru: '🏆 TP2', en: '🏆 TP2' },
+  outSL:   { ru: '❌ SL',  en: '❌ SL' },
+  outExp:  { ru: '⏰ ИСТ', en: '⏰ EXP' },
+  outOpen: { ru: '⏳ ОТКР',en: '⏳ OPEN' },
+
+  // Disclaimer
+  disclaimer: { ru: '⚠️ Не является финансовым советом.', en: '⚠️ Not financial advice.' },
+};
+
+function t(key) {
+  const tr = TRANSLATIONS[key];
+  if (!tr) return key;
+  return tr[currentLang] || tr.ru;
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'ru' ? 'en' : 'ru';
+  const btn = document.getElementById('langBtn');
+  btn.textContent = currentLang === 'ru' ? 'EN' : 'RU';
+
+  applyLang();
+
+  // Re-render everything
+  renderRadar();
+  renderTrades();
+  renderSignals();
+  renderOpenTrades();
+  renderStatsBar();
+}
+
+function applyLang() {
+  const L = currentLang;
+
+  // Subtitle
+  const sub = document.querySelector('div[style*="letter-spacing:3px"]');
+  if (sub) sub.textContent = t('subtitle');
+
+  // Nav buttons
+  document.querySelectorAll('.nav-btn[data-ru]').forEach(btn => {
+    btn.textContent = btn.getAttribute('data-' + L);
+  });
+
+  // Section titles
+  safeText('page-radar .sec-title',   t('titleRadar'));
+  safeText('#page-news .sec-title',   t('titleNews'));
+  safeText('#page-twitter .sec-title',t('titleMedia'));
+  safeText('#page-backtest .sec-title',t('titleBacktest'));
+
+  // Stat card labels
+  safeText('#lbl-today',  t('lblToday'));
+  safeText('#lbl-wr-day', t('lblWrDay'));
+  safeText('#lbl-pnl-day',t('lblPnlDay'));
+
+  // Period buttons
+  const periodBtns = document.querySelectorAll('.period-btn');
+  const periodKeys = ['periodDay','periodWeek','periodMonth','periodAll','periodCust'];
+  periodBtns.forEach((btn, i) => { if (periodKeys[i]) btn.textContent = t(periodKeys[i]); });
+
+  // Filter tabs
+  const tabBtns = document.querySelectorAll('#page-stats .tab-btn');
+  const tabKeys = ['filterAll','filterLong','filterShort','filterLong','filterShort'];
+  tabBtns.forEach((btn, i) => { if (tabKeys[i]) btn.textContent = t(tabKeys[i]); });
+
+  // Radar filter buttons
+  const radarBtns = document.querySelectorAll('#page-radar .filter-btn');
+  const radarKeys = ['radarAll','radarLong','radarShort','radarAnomaly'];
+  radarBtns.forEach((btn, i) => { if (radarKeys[i]) btn.textContent = t(radarKeys[i]); });
+
+  // Refresh buttons
+  document.querySelectorAll('.refresh-btn').forEach(btn => {
+    if (btn.textContent.includes('↻')) btn.textContent = t('btnRefresh');
+  });
+
+  // Table headers
+  const heads = document.querySelectorAll('.stbl-head div');
+  const headKeys = ['thNum','thCoin','thDir','thStrat','thEntry','thExit','thPnl','thOutcome','thConf','thTime'];
+  heads.forEach((h, i) => { if (headKeys[i] && TRANSLATIONS[headKeys[i]]) h.textContent = t(headKeys[i]); });
+
+  // Daily summary labels
+  const dailyLabels = document.querySelectorAll('.daily-item-label');
+  const dailyKeys = ['dSignals','dWR','dTP','dSL','dPnl'];
+  dailyLabels.forEach((lbl, i) => { if (dailyKeys[i]) lbl.textContent = t(dailyKeys[i]); });
+
+  // Side titles
+  const sideTitles = document.querySelectorAll('.side-title');
+  const sideTitleKeys = ['titleOpen','titleDaily','titleStrats'];
+  sideTitles.forEach((el, i) => { if (sideTitleKeys[i]) el.textContent = t(sideTitleKeys[i]); });
+
+  // Backtest run button
+  const btBtn = document.getElementById('btRunBtn');
+  if (btBtn) btBtn.textContent = t('btnRun');
+
+  // Backtest select options
+  const btLimit = document.getElementById('btLimit');
+  if (btLimit) {
+    const opts = btLimit.querySelectorAll('option');
+    const optKeys = ['bt4days','bt8days','bt12days','bt20days'];
+    opts.forEach((o, i) => { if (optKeys[i]) o.textContent = t(optKeys[i]); });
+  }
+
+  // History title
+  const histTitle = document.querySelector('#page-stats .sec-title');
+  if (histTitle) histTitle.textContent = t('titleTrades');
+
+  // Signal log title
+  const sigLogTitles = document.querySelectorAll('#page-stats .sec-header .sec-title');
+  if (sigLogTitles[1]) sigLogTitles[1].textContent = t('titleSignals');
+
+  // Expand button
+  const expandBtn = document.querySelector('.expand-btn');
+  if (expandBtn && expandBtn.textContent.includes('▼')) expandBtn.textContent = t('btnExpand');
+  if (expandBtn && expandBtn.textContent.includes('▲')) expandBtn.textContent = t('btnCollapse');
+}
+
+function safeText(selector, text) {
+  const el = document.querySelector(selector);
+  if (el) el.textContent = text;
+}
+
 // ── INIT ─────────────────────────────────────────────────────
+
 
 loadRadar();
 setInterval(loadRadar, 60000);

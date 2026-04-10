@@ -2651,7 +2651,22 @@ async function checkOutcomes() {
 
   for (const trade of store.openTrades) {
     const ageMin = (Date.now() - trade.ts) / 60000;
-    if (ageMin > 480) { trade.outcome = 'expired'; trade.closedAt = Date.now(); closed.push(trade); continue; }
+    if (ageMin > 480) {
+  trade.outcome = 'expired';
+  trade.closedAt = Date.now();
+  const expPrice = await getCurrentPrice(trade.instId);
+  if (expPrice) {
+    trade.closePrice = expPrice;
+    const entry = parseFloat(trade.price);
+    trade.pnl = trade.direction === 'long'
+      ? parseFloat(((expPrice - entry) / entry * 100).toFixed(2))
+      : parseFloat(((entry - expPrice) / entry * 100).toFixed(2));
+  } else {
+    trade.pnl = 0;
+  }
+  closed.push(trade);
+  continue;
+}
 
     const price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }

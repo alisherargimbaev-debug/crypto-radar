@@ -2774,7 +2774,16 @@ if (alreadyOpen) {
         sig = applyVolumeProfile(sig, await getOKXKlinesCached(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
         sig = applyVWAP(sig, await getOKXKlinesCached(coin.instId, '1H', 24));
-        sig = await applyMA200(sig, coin.instId);
+
+        // MA200 — только для трендовых стратегий
+        const isTrendStrategy = sig.strategy.includes('RSI Диверг') ||
+                                sig.strategy.includes('MA20') ||
+                                sig.strategy.includes('Bounce') ||
+                                sig.strategy.includes('Funding');
+        if (isTrendStrategy) {
+          sig = await applyMA200(sig, coin.instId);
+        }
+
         sig = applyOBV(sig, await getOKXKlinesCached(coin.instId, '1H', 20));
         sig = applyBollingerSqueeze(sig, await getOKXKlinesCached(coin.instId, '1H', 25));
         sig = await applyMultiTimeframe(sig, coin.instId);
@@ -2792,7 +2801,6 @@ if (alreadyOpen) {
         const fvgKlines = await getOKXKlinesCached(coin.instId, '1H', 30);
         const fvgZones  = detectFVG(fvgKlines.slice(-30));
         const atrForFVG = calcATR(fvgKlines, 14);
-
         // FVG буст уверенности
         const inFVG = priceInFVG(sig.price, fvgZones, sig.direction);
         if (inFVG) {

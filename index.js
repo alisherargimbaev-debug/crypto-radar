@@ -2851,6 +2851,97 @@ if (alreadyOpen) {
     isRunning = false;
   }
 }
+
+// ============================================================
+//  TRAILING STOP — только для S5 RSI Дивергенция
+// ============================================================
+async function checkTrailingStop() {
+  if (!store.openTrades.length) return;
+
+  for (const trade of store.openTrades) {
+    // Только для S5
+    if (!trade.strategy?.includes('RSI Диверг')) continue;
+
+    const currentPrice = await getCurrentPrice(trade.instId);
+    if (!currentPrice) continue;
+
+    const entry   = parseFloat(trade.price);
+    const sl      = parseFloat(trade.sl);
+    const tp1     = parseFloat(trade.tp1);
+
+    if (trade.direction === 'long') {
+      const pnlPct = (currentPrice - entry) / entry * 100;
+
+      // Уровень 1: достигли TP1 → переносим SL на безубыток
+      if (currentPrice >= tp1 && !trade.trailingActive) {
+        const newSL = (entry * 1.001).toFixed(4); // чуть выше входа
+        if (parseFloat(newSL) > sl) {
+          trade.sl            = newSL;
+          trade.trailingActive = true;
+          trade.trailingHigh   = currentPrice;
+          console.log(`[TRAIL] ${trade.instId} — SL → безубыток $${newSL}`);
+          await sendTelegram(
+            `🔄 TRAILING STOP — ${trade.symbol}/USDT\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `✅ TP1 достигнут — SL перенесён на безубыток\n` +
+            `💰 Вход: $${trade.price}\n` +
+            `🛡 Новый SL: $${newSL}\n` +
+            `📍 Цена: $${currentPrice.toFixed(4)}\n` +
+            `📈 PnL: +${pnlPct.toFixed(2)}%\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━`
+          );
+        }
+      }
+
+      // Уровень 2: trailing — SL следует за ценой с отступом 1.5%
+      if (trade.trailingActive && currentPrice > (trade.trailingHigh || entry)) {
+        trade.trailingHigh = currentPrice;
+        const trailSL = (currentPrice * 0.985).toFixed(4); // -1.5% от максимума
+        if (parseFloat(trailSL) > parseFloat(trade.sl)) {
+          const oldSL = trade.sl;
+          trade.sl    = trailSL;
+          console.log(`[TRAIL] ${trade.instId} — SL поднят $${oldSL} → $${trailSL} (цена $${currentPrice.toFixed(4)})`);
+        }
+      }
+
+    } else { // SHORT
+      const pnlPct = (entry - currentPrice) / entry * 100;
+
+      // Уровень 1: достигли TP1 → безубыток
+      if (currentPrice <= tp1 && !trade.trailingActive) {
+        const newSL = (entry * 0.999).toFixed(4); // чуть ниже входа
+        if (parseFloat(newSL) < sl) {
+          trade.sl             = newSL;
+          trade.trailingActive = true;
+          trade.trailingLow    = currentPrice;
+          console.log(`[TRAIL] ${trade.instId} SHORT — SL → безубыток $${newSL}`);
+          await sendTelegram(
+            `🔄 TRAILING STOP — ${trade.symbol}/USDT\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `✅ TP1 достигнут — SL перенесён на безубыток\n` +
+            `💰 Вход: $${trade.price}\n` +
+            `🛡 Новый SL: $${newSL}\n` +
+            `📍 Цена: $${currentPrice.toFixed(4)}\n` +
+            `📉 PnL: +${pnlPct.toFixed(2)}%\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━`
+          );
+        }
+      }
+
+      // Уровень 2: trailing — SL следует за ценой с отступом 1.5%
+      if (trade.trailingActive && currentPrice < (trade.trailingLow || entry)) {
+        trade.trailingLow = currentPrice;
+        const trailSL = (currentPrice * 1.015).toFixed(4); // +1.5% от минимума
+        if (parseFloat(trailSL) < parseFloat(trade.sl)) {
+          const oldSL = trade.sl;
+          trade.sl    = trailSL;
+          console.log(`[TRAIL] ${trade.instId} SHORT — SL опущен $${oldSL} → $${trailSL}`);
+        }
+      }
+    }
+  }
+}
+
 // ============================================================
 //  ТАЙМЕР НА СДЕЛКУ — напоминание если сделка висит долго
 // ============================================================
@@ -2981,13 +3072,18 @@ async function checkOutcomes() {
 
     let outcome = null;
     if (trade.direction === 'long') {
-      if (price <= parseFloat(trade.sl))       outcome = 'sl';
+      if (price <= parseFloat(trade.sl)) {
+        // Если trailing был активен — это фиксация прибыли а не стоп
+        outcome = trade.trailingActive ? 'tp1' : 'sl';
+      }
       else if (price >= parseFloat(trade.tp2)) outcome = 'tp2';
-      else if (price >= parseFloat(trade.tp1)) outcome = 'tp1';
+      else if (price >= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
     } else {
-      if (price >= parseFloat(trade.sl))       outcome = 'sl';
+      if (price >= parseFloat(trade.sl)) {
+        outcome = trade.trailingActive ? 'tp1' : 'sl';
+      }
       else if (price <= parseFloat(trade.tp2)) outcome = 'tp2';
-      else if (price <= parseFloat(trade.tp1)) outcome = 'tp1';
+      else if (price <= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
     }
 
     if (outcome) {
@@ -3232,6 +3328,7 @@ cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('ch
 cron.schedule('*/15 * * * *', () => {
   checkOutcomes().catch(e => console.error('checkOutcomes error:', e.message));
   checkTradeTimers().catch(e => console.error('checkTradeTimers error:', e.message));
+  checkTrailingStop().catch(e => console.error('checkTrailingStop error:', e.message));
 });
 // Каждые 30 минут — RSS новости
 cron.schedule('*/30 * * * *', () => { checkRSSNews().catch(e => console.error('RSS error:', e.message)); });

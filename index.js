@@ -2116,23 +2116,56 @@ if (k1h.length >= 55) {
       }
     }
 
-    // S7: Поглощение на объёме (15m) — свеча поглощения + объём 3x выше среднего
-    if (k15m.length >= 10) {
-      const patterns = detectCandlePatterns(k15m);
+    // S7: Поглощение на объёме (15m) — жёсткие фильтры
+    if (k15m.length >= 15) {
+      const patterns  = detectCandlePatterns(k15m);
       const engulfing = patterns.find(p => p.name.includes('engulfing'));
-      if (engulfing) {
-        const avgVol  = k15m.slice(-10, -1).reduce((a, c) => a + c.quoteVolume, 0) / 9;
-        const lastVol = k15m[k15m.length-1].quoteVolume;
-        const volBoost = lastVol >= avgVol * 3.5;
 
-        if (volBoost) {
-          const dir = engulfing.direction === 'bullish' ? 'long' : 'short';
-          signals.push({
-            strategy: '7️⃣ Поглощение на объёме (15m)', instId, direction: dir,
-            signal: dir === 'long' ? '🟢 LONG' : '🔴 SHORT', price, confidence: 58,
-            metrics: `${engulfing.desc} | Vol:$${(lastVol/1e6).toFixed(2)}M (${(lastVol/avgVol).toFixed(1)}x среднего)`,
-            ...calcSLTP(price, dir, '7️⃣ Поглощение на объёме (15m)', atr15m)
-          });
+      if (engulfing) {
+        const avgVol  = k15m.slice(-11, -1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
+        const lastVol = k15m[k15m.length-1].quoteVolume;
+        const volBoost = lastVol >= avgVol * 5.0; // было 3.5x → теперь 5x
+
+        if (!volBoost) {
+          console.log(`[S7 SKIP] ${instId} — слабый объём ${(lastVol/avgVol).toFixed(1)}x (нужно 5x)`);
+        } else {
+          const dir    = engulfing.direction === 'bullish' ? 'long' : 'short';
+          const rsi15m = calcRSI(k15m, 14);
+
+          // Фильтр 1 — RSI не должен быть в зоне перекупленности/перепроданности
+          // Бычье поглощение при RSI > 70 — скорее всего ловушка
+          // Медвежье поглощение при RSI < 30 — скорее всего ловушка
+          const rsiOk = (dir === 'long'  && rsi15m < 65 && rsi15m > 20) ||
+                        (dir === 'short' && rsi15m > 35 && rsi15m < 80);
+          if (!rsiOk) {
+            console.log(`[S7 SKIP] ${instId} — RSI экстремальный (${rsi15m.toFixed(1)})`);
+          } else {
+            // Фильтр 2 — поглощение должно совпадать с 1H трендом
+            const ma20_1h = calcSMA(k1h, 20);
+            const ma50_1h = k1h.length >= 50 ? calcSMA(k1h, 50) : ma20_1h;
+            const trend1h = ma20_1h > ma50_1h ? 'bullish' : 'bearish';
+
+            const trendOk = (dir === 'long'  && trend1h === 'bullish') ||
+                            (dir === 'short' && trend1h === 'bearish');
+
+            if (!trendOk) {
+              console.log(`[S7 SKIP] ${instId} — против 1H тренда (${trend1h})`);
+            } else {
+              // Фильтр 3 — минимальный объём монеты $50M в сутки
+              if (coinData.volume24h < 50000000) {
+                console.log(`[S7 SKIP] ${instId} — низкий суточный объём`);
+              } else {
+                signals.push({
+                  strategy: '7️⃣ Поглощение на объёме (15m)',
+                  instId, direction: dir,
+                  signal:   dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+                  price,    confidence: 62, // чуть выше 58 — прошло жёсткие фильтры
+                  metrics:  `${engulfing.desc} | Vol:${(lastVol/avgVol).toFixed(1)}x | RSI:${rsi15m.toFixed(0)} | 1H:${trend1h}`,
+                  ...calcSLTP(price, dir, '7️⃣ Поглощение на объёме (15m)', atr15m)
+                });
+              }
+            }
+          }
         }
       }
     }

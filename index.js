@@ -1754,8 +1754,8 @@ async function applyMA200(sig, instId) {
       }
     } else {
       if (price < ma200) {
-        sig.confidence = Math.min(sig.confidence + 8, 100);
-        sig.ma200Note  = `📉 Ниже MA200 ($${ma200.toFixed(2)}) → шорт по тренду +8%`;
+        sig.confidence = Math.min(sig.confidence + 15, 100);
+        sig.ma200Note  = `📉 Ниже MA200 ($${ma200.toFixed(2)}) → шорт по тренду +15%`;
       } else {
         // Выше MA200 — шорт против глобального тренда — блокируем
         sig.confidence = Math.max(sig.confidence - 25, 0);
@@ -2700,14 +2700,35 @@ function btS5(klines, i) {
 
 function btS7(klines, i) {
   const slice = klines.slice(0, i+1);
-  if (slice.length < 10) return null;
+  if (slice.length < 15) return null;
   const last = slice[slice.length-1], prev = slice[slice.length-2];
+
+  // Паттерн поглощения
   const engulfL = last.close>last.open && prev.close<prev.open && last.open<=prev.close && last.close>=prev.open;
   const engulfS = last.close<last.open && prev.close>prev.open && last.open>=prev.close && last.close<=prev.open;
   if (!engulfL && !engulfS) return null;
-  const avgVol = slice.slice(-10,-1).reduce((a,c)=>a+c.quoteVolume,0)/9;
-  if (last.quoteVolume < avgVol*2.5) return null;
-  return engulfL ? 'long' : 'short';
+
+  // Фильтр 1 — объём 5x (sync с live)
+  const avgVol = slice.slice(-11,-1).reduce((a,c)=>a+c.quoteVolume,0)/10;
+  if (last.quoteVolume < avgVol * 5.0) return null;
+
+  const dir = engulfL ? 'long' : 'short';
+
+  // Фильтр 2 — RSI не экстремальный (sync с live)
+  const rsi = calcRSI(slice, 14);
+  const rsiOk = (dir === 'long'  && rsi < 65 && rsi > 20) ||
+                (dir === 'short' && rsi > 35 && rsi < 80);
+  if (!rsiOk) return null;
+
+  // Фильтр 3 — совпадение с 1H трендом (sync с live)
+  const ma20 = calcSMA(slice, 20);
+  const ma50 = slice.length >= 50 ? calcSMA(slice, 50) : ma20;
+  const trend = ma20 > ma50 ? 'bullish' : 'bearish';
+  const trendOk = (dir === 'long' && trend === 'bullish') ||
+                  (dir === 'short' && trend === 'bearish');
+  if (!trendOk) return null;
+
+  return dir;
 }
 app.get('/', async (req, res) => {
   try {

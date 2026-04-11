@@ -1729,31 +1729,37 @@ function applyVWAP(sig, klines) {
 
 async function applyMA200(sig, instId) {
   try {
-    // MA200 на дневном таймфрейме — главный тренд
-    const kD = await getOKXKlinesCached(instId, '1D', 210);
+    const kD   = await getOKXKlinesCached(instId, '1D', 210);
     if (kD.length < 200) return sig;
 
     const ma200 = calcSMA(kD, 200);
     const price = sig.price;
-    const dist  = ((price - ma200) / ma200 * 100).toFixed(2);
+    const distPct = Math.abs(price - ma200) / ma200 * 100;
+
+    // Зона "облизывания" — ±1.5% от MA200 — не торгуем
+    if (distPct < 1.5) {
+      sig.confidence = Math.max(sig.confidence - 25, 0);
+      sig.ma200Note  = `⚠️ Цена у MA200 ($${ma200.toFixed(2)}) ±${distPct.toFixed(1)}% — зона неопределённости → -25%`;
+      return sig;
+    }
 
     if (sig.direction === 'long') {
       if (price > ma200) {
-        // Выше MA200 — глобальный бычий тренд
         sig.confidence = Math.min(sig.confidence + 8, 100);
-        sig.ma200Note  = `📈 Выше MA200 дневной ($${ma200.toFixed(2)}) → +8%`;
+        sig.ma200Note  = `📈 Выше MA200 ($${ma200.toFixed(2)}) → лонг по тренду +8%`;
       } else {
-        // Ниже MA200 — глобальный медвежий тренд, лонги опасны
-        sig.confidence = Math.max(sig.confidence - 15, 0);
-        sig.ma200Note  = `⚠️ Ниже MA200 дневной ($${ma200.toFixed(2)}) → -15%`;
+        // Ниже MA200 — лонг против глобального тренда — блокируем
+        sig.confidence = Math.max(sig.confidence - 25, 0);
+        sig.ma200Note  = `🚫 Ниже MA200 ($${ma200.toFixed(2)}) — лонг против тренда → -25%`;
       }
     } else {
       if (price < ma200) {
         sig.confidence = Math.min(sig.confidence + 8, 100);
-        sig.ma200Note  = `📉 Ниже MA200 дневной ($${ma200.toFixed(2)}) → +8%`;
+        sig.ma200Note  = `📉 Ниже MA200 ($${ma200.toFixed(2)}) → шорт по тренду +8%`;
       } else {
-        sig.confidence = Math.max(sig.confidence - 15, 0);
-        sig.ma200Note  = `⚠️ Выше MA200 дневной ($${ma200.toFixed(2)}) → -15%`;
+        // Выше MA200 — шорт против глобального тренда — блокируем
+        sig.confidence = Math.max(sig.confidence - 25, 0);
+        sig.ma200Note  = `🚫 Выше MA200 ($${ma200.toFixed(2)}) — шорт против тренда → -25%`;
       }
     }
   } catch(e) { console.error('applyMA200 error:', e.message); }

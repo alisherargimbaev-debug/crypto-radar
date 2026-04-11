@@ -16,7 +16,7 @@ const GROQ_KEY       = process.env.GROQ_KEY;
 const STRATEGY_SL = {
   '2️⃣ Liquidity Bounce (1h)':       { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 2.0, tp2: 3.0 },
-  '4️⃣ MA20/MA50+RSI (1h)':          { sl: 3.0, tp1: 6.0, tp2: 9.0 },
+  '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
@@ -244,6 +244,23 @@ async function handleTelegramCommand(text, chatId) {
       if (t.outcome === 'sl') { consecLoss++; maxConsecLoss = Math.max(maxConsecLoss, consecLoss); }
       else consecLoss = 0;
     }
+    // Sharpe по стратегиям
+    const stratMap = {};
+    allDbTrades.forEach(t => {
+      const k = (t.strategy || 'Unknown').replace(/\d️⃣\s*/, '').split('(')[0].trim();
+      if (!stratMap[k]) stratMap[k] = [];
+      stratMap[k].push(parseFloat(t.pnl) || 0);
+    });
+    const stratSharpeLines = Object.entries(stratMap)
+      .filter(([k, v]) => v.length >= 5)
+      .map(([k, v]) => {
+        const m = v.reduce((a,b)=>a+b,0)/v.length;
+        const s = Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/v.length) || 1;
+        const sh = (m/s*Math.sqrt(252)).toFixed(2);
+        const wr = Math.round(v.filter(x=>x>0).length/v.length*100);
+        return `  ${k}: Sharpe ${sh} | WR ${wr}% | ${v.length} сд.`;
+      }).join('\n');
+
     const fng    = store.fngCache || { value: '?', label: '?' };
 
     await sendTelegramTo(chatId,
@@ -255,9 +272,13 @@ async function handleTelegramCommand(text, chatId) {
       `  Win Rate: ${wr}%\n` +
       `  PnL: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}%\n\n` +
       `📈 За всё время:\n` +
-      `  Сделок: ${store.tradeHistory.length}\n` +
+      `  Сделок: ${allDbTrades.length}\n` +
       `  Win Rate: ${allWR}%\n` +
-      `  Открытых: ${store.openTrades.length}`
+      `  Открытых: ${store.openTrades.length}\n\n` +
+      `📐 Расширенные метрики:\n` +
+      `  Sharpe: ${sharpe} | MaxDD: -${maxDD.toFixed(1)}%\n` +
+      `  Profit Factor: ${pf} | Серия SL: ${maxConsecLoss}\n\n` +
+      `📊 Sharpe по стратегиям:\n${stratSharpeLines || '  Нужно 5+ сделок на стратегию'}`
     );
   }
 
@@ -2789,13 +2810,21 @@ if (alreadyOpen) {
           }
         }
 
-        // Fibonacci TP — только если уровни логичны
+        // Fibonacci TP — берём только если даёт ЛУЧШИЙ (дальше) TP
         const fibKlines = await getOKXKlinesCached(coin.instId, '1H', 20);
         const fib = calcFibonacci(fibKlines, sig.direction, sig.price);
         if (fib) {
-          sig.tp1 = fib.tp1.toFixed(4);
-          sig.tp2 = fib.tp2.toFixed(4);
-          sig.fibNote = `📐 Fibonacci TP: ${fib.key}`;
+          const currentTP1 = parseFloat(sig.tp1);
+          const fibTP1     = fib.tp1;
+          // Лучший TP = дальше от цены входа
+          const fibIsBetter = sig.direction === 'long'
+            ? fibTP1 > currentTP1
+            : fibTP1 < currentTP1;
+          if (fibIsBetter) {
+            sig.tp1 = fib.tp1.toFixed(4);
+            sig.tp2 = fib.tp2.toFixed(4);
+            sig.fibNote = `📐 Fibonacci TP лучше: ${fib.key}`;
+          }
         }
         // Финальная проверка логики SL/TP
         const entry = sig.price;
@@ -3404,6 +3433,20 @@ supabase.from('open_trades').select('*').then(({ data }) => {
     console.log(`[START] Загружено ${recent.length} из ${data.length} открытых сделок (только за 4ч)`);
   }
 });
+
+// Восстанавливаем cooldowns из недавних сигналов (защита от повторных входов после рестарта)
+supabase.from('signals')
+  .select('inst_id, ts')
+  .gte('ts', Date.now() - COOLDOWN_MIN * 60 * 1000)
+  .then(({ data }) => {
+    if (data?.length) {
+      data.forEach(s => {
+        store.cooldowns[s.inst_id] = parseInt(s.ts);
+      });
+      console.log(`[START] Восстановлено ${data.length} cooldowns из сигналов`);
+    }
+  })
+  .catch(e => console.error('[START] cooldown restore error:', e.message));
 
 // Первый запуск сразу при старте для проверки
 setTimeout(() => {

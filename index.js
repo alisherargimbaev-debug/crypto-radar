@@ -546,7 +546,7 @@ function applyFearGreed(sig, fng) {
 //  УРОВНИ S/R
 // ============================================================
 async function getSupportResistanceLevels(instId) {
-  const klines = await getOKXKlines(instId, '4H', 42);
+  const klines = await getOKXKlinesCached(instId, '4H', 42);
   if (klines.length < 5) return { supports: [], resistances: [] };
   const supports = [], resistances = [];
   for (let i = 2; i < klines.length - 2; i++) {
@@ -665,8 +665,8 @@ function detectCandlePatterns(klines) {
 
 async function applyCandlePatterns(sig, instId) {
   try {
-    const k15m = await getOKXKlines(instId, '15m', 5);
-    const k1h  = await getOKXKlines(instId, '1H',  5);
+    const k15m = await getOKXKlinesCached(instId, '15m', 5);
+    const k1h  = await getOKXKlinesCached(instId, '1H',  5);
     const all  = [...detectCandlePatterns(k15m), ...detectCandlePatterns(k1h)];
     if (!all.length) return sig;
 
@@ -717,11 +717,27 @@ function applyVolumeProfile(sig, klines) {
 }
 
 // ============================================================
+// BTC тикер кэш — используется в S6 чтобы не делать запрос каждый раз
+let btcTickerCache = { data: null, ts: 0 };
+async function getBTCTickerCached() {
+  if (btcTickerCache.data && Date.now() - btcTickerCache.ts < 60000) {
+    return btcTickerCache.data;
+  }
+  try {
+    const data = await httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP');
+    if (data?.data?.[0]) {
+      btcTickerCache = { data, ts: Date.now() };
+    }
+    return data;
+  } catch(e) { return btcTickerCache.data || null; }
+}
+
+// ============================================================
 //  4H ТРЕНД ФИЛЬТР
 // ============================================================
 async function apply4HTrend(sig, instId) {
   try {
-    const k4h  = await getOKXKlines(instId, '4H', 55);
+    const k4h  = await getOKXKlinesCached(instId, '4H', 55);
     if (k4h.length < 51) return sig;
 
     const ma20 = calcSMA(k4h, 20);
@@ -1534,8 +1550,8 @@ function applyBollingerSqueeze(sig, klines) {
 // Мультитаймфреймовый анализ (15m + 1H + 4H + 1D)
 async function applyMultiTimeframe(sig, instId) {
   try {
-    const k15m = await getOKXKlines(instId, '15m', 55);
-    const k1d  = await getOKXKlines(instId, '1D',  55);
+    const k15m = await getOKXKlinesCached(instId, '15m', 55);
+    const k1d  = await getOKXKlinesCached(instId, '1D',  55);
 
     let score = 0;
     const notes = [];
@@ -1693,7 +1709,7 @@ function applyVWAP(sig, klines) {
 async function applyMA200(sig, instId) {
   try {
     // MA200 на дневном таймфрейме — главный тренд
-    const kD = await getOKXKlines(instId, '1D', 210);
+    const kD = await getOKXKlinesCached(instId, '1D', 210);
     if (kD.length < 200) return sig;
 
     const ma200 = calcSMA(kD, 200);
@@ -1868,8 +1884,8 @@ async function runStrategies(instId, coinData, asianSession) {
 
     // Последовательные запросы — без rate limit
     // Свечи — всегда свежие
-    const k15m = await getOKXKlines(instId, '15m', 10);
-    const k1h  = await getOKXKlines(instId, '1H',  60);
+    const k15m = await getOKXKlinesCached(instId, '15m', 10);
+    const k1h  = await getOKXKlinesCached(instId, '1H',  60);
     // ATR для динамического SL
     const atr1h  = calcATR(k1h,  14);
     const atr15m = calcATR(k15m, 14);
@@ -1900,7 +1916,7 @@ async function runStrategies(instId, coinData, asianSession) {
       const tick = Math.round(k1h[k1h.length-1].quoteVolume / 10000);
       const rsi  = k1h.length >= 15 ? calcRSI(k1h, 14) : 50;
 
-      const k4h  = await getOKXKlines(instId, '4H', 55);
+      const k4h  = await getOKXKlinesCached(instId, '4H', 55);
       const ma20_4h = k4h.length >= 20 ? calcSMA(k4h, 20) : 0;
       const ma50_4h = k4h.length >= 50 ? calcSMA(k4h, 50) : 0;
       const trend4h = ma20_4h > ma50_4h ? 'bullish' : 'bearish';
@@ -2000,8 +2016,8 @@ if (k1h.length >= 55) {
   // RSI дивергенция как подтверждение разворота
   const lows   = k1h.map(c => c.low);
   const rsiPrev = calcRSI(k1h.slice(0, -5), 14);
-  const bullDiv = lows[lows.length-1] < Math.min(...lows.slice(-10,-1)) && rsi > rsiPrev + 2;
-  const bearDiv = closes[closes.length-1] > Math.max(...closes.slice(-10,-1)) && rsi < rsiPrev - 2;
+  const bullDiv = lows[lows.length-1] < Math.min(...lows.slice(-20,-1)) && rsi > rsiPrev + 2; // 20 свечей — лучше качество дивергенции
+  const bearDiv = closes[closes.length-1] > Math.max(...closes.slice(-20,-1)) && rsi < rsiPrev - 2;
 
   const iL = cross === 'bullish' && rsi < 55 && rsi > 30 && macd.hist > 0;
   const iS = cross === 'bearish' && rsi > 45 && rsi < 70 && macd.hist < 0;
@@ -2091,7 +2107,7 @@ if (k1h.length >= 55) {
         if (rsi1h < 35)      conf = Math.min(conf + 5, 100); // перепродан
 
         // Дополнительный фильтр: BTC тоже должен поддерживать направление
-        const btcTicker = await httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP');
+        const btcTicker = await getBTCTickerCached();
         const btcPrice  = btcTicker?.data?.[0] ? parseFloat(btcTicker.data[0].last) : 0;
         const btcOpen   = btcTicker?.data?.[0] ? parseFloat(btcTicker.data[0].open24h) : 0;
         const btcChange = btcOpen ? (btcPrice - btcOpen) / btcOpen * 100 : 0;
@@ -2114,7 +2130,7 @@ if (k1h.length >= 55) {
         if (rsi1h > 65)      conf = Math.min(conf + 5, 100); // перекуплен
 
         // BTC фильтр — не берём шорт если BTC сильно растёт
-        const btcTickerS = await httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP');
+        const btcTickerS = await getBTCTickerCached();
         const btcPriceS  = btcTickerS?.data?.[0] ? parseFloat(btcTickerS.data[0].last) : 0;
         const btcOpenS   = btcTickerS?.data?.[0] ? parseFloat(btcTickerS.data[0].open24h) : 0;
         const btcChangeS = btcOpenS ? (btcPriceS - btcOpenS) / btcOpenS * 100 : 0;
@@ -2632,8 +2648,8 @@ function btS5(klines, i) {
   const lows   = slice.map(c => c.low);
   const rsiNow = calcRSI(slice, 14);
   const rsiPrev= calcRSI(slice.slice(0,-5), 14);
-  if (lows[lows.length-1] < Math.min(...lows.slice(-10,-1)) && rsiNow > rsiPrev+3 && rsiNow < 45) return 'long';
-  if (closes[closes.length-1] > Math.max(...closes.slice(-10,-1)) && rsiNow < rsiPrev-3 && rsiNow > 55) return 'short';
+  if (lows[lows.length-1] < Math.min(...lows.slice(-20,-1)) && rsiNow > rsiPrev+3 && rsiNow < 45) return 'long'; // 20 свечей — sync с live
+  if (closes[closes.length-1] > Math.max(...closes.slice(-20,-1)) && rsiNow < rsiPrev-3 && rsiNow > 55) return 'short';
   return null;
 }
 

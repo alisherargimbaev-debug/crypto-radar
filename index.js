@@ -2710,7 +2710,7 @@ function btS7(klines, i) {
 
   // Фильтр 1 — объём 5x (sync с live)
   const avgVol = slice.slice(-11,-1).reduce((a,c)=>a+c.quoteVolume,0)/10;
-  if (last.quoteVolume < avgVol * 5.0) return null;
+  if (last.quoteVolume < avgVol * 3.5) return null;
 
   const dir = engulfL ? 'long' : 'short';
 

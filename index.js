@@ -117,13 +117,14 @@ const STRATEGY_META = {
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
 const store = {
-  cooldowns:    {},  // { instId: timestamp }
-  openTrades:   [],  // открытые сделки
-  tradeHistory: [],  // история сделок
-  signalLog:    [],  // лог сигналов
+  cooldowns:    {},
+  openTrades:   [],
+  tradeHistory: [],
+  signalLog:    [],
   fngCache:     null,
   fngTs:        0,
-  oiCache: {},      // { 'BTC': { data5m: [], data1h: [], tf5m: null, tf1h: null, ts: 0 } }
+  oiCache:      {},
+  klinesCache:  {},  // кэш свечей на 60 секунд
 };
 
 // ── Сессии UTC ─────────────────────────────────────────────
@@ -463,6 +464,27 @@ async function getOKXKlines(instId, bar, limit) {
     ts: +c[0], open: +c[1], high: +c[2], low: +c[3], close: +c[4],
     volume: +c[5], quoteVolume: +c[7], takerBuyQuote: +c[7] * 0.5,
   }));
+}
+
+const KLINES_TTL = 60000; // 60 секунд
+
+async function getOKXKlinesCached(instId, bar, limit) {
+  const key = `${instId}-${bar}-${limit}`;
+  const cached = store.klinesCache[key];
+  if (cached && Date.now() - cached.ts < KLINES_TTL) {
+    return cached.data;
+  }
+  const data = await getOKXKlines(instId, bar, limit);
+  store.klinesCache[key] = { data, ts: Date.now() };
+  // Чистим старые записи если кэш вырос больше 200 записей
+  const keys = Object.keys(store.klinesCache);
+  if (keys.length > 200) {
+    const oldest = keys.sort((a,b) =>
+      store.klinesCache[a].ts - store.klinesCache[b].ts
+    ).slice(0, 50);
+    oldest.forEach(k => delete store.klinesCache[k]);
+  }
+  return data;
 }
 
 async function getOKXOIHistory(ccy, period, limit) {
@@ -2622,14 +2644,14 @@ if (alreadyOpen) {
         sig = await applyCandlePatterns(sig, coin.instId);
         sig = await applyLiquidationBoost(sig);
         sig = await applyWhaleBoost(sig);
-        sig = applyVolumeProfile(sig, await getOKXKlines(coin.instId, '1H', 21));
+        sig = applyVolumeProfile(sig, await getOKXKlinesCached(coin.instId, '1H', 21));
         sig = await apply4HTrend(sig, coin.instId);
-        sig = applyVWAP(sig, await getOKXKlines(coin.instId, '1H', 24));
+        sig = applyVWAP(sig, await getOKXKlinesCached(coin.instId, '1H', 24));
         sig = await applyMA200(sig, coin.instId);
-        sig = applyOBV(sig, await getOKXKlines(coin.instId, '1H', 20));
-        sig = applyBollingerSqueeze(sig, await getOKXKlines(coin.instId, '1H', 25));
+        sig = applyOBV(sig, await getOKXKlinesCached(coin.instId, '1H', 20));
+        sig = applyBollingerSqueeze(sig, await getOKXKlinesCached(coin.instId, '1H', 25));
         sig = await applyMultiTimeframe(sig, coin.instId);
-        sig = applyChartPatterns(sig, await getOKXKlines(coin.instId, '1H', 20));
+        sig = applyChartPatterns(sig, await getOKXKlinesCached(coin.instId, '1H', 20));
         sig = applyMacroFilter(sig, macroEvent);
         sig = applyETFFlow(sig, etfFlow);
         const regime = await getMarketRegime(coin.instId);
@@ -2642,7 +2664,7 @@ if (alreadyOpen) {
         sig = await applyLiquidationLevels(sig);
 
         // FVG зоны
-        const fvgKlines = await getOKXKlines(coin.instId, '1H', 30);
+        const fvgKlines = await getOKXKlinesCached(coin.instId, '1H', 30);
         const fvgZones  = detectFVG(fvgKlines.slice(-30));
         const atrForFVG = calcATR(fvgKlines, 14);
 
@@ -2670,7 +2692,7 @@ if (alreadyOpen) {
         }
 
         // Fibonacci TP — только если уровни логичны
-        const fibKlines = await getOKXKlines(coin.instId, '1H', 20);
+        const fibKlines = await getOKXKlinesCached(coin.instId, '1H', 20);
         const fib = calcFibonacci(fibKlines, sig.direction, sig.price);
         if (fib) {
           sig.tp1 = fib.tp1.toFixed(4);
@@ -2686,7 +2708,7 @@ if (alreadyOpen) {
         if (sig.direction === 'long') {
           // Для лонга: SL < entry < TP1 < TP2
           if (sl >= entry || tp1 <= entry || tp2 <= tp1) {
-            const atr = calcATR(await getOKXKlines(coin.instId, '1H', 20), 14);
+            const atr = calcATR(await getOKXKlinesCached(coin.instId, '1H', 20), 14);
             sig.sl  = (entry - atr * 1.5).toFixed(4);
             sig.tp1 = (entry + atr * 3.0).toFixed(4);
             sig.tp2 = (entry + atr * 4.5).toFixed(4);
@@ -2695,7 +2717,7 @@ if (alreadyOpen) {
         } else {
           // Для шорта: SL > entry > TP1 > TP2
           if (sl <= entry || tp1 >= entry || tp2 >= tp1) {
-            const atr = calcATR(await getOKXKlines(coin.instId, '1H', 20), 14);
+            const atr = calcATR(await getOKXKlinesCached(coin.instId, '1H', 20), 14);
             sig.sl  = (entry + atr * 1.5).toFixed(4);
             sig.tp1 = (entry - atr * 3.0).toFixed(4);
             sig.tp2 = (entry - atr * 4.5).toFixed(4);

@@ -29,6 +29,81 @@ const MIN_VOLUME_24H = 10000000;
 const TOP_N          = 30;
 const COOLDOWN_MIN   = 30;
 
+// ── Портфельный риск-менеджмент ────────────────────────────
+const MAX_OPEN_TRADES     = 3;    // максимум открытых сделок
+const MAX_CORRELATED      = 2;    // максимум сделок в одном секторе
+const MAX_DAILY_LOSS_PCT  = 5.0;  // дневной лимит убытка %
+const MAX_SAME_DIRECTION  = 2;    // максимум лонгов или шортов одновременно
+
+// Секторы монет для проверки корреляции
+const COIN_SECTORS = {
+  BTC: 'store_of_value', ETH: 'layer1', BNB: 'layer1',
+  SOL: 'layer1', ADA: 'layer1', AVAX: 'layer1', NEAR: 'layer1',
+  APT: 'layer1', ATOM: 'layer1', DOT: 'layer1', TIA: 'layer1',
+  MATIC: 'layer2', ARB: 'layer2', OP: 'layer2',
+  LINK: 'defi', AAVE: 'defi', INJ: 'defi',
+  DOGE: 'meme', SHIB: 'meme', PEPE: 'meme', WIF: 'meme',
+  LTC: 'payments', XRP: 'payments', XLM: 'payments',
+  BTC: 'store_of_value', BCH: 'payments',
+};
+
+// Дневной PnL трекер
+if (!global.dailyPnlTracker) {
+  global.dailyPnlTracker = { date: '', losses: 0, wins: 0 };
+}
+
+function checkPortfolioRisk(sig) {
+  const open = store.openTrades;
+  const symbol = sig.instId.replace('-USDT-SWAP', '');
+
+  // 1. Максимум открытых сделок
+  if (open.length >= MAX_OPEN_TRADES) {
+    console.log(`[PORTFOLIO] Лимит сделок (${open.length}/${MAX_OPEN_TRADES})`);
+    return { allowed: false, reason: 'Лимит открытых сделок' };
+  }
+
+  // 2. Проверка корреляции по сектору
+  const sector = COIN_SECTORS[symbol] || 'other';
+  if (sector !== 'other') {
+    const sectorTrades = open.filter(t => {
+      const s = t.symbol || t.instId?.replace('-USDT-SWAP','') || '';
+      return (COIN_SECTORS[s] || 'other') === sector && t.direction === sig.direction;
+    });
+    if (sectorTrades.length >= MAX_CORRELATED) {
+      console.log(`[PORTFOLIO] Корреляция: уже ${sectorTrades.length} сделок в секторе ${sector}`);
+      return { allowed: false, reason: `Много сделок в секторе ${sector}` };
+    }
+  }
+
+  // 3. Максимум одинаковых направлений
+  const sameDir = open.filter(t => t.direction === sig.direction).length;
+  if (sameDir >= MAX_SAME_DIRECTION) {
+    console.log(`[PORTFOLIO] Много ${sig.direction}: ${sameDir}/${MAX_SAME_DIRECTION}`);
+    return { allowed: false, reason: `Много ${sig.direction} позиций` };
+  }
+
+  // 4. Дневной лимит убытка
+  const today = new Date().toISOString().split('T')[0];
+  if (global.dailyPnlTracker.date !== today) {
+    global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
+  }
+  if (global.dailyPnlTracker.losses >= MAX_DAILY_LOSS_PCT) {
+    console.log(`[PORTFOLIO] Дневной лимит убытка достигнут: ${global.dailyPnlTracker.losses}%`);
+    return { allowed: false, reason: 'Дневной лимит убытка' };
+  }
+
+  return { allowed: true };
+}
+
+function updateDailyPnl(pnl) {
+  const today = new Date().toISOString().split('T')[0];
+  if (global.dailyPnlTracker.date !== today) {
+    global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
+  }
+  if (pnl < 0) global.dailyPnlTracker.losses += Math.abs(pnl);
+  else global.dailyPnlTracker.wins += pnl;
+}
+
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
   '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
@@ -138,6 +213,29 @@ async function handleTelegramCommand(text, chatId) {
     const sigs   = store.signalLog.filter(s => s.ts >= since).length;
     const allW   = store.tradeHistory.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
     const allWR  = store.tradeHistory.length ? Math.round(allW.length / store.tradeHistory.length * 100) : 0;
+    // Sharpe Ratio
+    const returns = store.tradeHistory.map(t => t.pnl || 0);
+    const meanR   = returns.length ? returns.reduce((a,b)=>a+b,0)/returns.length : 0;
+    const stdR    = returns.length > 1 ? Math.sqrt(returns.reduce((a,b)=>a+(b-meanR)**2,0)/returns.length) : 1;
+    const sharpe  = stdR > 0 ? (meanR / stdR * Math.sqrt(252)).toFixed(2) : '—';
+    // Max Drawdown
+    let peak = 0, cumPnl = 0, maxDD = 0;
+    for (const t of store.tradeHistory) {
+      cumPnl += t.pnl || 0;
+      if (cumPnl > peak) peak = cumPnl;
+      const dd = peak - cumPnl;
+      if (dd > maxDD) maxDD = dd;
+    }
+    // Profit Factor
+    const grossWin  = store.tradeHistory.filter(t=>t.pnl>0).reduce((a,t)=>a+t.pnl,0);
+    const grossLoss = Math.abs(store.tradeHistory.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
+    const pf = grossLoss > 0 ? (grossWin/grossLoss).toFixed(2) : '∞';
+    // Consecutive losses
+    let maxConsecLoss = 0, consecLoss = 0;
+    for (const t of store.tradeHistory) {
+      if (t.outcome === 'sl') { consecLoss++; maxConsecLoss = Math.max(maxConsecLoss, consecLoss); }
+      else consecLoss = 0;
+    }
     const fng    = store.fngCache || { value: '?', label: '?' };
 
     await sendTelegramTo(chatId,
@@ -748,10 +846,10 @@ function applyLongShortRatio(sig, lsr) {
 // BTC Dominance — когда доминация растёт альты падают
 async function getBTCDominance() {
   try {
-    const data = await httpGet('https://api.coingecko.com/api/v3/global');
-    if (!data?.data) return null;
-    const dom    = parseFloat(data.data.market_cap_percentage?.btc || 0);
-    const change = data.data.market_cap_change_percentage_24h_usd || 0;
+    const data = await getCoingeckoGlobal();
+    if (!data) return null;
+    const dom    = parseFloat(data.market_cap_percentage?.btc || 0);
+    const change = data.market_cap_change_percentage_24h_usd || 0;
     return { dom: dom.toFixed(1), change: change.toFixed(2), rising: dom > 55 };
   } catch(e) { return null; }
 }
@@ -867,13 +965,30 @@ async function checkMacroEvents() {
   } catch(e) { return null; }
 }
 
-// BTC ETF потоки — когда институционалы покупают/продают
-async function getBTCETFFlow() {
+// Кэш для CoinGecko (лимит 30 req/min)
+let coingeckoCache = { data: null, ts: 0 };
+const COINGECKO_TTL = 10 * 60 * 1000; // 10 минут
+
+async function getCoingeckoGlobal() {
+  if (coingeckoCache.data && Date.now() - coingeckoCache.ts < COINGECKO_TTL) {
+    return coingeckoCache.data;
+  }
   try {
     const data = await httpGet('https://api.coingecko.com/api/v3/global');
-    if (!data?.data) return null;
-    const btcDom = data.data.market_cap_percentage?.btc || 0;
-    const change = data.data.market_cap_change_percentage_24h_usd || 0;
+    if (data?.data) {
+      coingeckoCache = { data: data.data, ts: Date.now() };
+      return data.data;
+    }
+  } catch(e) {}
+  return coingeckoCache.data || null;
+}
+
+async function getBTCETFFlow() {
+  try {
+    const data = await getCoingeckoGlobal();
+    if (!data) return null;
+    const change = data.market_cap_change_percentage_24h_usd || 0;
+    const btcDom = data.market_cap_percentage?.btc || 0;
     const bullish = change > 0;
     return {
       netFlow: change,
@@ -1579,6 +1694,96 @@ async function applyMA200(sig, instId) {
   return sig;
 }
 
+// ============================================================
+//  РЕЖИМ РЫНКА
+// ============================================================
+function calcADX(klines, period = 14) {
+  if (!klines || klines.length < period + 1) return 0;
+  const trs = [], plusDMs = [], minusDMs = [];
+  for (let i = 1; i < klines.length; i++) {
+    const h = klines[i].high, l = klines[i].low, pc = klines[i-1].close;
+    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    const upMove   = h - klines[i-1].high;
+    const downMove = klines[i-1].low - l;
+    plusDMs.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDMs.push(downMove > upMove && downMove > 0 ? downMove : 0);
+  }
+  const smooth = (arr, p) => {
+    let s = arr.slice(0, p).reduce((a,b) => a+b, 0);
+    const res = [s];
+    for (let i = p; i < arr.length; i++) {
+      s = s - s/p + arr[i];
+      res.push(s);
+    }
+    return res;
+  };
+  const atrS    = smooth(trs, period);
+  const plusS   = smooth(plusDMs, period);
+  const minusS  = smooth(minusDMs, period);
+  const dxArr   = atrS.map((a, i) => {
+    const di_plus  = a ? plusS[i]  / a * 100 : 0;
+    const di_minus = a ? minusS[i] / a * 100 : 0;
+    const sum = di_plus + di_minus;
+    return sum ? Math.abs(di_plus - di_minus) / sum * 100 : 0;
+  });
+  return dxArr.slice(-period).reduce((a,b) => a+b, 0) / period;
+}
+
+async function getMarketRegime(instId) {
+  try {
+    const k1h = await getOKXKlines(instId, '1H', 30);
+    const k1d = await getOKXKlines(instId, '1D', 210);
+    const adx  = calcADX(k1h, 14);
+    const atr  = calcATR(k1h, 14);
+    const atrAvg = k1h.slice(-20).reduce((s,c,i,a) => {
+      if (i === 0) return s;
+      return s + Math.abs(c.close - a[i-1].close);
+    }, 0) / 19;
+    const ma200 = k1d.length >= 200 ? calcSMA(k1d, 200) : null;
+    const price = k1h[k1h.length-1]?.close || 0;
+
+    const isTrending  = adx > 25;
+    const isSideways  = adx < 20;
+    const isHighVol   = atr > atrAvg * 1.8;
+    const isBearMkt   = ma200 ? price < ma200 : false;
+
+    return { adx, isTrending, isSideways, isHighVol, isBearMkt, ma200, price };
+  } catch(e) { return { adx: 0, isTrending: false, isSideways: true, isHighVol: false, isBearMkt: false }; }
+}
+
+function applyMarketRegime(sig, regime) {
+  if (!regime) return sig;
+
+  // Медвежий рынок — блокируем лонги кроме S5 дивергенции
+  if (regime.isBearMkt && sig.direction === 'long') {
+    const isS5 = sig.strategy.includes('RSI Диверг');
+    if (!isS5) {
+      sig.confidence = Math.max(sig.confidence - 20, 0);
+      sig.regimeNote = `⚠️ Медвежий рынок (ниже MA200) → -20%`;
+    }
+  }
+
+  // Высокая волатильность — уменьшаем уверенность
+  if (regime.isHighVol) {
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.regimeNote = (sig.regimeNote || '') + ` 🌊 Высокая волатильность → -10%`;
+  }
+
+  // Трендовый рынок — S2 (bounce) не работает хорошо
+  if (regime.isTrending && sig.strategy.includes('Bounce')) {
+    sig.confidence = Math.max(sig.confidence - 15, 0);
+    sig.regimeNote = `📈 Трендовый рынок (ADX:${regime.adx.toFixed(0)}) — bounce рискован → -15%`;
+  }
+
+  // Боковик — трендовые стратегии менее эффективны
+  if (regime.isSideways && (sig.strategy.includes('MA20') || sig.strategy.includes('MA50'))) {
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.regimeNote = `↔️ Боковик (ADX:${regime.adx.toFixed(0)}) — MA крест слабее → -10%`;
+  }
+
+  return sig;
+}
+
 function calcATR(klines, period = 14) {
   if (klines.length < period + 1) return 0;
   const trs = [];
@@ -1825,13 +2030,23 @@ if (k1h.length >= 55) {
         if (macd1h.hist > 0) conf = Math.min(conf + 8, 100); // MACD подтверждает
         if (rsi1h < 35)      conf = Math.min(conf + 5, 100); // перепродан
 
-        signals.push({
-          strategy:  '6️⃣ Funding Extreme (1h)',
-          instId, direction: 'long',
-          signal:    '🟢 LONG', price, confidence: conf,
-          metrics:   `Funding:${(funding*100).toFixed(4)}% [${fundingLabel}] RSI:${rsi1h} MACD:${macd1h.hist > 0 ? '▲' : '▼'}`,
-          ...calcSLTP(price, 'long',  '6️⃣ Funding Extreme (1h)', atr1h)
-        });
+        // Дополнительный фильтр: BTC тоже должен поддерживать направление
+        const btcTicker = await httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP');
+        const btcPrice  = btcTicker?.data?.[0] ? parseFloat(btcTicker.data[0].last) : 0;
+        const btcOpen   = btcTicker?.data?.[0] ? parseFloat(btcTicker.data[0].open24h) : 0;
+        const btcChange = btcOpen ? (btcPrice - btcOpen) / btcOpen * 100 : 0;
+        // Не берём лонг если BTC падает > 2% за день
+        if (btcChange < -2.0) {
+          console.log(`[S6 SKIP] ${instId} — BTC падает ${btcChange.toFixed(1)}% при лонге`);
+        } else {
+          signals.push({
+            strategy:  '6️⃣ Funding Extreme (1h)',
+            instId, direction: 'long',
+            signal:    '🟢 LONG', price, confidence: conf,
+            metrics:   `Funding:${(funding*100).toFixed(4)}% [${fundingLabel}] RSI:${rsi1h} BTC:${btcChange.toFixed(1)}%`,
+            ...calcSLTP(price, 'long',  '6️⃣ Funding Extreme (1h)', atr1h)
+          });
+        }
       } else if (funding > 0 && rsi1h > 50) {
         // Положительный funding → лонгисты переплачивают → разворот вниз
         let conf = fundingConf;
@@ -1949,7 +2164,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
   return (
@@ -2417,6 +2632,8 @@ if (alreadyOpen) {
         sig = applyChartPatterns(sig, await getOKXKlines(coin.instId, '1H', 20));
         sig = applyMacroFilter(sig, macroEvent);
         sig = applyETFFlow(sig, etfFlow);
+        const regime = await getMarketRegime(coin.instId);
+        sig = applyMarketRegime(sig, regime);
         const lsr = await getLongShortRatio(coin.symbol);
         sig = applyLongShortRatio(sig, lsr);
         sig = applyBTCDominance(sig, btcDom, coin.symbol);
@@ -2487,8 +2704,6 @@ if (alreadyOpen) {
         }
 
         filtered.push(sig);
-
-        filtered.push(sig);
       }
 
       const fngValue = fng?.value || 50;
@@ -2525,6 +2740,13 @@ if (alreadyOpen) {
       best.ts      = Date.now();
       best.fng     = fng;
       best.session = session;
+
+      // Проверка портфельного риска ПЕРЕД AI валидацией
+      const portfolioCheck = checkPortfolioRisk(best);
+      if (!portfolioCheck.allowed) {
+        console.log(`[PORTFOLIO BLOCK] ${coin.instId} — ${portfolioCheck.reason}`);
+        continue;
+      }
 
       const aiResult = await validateSignalWithAI(best, fng, session);
       if (!aiResult.approved) {

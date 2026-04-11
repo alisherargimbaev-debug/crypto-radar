@@ -1753,54 +1753,85 @@ function calcADX(klines, period = 14) {
 
 async function getMarketRegime(instId) {
   try {
-    const k1h = await getOKXKlines(instId, '1H', 30);
-    const k1d = await getOKXKlines(instId, '1D', 210);
-    const adx  = calcADX(k1h, 14);
-    const atr  = calcATR(k1h, 14);
+    const k1h = await getOKXKlinesCached(instId, '1H', 30);
+    const k4h = await getOKXKlinesCached(instId, '4H', 30);
+    const k1d = await getOKXKlinesCached(instId, '1D', 210);
+
+    const adx1h = calcADX(k1h, 14);
+    const adx4h = calcADX(k4h, 14);
+    // Используем среднее — 4H весит больше (надёжнее)
+    const adx = adx1h * 0.35 + adx4h * 0.65;
+
+    const atr    = calcATR(k1h, 14);
     const atrAvg = k1h.slice(-20).reduce((s,c,i,a) => {
       if (i === 0) return s;
       return s + Math.abs(c.close - a[i-1].close);
     }, 0) / 19;
-    const ma200 = k1d.length >= 200 ? calcSMA(k1d, 200) : null;
-    const price = k1h[k1h.length-1]?.close || 0;
 
-    const isTrending  = adx > 25;
-    const isSideways  = adx < 20;
-    const isHighVol   = atr > atrAvg * 1.8;
-    const isBearMkt   = ma200 ? price < ma200 : false;
+    const ma200   = k1d.length >= 200 ? calcSMA(k1d, 200) : null;
+    const price   = k1h[k1h.length-1]?.close || 0;
 
-    return { adx, isTrending, isSideways, isHighVol, isBearMkt, ma200, price };
-  } catch(e) { return { adx: 0, isTrending: false, isSideways: true, isHighVol: false, isBearMkt: false }; }
+    const isTrending = adx > 25;
+    const isSideways = adx < 20;
+    const isHighVol  = atr > atrAvg * 1.8;
+    const isBearMkt  = ma200 ? price < ma200 : false;
+
+    // Дополнительно: если 4H сильно трендовый — усиливаем сигнал
+    const isStrongTrend = adx4h > 30;
+
+    console.log(`[REGIME] ${instId} ADX 1H:${adx1h.toFixed(1)} 4H:${adx4h.toFixed(1)} Avg:${adx.toFixed(1)} ${isTrending?'TREND':isSideways?'SIDEWAYS':'NEUTRAL'} ${isBearMkt?'BEAR':''}`);
+
+    return { adx, adx1h, adx4h, isTrending, isSideways, isHighVol, isBearMkt, isStrongTrend, ma200, price };
+  } catch(e) {
+    return { adx: 0, adx1h: 0, adx4h: 0, isTrending: false, isSideways: true, isHighVol: false, isBearMkt: false, isStrongTrend: false };
+  }
 }
 
 function applyMarketRegime(sig, regime) {
   if (!regime) return sig;
 
-  // Медвежий рынок — блокируем лонги кроме S5 дивергенции
+  // 1. Медвежий рынок — блокируем лонги кроме S5
   if (regime.isBearMkt && sig.direction === 'long') {
     const isS5 = sig.strategy.includes('RSI Диверг');
     if (!isS5) {
       sig.confidence = Math.max(sig.confidence - 20, 0);
       sig.regimeNote = `⚠️ Медвежий рынок (ниже MA200) → -20%`;
+    } else {
+      // S5 в медвежьем рынке — осторожно но разрешаем
+      sig.confidence = Math.max(sig.confidence - 8, 0);
+      sig.regimeNote = `⚠️ Медвежий рынок — S5 осторожно → -8%`;
     }
   }
 
-  // Высокая волатильность — уменьшаем уверенность
+  // 2. Высокая волатильность — уменьшаем уверенность
   if (regime.isHighVol) {
     sig.confidence = Math.max(sig.confidence - 10, 0);
     sig.regimeNote = (sig.regimeNote || '') + ` 🌊 Высокая волатильность → -10%`;
   }
 
-  // Трендовый рынок — S2 (bounce) не работает хорошо
-  if (regime.isTrending && sig.strategy.includes('Bounce')) {
-    sig.confidence = Math.max(sig.confidence - 15, 0);
-    sig.regimeNote = `📈 Трендовый рынок (ADX:${regime.adx.toFixed(0)}) — bounce рискован → -15%`;
+  // 3. Сильный тренд (4H ADX > 30) — S2 Bounce очень рискован
+  if (regime.isStrongTrend && sig.strategy.includes('Bounce')) {
+    sig.confidence = Math.max(sig.confidence - 20, 0);
+    sig.regimeNote = `📈 Сильный тренд (4H ADX:${regime.adx4h.toFixed(0)}) — bounce опасен → -20%`;
+  }
+  // Обычный тренд — S2 тоже под давлением
+  else if (regime.isTrending && sig.strategy.includes('Bounce')) {
+    sig.confidence = Math.max(sig.confidence - 12, 0);
+    sig.regimeNote = `📈 Тренд (ADX:${regime.adx.toFixed(0)}) — bounce рискован → -12%`;
   }
 
-  // Боковик — трендовые стратегии менее эффективны
-  if (regime.isSideways && (sig.strategy.includes('MA20') || sig.strategy.includes('MA50'))) {
+  // 4. Боковик — MA Cross слабее
+  if (regime.isSideways && sig.strategy.includes('MA20')) {
     sig.confidence = Math.max(sig.confidence - 10, 0);
     sig.regimeNote = `↔️ Боковик (ADX:${regime.adx.toFixed(0)}) — MA крест слабее → -10%`;
+  }
+
+  // 5. Сильный тренд подтверждает S5 и S4
+  if (regime.isStrongTrend) {
+    if (sig.strategy.includes('RSI Диверг') || sig.strategy.includes('MA20')) {
+      sig.confidence = Math.min(sig.confidence + 7, 100);
+      sig.regimeNote = (sig.regimeNote || '') + ` 💪 Сильный тренд подтверждает → +7%`;
+    }
   }
 
   return sig;
@@ -1892,7 +1923,7 @@ async function runStrategies(instId, coinData, asianSession) {
           } else if (!isSideways && dir === 'short' && trend4h === 'bullish') {
             console.log(`[S2 BLOCK] ${instId} — шорт против бычьего 4H тренда`);
           } else {
-            let conf = Math.max(ml, ms) * 20;
+            let conf = Math.max(ml, ms) * 14; // базовый 56-70 вместо 80-100
             if (dir==='long'  && rsi < 35) conf = Math.min(conf+10, 100);
             if (dir==='short' && rsi > 65) conf = Math.min(conf+10, 100);
             if (isSideways) conf = Math.min(conf+10, 100);
@@ -1970,7 +2001,7 @@ if (k1h.length >= 55) {
 
   if ((iL || iS) && (freshCross || priceNearMA)) {
     const dir = iL ? 'long' : 'short';
-    let conf  = 68;
+    let conf  = 58; // снижаем базовый с 68 до 58
 
     // Бонусы за подтверждения
     if (freshCross)  conf += 8;  // свежий крест
@@ -2040,9 +2071,9 @@ if (k1h.length >= 55) {
       let fundingConf  = 0;
       let fundingLabel = '';
 
-      if (fundingAbs >= 0.05)      { fundingConf = 85; fundingLabel = 'ЭКСТРЕМАЛЬНЫЙ'; }
-      else if (fundingAbs >= 0.02) { fundingConf = 78; fundingLabel = 'СИЛЬНЫЙ'; }
-      else if (fundingAbs >= 0.01) { fundingConf = 70; fundingLabel = 'УМЕРЕННЫЙ'; }
+      if (fundingAbs >= 0.05)      { fundingConf = 72; fundingLabel = 'ЭКСТРЕМАЛЬНЫЙ'; }
+      else if (fundingAbs >= 0.02) { fundingConf = 62; fundingLabel = 'СИЛЬНЫЙ'; }
+      else if (fundingAbs >= 0.01) { fundingConf = 55; fundingLabel = 'УМЕРЕННЫЙ'; }
 
       if (fundingConf === 0) {
         // funding нейтральный — пропускаем
@@ -2098,7 +2129,7 @@ if (k1h.length >= 55) {
           const dir = engulfing.direction === 'bullish' ? 'long' : 'short';
           signals.push({
             strategy: '7️⃣ Поглощение на объёме (15m)', instId, direction: dir,
-            signal: dir === 'long' ? '🟢 LONG' : '🔴 SHORT', price, confidence: 72,
+            signal: dir === 'long' ? '🟢 LONG' : '🔴 SHORT', price, confidence: 58,
             metrics: `${engulfing.desc} | Vol:$${(lastVol/1e6).toFixed(2)}M (${(lastVol/avgVol).toFixed(1)}x среднего)`,
             ...calcSLTP(price, dir, '7️⃣ Поглощение на объёме (15m)', atr15m)
           });
@@ -2121,7 +2152,7 @@ if (k1h.length >= 55) {
           signals.push({
             strategy:  '8️⃣ Basis Farming (1h)',
             instId, direction: 'short',
-            signal:    '🔴 SHORT', price, confidence: 75,
+            signal:    '🔴 SHORT', price, confidence: 60,
             metrics:   `Basis:+${basis.toFixed(3)}% (фьюч дороже спота) RSI:${rsi1h}`,
             ...calcSLTP(price, 'short', '8️⃣ Basis Farming (1h)', atr)
           });
@@ -2132,7 +2163,7 @@ if (k1h.length >= 55) {
           signals.push({
             strategy:  '8️⃣ Basis Farming (1h)',
             instId, direction: 'long',
-            signal:    '🟢 LONG', price, confidence: 75,
+            signal:    '🟢 LONG', price, confidence: 60,
             metrics:   `Basis:${basis.toFixed(3)}% (фьюч дешевле спота) RSI:${rsi1h}`,
             ...calcSLTP(price, 'long', '8️⃣ Basis Farming (1h)', atr)
           });

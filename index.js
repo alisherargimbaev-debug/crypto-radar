@@ -43,8 +43,7 @@ const COIN_SECTORS = {
   MATIC: 'layer2', ARB: 'layer2', OP: 'layer2',
   LINK: 'defi', AAVE: 'defi', INJ: 'defi',
   DOGE: 'meme', SHIB: 'meme', PEPE: 'meme', WIF: 'meme',
-  LTC: 'payments', XRP: 'payments', XLM: 'payments',
-  BTC: 'store_of_value', BCH: 'payments',
+  LTC: 'payments', XRP: 'payments', XLM: 'payments', BCH: 'payments',
 };
 
 // Дневной PnL трекер
@@ -212,28 +211,36 @@ async function handleTelegramCommand(text, chatId) {
     const wr     = today.length ? Math.round(wins.length / today.length * 100) : 0;
     const pnl    = today.reduce((a, t) => a + (t.pnl || 0), 0);
     const sigs   = store.signalLog.filter(s => s.ts >= since).length;
-    const allW   = store.tradeHistory.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
-    const allWR  = store.tradeHistory.length ? Math.round(allW.length / store.tradeHistory.length * 100) : 0;
-    // Sharpe Ratio
-    const returns = store.tradeHistory.map(t => t.pnl || 0);
+    // Читаем из Supabase — не из памяти (память обнуляется при рестарте)
+    const { data: dbTrades } = await supabase
+      .from('trades')
+      .select('pnl,outcome')
+      .order('closed_at', { ascending: true })
+      .limit(500);
+    const allDbTrades = dbTrades || [];
+    const allW   = allDbTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const allWR  = allDbTrades.length ? Math.round(allW.length / allDbTrades.length * 100) : 0;
+
+    // Sharpe Ratio из реальных данных
+    const returns = allDbTrades.map(t => parseFloat(t.pnl) || 0);
     const meanR   = returns.length ? returns.reduce((a,b)=>a+b,0)/returns.length : 0;
     const stdR    = returns.length > 1 ? Math.sqrt(returns.reduce((a,b)=>a+(b-meanR)**2,0)/returns.length) : 1;
     const sharpe  = stdR > 0 ? (meanR / stdR * Math.sqrt(252)).toFixed(2) : '—';
     // Max Drawdown
     let peak = 0, cumPnl = 0, maxDD = 0;
-    for (const t of store.tradeHistory) {
-      cumPnl += t.pnl || 0;
+    for (const t of allDbTrades) {
+      cumPnl += parseFloat(t.pnl) || 0;
       if (cumPnl > peak) peak = cumPnl;
       const dd = peak - cumPnl;
       if (dd > maxDD) maxDD = dd;
     }
     // Profit Factor
-    const grossWin  = store.tradeHistory.filter(t=>t.pnl>0).reduce((a,t)=>a+t.pnl,0);
-    const grossLoss = Math.abs(store.tradeHistory.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0));
+    const grossWin  = allDbTrades.filter(t=>parseFloat(t.pnl)>0).reduce((a,t)=>a+parseFloat(t.pnl),0);
+    const grossLoss = Math.abs(allDbTrades.filter(t=>parseFloat(t.pnl)<0).reduce((a,t)=>a+parseFloat(t.pnl),0));
     const pf = grossLoss > 0 ? (grossWin/grossLoss).toFixed(2) : '∞';
     // Consecutive losses
     let maxConsecLoss = 0, consecLoss = 0;
-    for (const t of store.tradeHistory) {
+    for (const t of allDbTrades) {
       if (t.outcome === 'sl') { consecLoss++; maxConsecLoss = Math.max(maxConsecLoss, consecLoss); }
       else consecLoss = 0;
     }
@@ -2031,9 +2038,9 @@ if (k1h.length >= 55) {
       const rsiNow = calcRSI(k1h, 14);
       const rsiPrev= calcRSI(k1h.slice(0, -5), 14);
 
-      const priceNewLow  = lows[lows.length-1] < Math.min(...lows.slice(-10, -1));
+      const priceNewLow  = lows[lows.length-1] < Math.min(...lows.slice(-20, -1)); // 20 свечей вместо 10 — меньше ложных дивергенций
       const rsiHigher    = rsiNow > rsiPrev + 3;
-      const priceNewHigh = closes[closes.length-1] > Math.max(...closes.slice(-10, -1));
+      const priceNewHigh = closes[closes.length-1] > Math.max(...closes.slice(-20, -1)); // 20 свечей вместо 10
       const rsiLower     = rsiNow < rsiPrev - 3;
 
       if (priceNewLow && rsiHigher && rsiNow < 42) {
@@ -2106,13 +2113,22 @@ if (k1h.length >= 55) {
         if (macd1h.hist < 0) conf = Math.min(conf + 8, 100); // MACD подтверждает
         if (rsi1h > 65)      conf = Math.min(conf + 5, 100); // перекуплен
 
-        signals.push({
-          strategy:  '6️⃣ Funding Extreme (1h)',
-          instId, direction: 'short',
-          signal:    '🔴 SHORT', price, confidence: conf,
-          metrics:   `Funding:${(funding*100).toFixed(4)}% [${fundingLabel}] RSI:${rsi1h} MACD:${macd1h.hist < 0 ? '▼' : '▲'}`,
-          ...calcSLTP(price, 'short', '6️⃣ Funding Extreme (1h)', atr1h)
-        });
+        // BTC фильтр — не берём шорт если BTC сильно растёт
+        const btcTickerS = await httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SWAP');
+        const btcPriceS  = btcTickerS?.data?.[0] ? parseFloat(btcTickerS.data[0].last) : 0;
+        const btcOpenS   = btcTickerS?.data?.[0] ? parseFloat(btcTickerS.data[0].open24h) : 0;
+        const btcChangeS = btcOpenS ? (btcPriceS - btcOpenS) / btcOpenS * 100 : 0;
+        if (btcChangeS > 2.0) {
+          console.log(`[S6 SKIP] ${instId} — BTC растёт ${btcChangeS.toFixed(1)}% при шорте`);
+        } else {
+          signals.push({
+            strategy:  '6️⃣ Funding Extreme (1h)',
+            instId, direction: 'short',
+            signal:    '🔴 SHORT', price, confidence: conf,
+            metrics:   `Funding:${(funding*100).toFixed(4)}% [${fundingLabel}] RSI:${rsi1h} BTC:${btcChangeS.toFixed(1)}%`,
+            ...calcSLTP(price, 'short', '6️⃣ Funding Extreme (1h)', atr1h)
+          });
+        }
       }
     }
 
@@ -2181,7 +2197,7 @@ if (k1h.length >= 55) {
         const atr          = calcATR(k1h, 14);
 
         // Сильное контанго → шортисты будут закрываться → SHORT
-        if (basis > 0.3 && rsi1h > 55 && atr) {
+        if (basis > 0.8 && rsi1h > 55 && atr) { // порог 0.3%→0.8% убираем шум
           signals.push({
             strategy:  '8️⃣ Basis Farming (1h)',
             instId, direction: 'short',
@@ -2192,7 +2208,7 @@ if (k1h.length >= 55) {
         }
 
         // Сильная бэквордация → лонгисты будут закрываться → LONG
-        if (basis < -0.3 && rsi1h < 45 && atr) {
+        if (basis < -0.8 && rsi1h < 45 && atr) { // порог 0.3%→0.8% убираем шум
           signals.push({
             strategy:  '8️⃣ Basis Farming (1h)',
             instId, direction: 'long',
@@ -2700,6 +2716,10 @@ if (alreadyOpen) {
       let signals = await runStrategies(coin.instId, coin, asianSession);
       if (!signals.length) continue;
 
+      // Вычисляем один раз ДО цикла — не повторяем для каждого сигнала
+      const regime = await getMarketRegime(coin.instId);
+      const lsr    = await getLongShortRatio(coin.symbol);
+
       const filtered = [];
       for (let sig of signals) {
         sig = applyFearGreed(sig, fng);
@@ -2718,9 +2738,7 @@ if (alreadyOpen) {
         sig = applyChartPatterns(sig, await getOKXKlinesCached(coin.instId, '1H', 20));
         sig = applyMacroFilter(sig, macroEvent);
         sig = applyETFFlow(sig, etfFlow);
-        const regime = await getMarketRegime(coin.instId);
         sig = applyMarketRegime(sig, regime);
-        const lsr = await getLongShortRatio(coin.symbol);
         sig = applyLongShortRatio(sig, lsr);
         sig = applyBTCDominance(sig, btcDom, coin.symbol);
         sig = applyCoinbasePremium(sig, cbPremium);
@@ -2880,6 +2898,9 @@ async function checkTrailingStop() {
           trade.trailingActive = true;
           trade.trailingHigh   = currentPrice;
           console.log(`[TRAIL] ${trade.instId} — SL → безубыток $${newSL}`);
+          supabase.from('open_trades').update({ sl: newSL, trailing_active: true })
+            .eq('ts', trade.ts).eq('inst_id', trade.instId)
+            .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
           await sendTelegram(
             `🔄 TRAILING STOP — ${trade.symbol}/USDT\n` +
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2901,6 +2922,9 @@ async function checkTrailingStop() {
           const oldSL = trade.sl;
           trade.sl    = trailSL;
           console.log(`[TRAIL] ${trade.instId} — SL поднят $${oldSL} → $${trailSL} (цена $${currentPrice.toFixed(4)})`);
+          supabase.from('open_trades').update({ sl: trailSL })
+            .eq('ts', trade.ts).eq('inst_id', trade.instId)
+            .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
         }
       }
 
@@ -2915,6 +2939,9 @@ async function checkTrailingStop() {
           trade.trailingActive = true;
           trade.trailingLow    = currentPrice;
           console.log(`[TRAIL] ${trade.instId} SHORT — SL → безубыток $${newSL}`);
+          supabase.from('open_trades').update({ sl: newSL, trailing_active: true })
+            .eq('ts', trade.ts).eq('inst_id', trade.instId)
+            .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
           await sendTelegram(
             `🔄 TRAILING STOP — ${trade.symbol}/USDT\n` +
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2936,6 +2963,9 @@ async function checkTrailingStop() {
           const oldSL = trade.sl;
           trade.sl    = trailSL;
           console.log(`[TRAIL] ${trade.instId} SHORT — SL опущен $${oldSL} → $${trailSL}`);
+          supabase.from('open_trades').update({ sl: trailSL })
+            .eq('ts', trade.ts).eq('inst_id', trade.instId)
+            .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
         }
       }
     }
@@ -3096,6 +3126,7 @@ async function checkOutcomes() {
         ? (exitPrice - entryPrice) / entryPrice * 100
         : (entryPrice - exitPrice) / entryPrice * 100;
       trade.pnl = parseFloat(trade.pnl.toFixed(2));
+      updateDailyPnl(trade.pnl || 0);
       closed.push(trade);
       await sendTelegram(buildOutcomeAlert(trade));
     } else { stillOpen.push(trade); }

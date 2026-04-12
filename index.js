@@ -22,6 +22,7 @@ const STRATEGY_SL = {
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '9️⃣ Pullback в тренде (15m)': { sl: 1.5, tp1: 3.0, tp2: 4.5 },
+  '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 2.4, tp2: 3.6 },
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -114,6 +115,7 @@ const STRATEGY_META = {
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '9️⃣ Pullback в тренде (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '🔟 4H Range Breakout (5m)':  { color: '#34d399', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -2396,6 +2398,80 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S9 error:', e.message); }
 
+    // S10: 4H Range Breakout (5m)
+    // Логика: берём High/Low первой 4H свечи дня,
+    // ждём пробоя + возврата, входим против пробоя
+    try {
+      const k4h_s10 = await getOKXKlinesCached(instId, '4H', 8);  // 32 часа истории
+      const k5m_s10 = await getOKXKlinesCached(instId, '5m', 96); // ~8 часов 5m свечей
+
+      if (k4h_s10.length >= 2 && k5m_s10.length >= 10) {
+        // Первая 4H свеча текущего UTC-дня (уже закрытая)
+        const nowUTC = Date.now();
+        const dayStart = nowUTC - (nowUTC % (24 * 60 * 60 * 1000));
+
+        // Ищем первую завершённую 4H свечу за сегодня
+        const todayCandles = k4h_s10.filter(c => c.ts >= dayStart && c.ts < nowUTC - 4*60*60*1000);
+        if (!todayCandles.length) throw new Error('Нет 4H свечи за сегодня');
+
+        const rangeCandle = todayCandles[0];
+        const rangeHigh   = rangeCandle.high;
+        const rangeLow    = rangeCandle.low;
+        const rangeSize   = rangeHigh - rangeLow;
+
+        // Минимальный размер диапазона — ATR * 0.5
+        if (rangeSize < atr15m * 0.5) {
+          console.log(`[S10 SKIP] ${instId} — диапазон слишком маленький`);
+        } else {
+          // Ищем паттерн пробоя + возврата на последних 5m свечах
+          const recentK5m = k5m_s10.slice(-30); // последние 2.5 часа
+
+          for (let j = 1; j < recentK5m.length; j++) {
+            const prev = recentK5m[j - 1];
+            const curr = recentK5m[j];
+
+            // Пробой ВНИЗ + возврат → LONG
+            if (prev.close < rangeLow && curr.close >= rangeLow) {
+              const slPrice  = (prev.low * 0.999).toFixed(4);  // ниже минимума пробоя
+              const slDist   = Math.abs(curr.close - parseFloat(slPrice));
+              const tp1Price = (curr.close + slDist * 2).toFixed(4);
+              const tp2Price = (curr.close + slDist * 3).toFixed(4);
+              const conf     = 68;
+
+              signals.push({
+                strategy:  '🔟 4H Range Breakout (5m)',
+                instId,    direction: 'long',
+                signal:    '🟢 LONG', price,
+                confidence: conf,
+                metrics:   `4H диапазон: $${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Пробой вниз + возврат | SL: $${slPrice}`,
+                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
+              });
+              break; // один сигнал за проход
+            }
+
+            // Пробой ВВЕРХ + возврат → SHORT
+            if (prev.close > rangeHigh && curr.close <= rangeHigh) {
+              const slPrice  = (prev.high * 1.001).toFixed(4); // выше максимума пробоя
+              const slDist   = Math.abs(parseFloat(slPrice) - curr.close);
+              const tp1Price = (curr.close - slDist * 2).toFixed(4);
+              const tp2Price = (curr.close - slDist * 3).toFixed(4);
+              const conf     = 68;
+
+              signals.push({
+                strategy:  '🔟 4H Range Breakout (5m)',
+                instId,    direction: 'short',
+                signal:    '🔴 SHORT', price,
+                confidence: conf,
+                metrics:   `4H диапазон: $${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Пробой вверх + возврат | SL: $${slPrice}`,
+                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
+              });
+              break;
+            }
+          }
+        }
+      }
+    } catch(e) { console.error('S10 error:', e.message); }
+
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
 }
@@ -2664,6 +2740,7 @@ async function runBacktest(coins, limit = 300) {
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S10 4H Range':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   //'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
 };
 
@@ -2689,6 +2766,7 @@ if (klines1h.length < 60) continue;
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
   { name:'S9 Pullback',        fn: btS9 },
+  { name:'S10 4H Range',       fn: btS10 },
   //{ name:'S9 Pairs Trading',   fn: btS9 },
 ];
 
@@ -2896,6 +2974,40 @@ function btS9(klines, i) {
   return null;
 }
 
+
+function btS10(klines, i) {
+  // Бэктест S10: 4H Range Breakout (симуляция на 1H)
+  // Каждые 4 свечи = один 4H диапазон, ищем пробой + возврат
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 10) return null;
+
+  // "4H свеча" = блок из 4 последних 1H свечей до текущей
+  const block = slice.slice(-9, -5); // 4 свечи назад = "вчерашний" диапазон
+  if (block.length < 4) return null;
+
+  const rangeHigh = Math.max(...block.map(c => c.high));
+  const rangeLow  = Math.min(...block.map(c => c.low));
+  const rangeSize = rangeHigh - rangeLow;
+  if (rangeSize <= 0) return null;
+
+  // Последние 4 свечи = текущий "день"
+  const today = slice.slice(-4);
+  if (today.length < 2) return null;
+
+  // Ищем паттерн: пробой + возврат
+  for (let j = 1; j < today.length; j++) {
+    const prev = today[j - 1];
+    const curr = today[j];
+
+    // Пробой вниз + возврат → LONG
+    if (prev.close < rangeLow && curr.close >= rangeLow) return 'long';
+
+    // Пробой вверх + возврат → SHORT
+    if (prev.close > rangeHigh && curr.close <= rangeHigh) return 'short';
+  }
+
+  return null;
+}
 
 app.get('/', async (req, res) => {
   try {

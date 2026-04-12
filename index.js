@@ -856,11 +856,11 @@ function applySessionFilter(sig, session) {
     sig.confidence = Math.min(sig.confidence + 5, 100);
     sig.sessionNote = `🇺🇸🇪🇺 ${session} → +5%`;
   } else if (session === 'Asia') {
-    sig.confidence = Math.max(sig.confidence - 12, 0);
-    sig.sessionNote = '🌏 Азия (слабый объём) → -12%';
+    sig.confidence = Math.max(sig.confidence - 20, 0);
+    sig.sessionNote = '🌏 Азия (слабый объём) → -20%';
   } else {
-    sig.confidence = Math.max(sig.confidence - 5, 0);
-    sig.sessionNote = '🌙 Нерабочие часы → -5%';
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.sessionNote = '🌙 Нерабочие часы → -10%';
   }
   return sig;
 }
@@ -1742,33 +1742,28 @@ async function applyMA200(sig, instId) {
 
     // Зона "облизывания" — ±1.5% от MA200 — не торгуем
     if (distPct < 1.5) {
-      sig.confidence = Math.max(sig.confidence - 15, 0);
-      sig.ma200Note  = `⚠️ Цена у MA200 ($${ma200.toFixed(2)}) ±${distPct.toFixed(1)}% — зона неопределённости → -15%`;
+      sig.confidence = Math.max(sig.confidence - 25, 0);
+      sig.ma200Note  = `⚠️ Цена у MA200 ($${ma200.toFixed(2)}) ±${distPct.toFixed(1)}% — зона неопределённости → -25%`;
       return sig;
     }
 
     if (sig.direction === 'long') {
       if (price > ma200) {
-        sig.confidence = Math.min(sig.confidence + 10, 100);
-        sig.ma200Note  = `📈 Выше MA200 ($${ma200.toFixed(2)}) → лонг по тренду +10%`;
+        sig.confidence = Math.min(sig.confidence + 8, 100);
+        sig.ma200Note  = `📈 Выше MA200 ($${ma200.toFixed(2)}) → лонг по тренду +8%`;
       } else {
-        // Ниже MA200 — лонг против тренда
-        // S10/S9 — меньший штраф (они работают с откатами)
-        const isRangeStrat = sig.strategy.includes('4H Range') || sig.strategy.includes('Pullback');
-        const penalty = isRangeStrat ? 10 : 20;
-        sig.confidence = Math.max(sig.confidence - penalty, 0);
-        sig.ma200Note  = `⚠️ Ниже MA200 ($${ma200.toFixed(2)}) — лонг против тренда → -${penalty}%`;
+        // Ниже MA200 — лонг против глобального тренда — блокируем
+        sig.confidence = Math.max(sig.confidence - 25, 0);
+        sig.ma200Note  = `🚫 Ниже MA200 ($${ma200.toFixed(2)}) — лонг против тренда → -25%`;
       }
     } else {
       if (price < ma200) {
         sig.confidence = Math.min(sig.confidence + 15, 100);
         sig.ma200Note  = `📉 Ниже MA200 ($${ma200.toFixed(2)}) → шорт по тренду +15%`;
       } else {
-        // Выше MA200 — шорт против тренда
-        const isRangeStrat = sig.strategy.includes('4H Range') || sig.strategy.includes('Pullback');
-        const penalty = isRangeStrat ? 10 : 20;
-        sig.confidence = Math.max(sig.confidence - penalty, 0);
-        sig.ma200Note  = `⚠️ Выше MA200 ($${ma200.toFixed(2)}) — шорт против тренда → -${penalty}%`;
+        // Выше MA200 — шорт против глобального тренда — блокируем
+        sig.confidence = Math.max(sig.confidence - 25, 0);
+        sig.ma200Note  = `🚫 Выше MA200 ($${ma200.toFixed(2)}) — шорт против тренда → -25%`;
       }
     }
   } catch(e) { console.error('applyMA200 error:', e.message); }
@@ -2981,34 +2976,60 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // Бэктест S10: 4H Range Breakout (симуляция на 1H)
-  // Каждые 4 свечи = один 4H диапазон, ищем пробой + возврат
+  // Бэктест S10: 4H Range Breakout (строгая версия)
   const slice = klines.slice(0, i+1);
-  if (slice.length < 10) return null;
+  if (slice.length < 20) return null;
 
-  // "4H свеча" = блок из 4 последних 1H свечей до текущей
-  const block = slice.slice(-9, -5); // 4 свечи назад = "вчерашний" диапазон
+  // "4H диапазон" = первые 4 свечи из предыдущих 8
+  const block = slice.slice(-12, -8);
   if (block.length < 4) return null;
 
   const rangeHigh = Math.max(...block.map(c => c.high));
   const rangeLow  = Math.min(...block.map(c => c.low));
   const rangeSize = rangeHigh - rangeLow;
-  if (rangeSize <= 0) return null;
 
-  // Последние 4 свечи = текущий "день"
-  const today = slice.slice(-4);
-  if (today.length < 2) return null;
+  // Фильтр 1: диапазон должен быть значимым (> 0.5% от цены)
+  const price = slice[slice.length-1].close;
+  if (rangeSize / price < 0.005) return null;
 
-  // Ищем паттерн: пробой + возврат
+  // Фильтр 2: диапазон не должен быть слишком большим (< 5%)
+  if (rangeSize / price > 0.05) return null;
+
+  // ATR для оценки нормальной волатильности
+  const atr = calcATR(slice, 14);
+  // Фильтр 3: размер диапазона близок к ATR (0.5x - 3x)
+  if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
+
+  // "Текущий день" = последние 6 свечей
+  const today = slice.slice(-6);
+
+  // Ищем: пробой закрытием + возврат закрытием
   for (let j = 1; j < today.length; j++) {
     const prev = today[j - 1];
     const curr = today[j];
 
     // Пробой вниз + возврат → LONG
-    if (prev.close < rangeLow && curr.close >= rangeLow) return 'long';
+    if (prev.close < rangeLow && curr.close > rangeLow) {
+      // Фильтр 4: пробой значимый (> 0.2% за границу)
+      const breakDepth = (rangeLow - prev.close) / rangeLow;
+      if (breakDepth < 0.002) continue;
+      // Фильтр 5: возврат уверенный (свеча закрылась выше rangeLow)
+      if (curr.close < rangeLow * 1.001) continue;
+      // Фильтр 6: RSI не экстремальный
+      const rsi = calcRSI(slice, 14);
+      if (rsi < 20 || rsi > 80) continue;
+      return 'long';
+    }
 
     // Пробой вверх + возврат → SHORT
-    if (prev.close > rangeHigh && curr.close <= rangeHigh) return 'short';
+    if (prev.close > rangeHigh && curr.close < rangeHigh) {
+      const breakDepth = (prev.close - rangeHigh) / rangeHigh;
+      if (breakDepth < 0.002) continue;
+      if (curr.close > rangeHigh * 0.999) continue;
+      const rsi = calcRSI(slice, 14);
+      if (rsi < 20 || rsi > 80) continue;
+      return 'short';
+    }
   }
 
   return null;

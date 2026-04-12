@@ -14,7 +14,7 @@ const CHAT_ID        = process.env.CHAT_ID;
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
-  '2️⃣ Liquidity Bounce (1h)':       { sl: 2.5, tp1: 5.0, tp2: 7.5 },
+  '2️⃣ Liquidity Bounce (1h)':       { sl: 1.8, tp1: 5.4, tp2: 9.0 }, // RR 1:3 для безубытка при 25% WR
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 2.0, tp2: 3.0 },
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 4.0, tp2: 6.0 },
@@ -2840,49 +2840,50 @@ function btS1(klines, i) {
 }
 
 function btS2(klines, i) {
-  // Синхронизирован с live S2: обе стороны, строгие фильтры
+  // S2 улучшенный: направление по MA200
+  // Медвежий рынок (ниже MA200) → только шорты (50% WR наблюдалось)
+  // Бычий рынок (выше MA200)   → только лонги
+  // Боковик                    → оба направления
   if (i < 55) return null;
   const slice = klines.slice(0, i+1);
   const last  = slice[slice.length-1];
   const prev  = slice[slice.length-2];
   const pc    = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
   const rsi   = calcRSI(slice, 14);
+  const price = last.close;
 
-  // Тренд через MA20/MA50
+  // MA200 глобальный тренд
+  const ma200     = slice.length >= 200 ? calcSMA(slice, 200) : null;
+  const bearMkt   = ma200 ? price < ma200 * 0.99 : false;
+  const bullMkt   = ma200 ? price > ma200 * 1.01 : false;
+
+  // Локальный тренд
   const ma20 = calcSMA(slice, 20);
   const ma50 = calcSMA(slice, 50);
-  const trendStrength = ma50 ? Math.abs(ma20 - ma50) / ma50 * 100 : 0;
-  const isSideways   = trendStrength < 1.0;
-  const trend4h      = ma20 > ma50 ? 'bullish' : 'bearish';
+  const trendStr = ma50 ? Math.abs(ma20 - ma50) / ma50 * 100 : 0;
+  const isSideways = trendStr < 1.0;
 
-  // ADX — сила тренда
-  const adx = calcADX(slice, 14);
-  const strongTrend = adx > 30;
+  // Объём подтверждение (2.5x)
+  const avgVol = slice.slice(-11,-1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
+  if (last.quoteVolume < avgVol * 2.5) return null;
 
-  // Объём — подтверждение разворота
-  const avgVol  = slice.slice(-11, -1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
-  const lastVol = last.quoteVolume;
-  const volOk   = lastVol > avgVol * 2.0; // 2x подтверждение
-
-  if (!volOk) return null;
-
-  // ЛОНГ: сильное падение + RSI перепродан + объём
-  if (pc <= -2.5 && rsi < 35) {
-    if (strongTrend && trend4h === 'bearish') return null; // против сильного тренда — пропускаем
-    return 'long';
+  // ШОРТ: сильный рост + RSI перекуплен → только не в бычьем рынке
+  if (pc >= 2.5 && rsi > 68) {
+    if (bullMkt && !isSideways) return null;
+    return 'short';
   }
 
-  // ШОРТ: сильный рост + RSI перекуплен + объём
-  if (pc >= 2.5 && rsi > 65) {
-    if (strongTrend && trend4h === 'bullish') return null; // против сильного тренда — пропускаем
-    return 'short';
+  // ЛОНГ: сильное падение + RSI перепродан → только не в медвежьем рынке
+  if (pc <= -2.5 && rsi < 32) {
+    if (bearMkt) return null;
+    return 'long';
   }
 
   return null;
 }
 
 function btS4(klines, i) {
-  // Синхронизирован с live S4: MA200 фильтр + ADX
+  // S4 улучшенный: MA200 фильтр + ADX
   const slice = klines.slice(0, i+1);
   if (slice.length < 55) return null;
 
@@ -2893,21 +2894,21 @@ function btS4(klines, i) {
   const ma50  = calcSMA(slice, 50);
   const price = slice[slice.length-1].close;
 
-  // MA200 фильтр — глобальный тренд
-  const ma200 = slice.length >= 200 ? calcSMA(slice, 200) : null;
+  // MA200 — только по тренду
+  const ma200      = slice.length >= 200 ? calcSMA(slice, 200) : null;
   const aboveMA200 = ma200 ? price > ma200 : true;
   const belowMA200 = ma200 ? price < ma200 : true;
 
-  // ADX — минимальный тренд
+  // ADX минимальный тренд
   const adx = calcADX(slice, 14);
-  if (adx < 18) return null;
+  if (adx < 15) return null;
 
   const maDist      = Math.abs(ma20 - ma50) / ma50 * 100;
   const freshCross  = maDist < 0.5;
   const priceNearMA = Math.abs(price - ma20) / ma20 * 100 < 1.5;
   if (!freshCross && !priceNearMA) return null;
 
-  // Только по тренду MA200
+  // Только по MA200 тренду
   if (cross==='bullish' && rsi<55 && rsi>30 && macd.hist>0 && aboveMA200) return 'long';
   if (cross==='bearish' && rsi>45 && rsi<70 && macd.hist<0 && belowMA200) return 'short';
   return null;
@@ -2944,37 +2945,15 @@ function btS5(klines, i) {
 } */
 
 function btS7(klines, i) {
-  // Синхронизирован с live S7: объём 3.5x, RSI, тренд 1H
   const slice = klines.slice(0, i+1);
-  if (slice.length < 15) return null;
+  if (slice.length < 10) return null;
   const last = slice[slice.length-1], prev = slice[slice.length-2];
-
-  // Паттерн поглощения
   const engulfL = last.close>last.open && prev.close<prev.open && last.open<=prev.close && last.close>=prev.open;
   const engulfS = last.close<last.open && prev.close>prev.open && last.open>=prev.close && last.close<=prev.open;
   if (!engulfL && !engulfS) return null;
-
-  // Объём 3.5x
-  const avgVol = slice.slice(-11,-1).reduce((a,c)=>a+c.quoteVolume,0)/10;
-  if (last.quoteVolume < avgVol * 3.5) return null;
-
-  const dir = engulfL ? 'long' : 'short';
-
-  // RSI фильтр
-  const rsi = calcRSI(slice, 14);
-  const rsiOk = (dir === 'long'  && rsi < 65 && rsi > 20) ||
-                (dir === 'short' && rsi > 35 && rsi < 80);
-  if (!rsiOk) return null;
-
-  // Тренд 1H (MA20/MA50)
-  const ma20 = calcSMA(slice, 20);
-  const ma50 = slice.length >= 50 ? calcSMA(slice, 50) : ma20;
-  const trend = ma20 > ma50 ? 'bullish' : 'bearish';
-  const trendOk = (dir === 'long' && trend === 'bullish') ||
-                  (dir === 'short' && trend === 'bearish');
-  if (!trendOk) return null;
-
-  return dir;
+  const avgVol = slice.slice(-10,-1).reduce((a,c)=>a+c.quoteVolume,0)/9;
+  if (last.quoteVolume < avgVol*2.5) return null;
+  return engulfL ? 'long' : 'short';
 }
 function btS9(klines, i) {
   // Бэктест S9: Pullback в тренде (строгая версия для 1H)
@@ -3044,12 +3023,12 @@ function btS10(klines, i) {
   const rangeLow  = Math.min(...block.map(c => c.low));
   const rangeSize = rangeHigh - rangeLow;
 
-  // Фильтр 1: диапазон должен быть значимым (> 0.5% от цены)
+  // Фильтр 1: диапазон должен быть значимым (> 0.8% от цены) — ужесточён
   const price = slice[slice.length-1].close;
-  if (rangeSize / price < 0.005) return null;
+  if (rangeSize / price < 0.008) return null;
 
-  // Фильтр 2: диапазон не должен быть слишком большим (< 5%)
-  if (rangeSize / price > 0.05) return null;
+  // Фильтр 2: диапазон не должен быть слишком большим (< 4%)
+  if (rangeSize / price > 0.04) return null;
 
   // ATR для оценки нормальной волатильности
   const atr = calcATR(slice, 14);
@@ -3066,9 +3045,9 @@ function btS10(klines, i) {
 
     // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
-      // Фильтр 4: пробой значимый (> 0.2% за границу)
+      // Фильтр 4: пробой значимый (> 0.4% за границу) — ужесточён
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.002) continue;
+      if (breakDepth < 0.004) continue;
       // Фильтр 5: возврат уверенный (свеча закрылась выше rangeLow)
       if (curr.close < rangeLow * 1.001) continue;
       // Фильтр 6: RSI не экстремальный
@@ -3080,7 +3059,7 @@ function btS10(klines, i) {
     // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.002) continue;
+      if (breakDepth < 0.004) continue;
       if (curr.close > rangeHigh * 0.999) continue;
       const rsi = calcRSI(slice, 14);
       if (rsi < 20 || rsi > 80) continue;

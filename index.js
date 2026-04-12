@@ -3172,7 +3172,18 @@ if (alreadyOpen) {
       const fngValue = fng?.value || 50;
 
       const best = filtered
-        .filter(s => s.confidence >= 80)
+        .filter(s => {
+        // Новые стратегии — порог ниже чтобы накопить данные
+        if (s.strategy.includes('4H Range'))       return s.confidence >= 70;
+        if (s.strategy.includes('Pullback'))       return s.confidence >= 72;
+        // Проверенные стратегии — стандартный порог
+        if (s.strategy.includes('RSI Диверг'))    return s.confidence >= 80;
+        if (s.strategy.includes('Funding'))       return s.confidence >= 78;
+        if (s.strategy.includes('Bounce'))        return s.confidence >= 80;
+        if (s.strategy.includes('MA20'))          return s.confidence >= 78;
+        if (s.strategy.includes('Поглощение'))    return s.confidence >= 78;
+        return s.confidence >= 80; // по умолчанию
+        })
         .filter(s => {
           // Extreme Fear (< 25) — блокируем LONG кроме S2 и S7
           if (fngValue < 25 && s.direction === 'long') {

@@ -2663,7 +2663,6 @@ async function runBacktest(coins, limit = 300) {
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-  'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   //'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
 };
 
@@ -2843,44 +2842,52 @@ function btS7(klines, i) {
   return engulfL ? 'long' : 'short';
 }
 function btS9(klines, i) {
-  // Бэктест S9: Pullback в тренде
+  // Бэктест S9: Pullback в тренде (упрощён для 1H)
   const slice = klines.slice(0, i+1);
-  if (slice.length < 50) return null;
+  if (slice.length < 30) return null;
 
-  const highs = slice.map(c => c.high);
-  const lows  = slice.map(c => c.low);
   const closes = slice.map(c => c.close);
+  const highs  = slice.map(c => c.high);
+  const lows   = slice.map(c => c.low);
 
-  // Структура рынка — последние 10 свечей
-  const recentHighs = highs.slice(-10);
-  const recentLows  = lows.slice(-10);
-  const lowerHigh = recentHighs[recentHighs.length-1] < recentHighs[recentHighs.length-4];
-  const lowerLow  = recentLows[recentLows.length-1]  < recentLows[recentLows.length-4];
-  const higherHigh = recentHighs[recentHighs.length-1] > recentHighs[recentHighs.length-4];
-  const higherLow  = recentLows[recentLows.length-1]  > recentLows[recentLows.length-4];
+  // Тренд: MA20 vs MA50
+  const ma20 = calcSMA(slice, 20);
+  const ma50 = slice.length >= 50 ? calcSMA(slice, 50) : ma20;
+
+  const downtrend = ma20 < ma50;
+  const uptrend   = ma20 > ma50;
 
   const rsi = calcRSI(slice, 14);
 
-  // Шорт: даунтренд + RSI перекуплен на откате
-  if (lowerHigh && lowerLow && rsi > 55) {
-    // Проверяем что последние 3 свечи формировали higher lows (откат)
-    const last3lows = recentLows.slice(-3);
-    const pullback = last3lows[1] > last3lows[0] && last3lows[2] > last3lows[1];
-    // Пробой — текущая свеча закрылась ниже предыдущего лоу
-    const breakdown = closes[closes.length-1] < lows[lows.length-2];
-    if (pullback && breakdown) return 'short';
+  // Последние 5 свечей
+  const last5highs = highs.slice(-5);
+  const last5lows  = lows.slice(-5);
+  const last5closes = closes.slice(-5);
+
+  // Шорт: MA даунтренд + откат вверх (2 higher lows) + разворот вниз
+  if (downtrend) {
+    // Откат: два последовательных higher lows
+    const pullbackUp = last5lows[3] > last5lows[2] && last5lows[4] > last5lows[3];
+    // Разворот: последняя свеча медвежья
+    const bearCandle = last5closes[4] < last5closes[3];
+    // RSI умеренный (не экстремальный)
+    const rsiOk = rsi > 40 && rsi < 75;
+    if (pullbackUp && bearCandle && rsiOk) return 'short';
   }
 
-  // Лонг: аптренд + RSI перепродан на откате
-  if (higherHigh && higherLow && rsi < 45) {
-    const last3highs = recentHighs.slice(-3);
-    const pullback = last3highs[1] < last3highs[0] && last3highs[2] < last3highs[1];
-    const breakout = closes[closes.length-1] > highs[highs.length-2];
-    if (pullback && breakout) return 'long';
+  // Лонг: MA аптренд + откат вниз (2 lower highs) + разворот вверх
+  if (uptrend) {
+    // Откат: два последовательных lower highs
+    const pullbackDown = last5highs[3] < last5highs[2] && last5highs[4] < last5highs[3];
+    // Разворот: последняя свеча бычья
+    const bullCandle = last5closes[4] > last5closes[3];
+    const rsiOk = rsi > 25 && rsi < 60;
+    if (pullbackDown && bullCandle && rsiOk) return 'long';
   }
 
   return null;
 }
+
 
 app.get('/', async (req, res) => {
   try {

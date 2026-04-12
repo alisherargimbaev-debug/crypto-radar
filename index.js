@@ -14,14 +14,14 @@ const CHAT_ID        = process.env.CHAT_ID;
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
-  '2️⃣ Liquidity Bounce (1h)':       { sl: 1.8, tp1: 5.4, tp2: 9.0 }, // RR 1:3 для безубытка при 25% WR
+  '2️⃣ Liquidity Bounce (1h)':       { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 2.0, tp2: 3.0 },
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
-  '9️⃣ Pullback в тренде (15m)': { sl: 1.5, tp1: 3.0, tp2: 4.5 },
+  '9️⃣ Pullback в тренде (15m)': { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 для надёжности
   '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 2.4, tp2: 3.6 },
 };
 
@@ -2840,77 +2840,61 @@ function btS1(klines, i) {
 }
 
 function btS2(klines, i) {
-  // S2 улучшенный: направление по MA200
-  // Медвежий рынок (ниже MA200) → только шорты (50% WR наблюдалось)
-  // Бычий рынок (выше MA200)   → только лонги
-  // Боковик                    → оба направления
   if (i < 55) return null;
   const slice = klines.slice(0, i+1);
   const last  = slice[slice.length-1];
   const prev  = slice[slice.length-2];
   const pc    = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
   const rsi   = calcRSI(slice, 14);
-  const price = last.close;
 
-  // MA200 глобальный тренд
-  const ma200     = slice.length >= 200 ? calcSMA(slice, 200) : null;
-  const bearMkt   = ma200 ? price < ma200 * 0.99 : false;
-  const bullMkt   = ma200 ? price > ma200 * 1.01 : false;
-
-  // Локальный тренд
+  // Проверяем боковик через MA
   const ma20 = calcSMA(slice, 20);
   const ma50 = calcSMA(slice, 50);
-  const trendStr = ma50 ? Math.abs(ma20 - ma50) / ma50 * 100 : 0;
-  const isSideways = trendStr < 1.0;
+  const trendStrength = ma50 ? Math.abs(ma20 - ma50) / ma50 * 100 : 0;
+  const isSideways = trendStrength < 1.0;
 
-  // Объём подтверждение (2.5x)
-  const avgVol = slice.slice(-11,-1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
-  if (last.quoteVolume < avgVol * 2.5) return null;
+  const vol = slice.slice(-5).reduce((a,c)=>a+c.quoteVolume,0);
+  const volMin = 10000000;
 
-  // ШОРТ: сильный рост + RSI перекуплен → только не в бычьем рынке
-  if (pc >= 2.5 && rsi > 68) {
-    if (bullMkt && !isSideways) return null;
-    return 'short';
-  }
-
-  // ЛОНГ: сильное падение + RSI перепродан → только не в медвежьем рынке
-  if (pc <= -2.5 && rsi < 32) {
-    if (bearMkt) return null;
-    return 'long';
-  }
-
+  if (pc <= -2.5 && vol >= volMin && rsi < 40 && isSideways) return 'long';
+  if (pc >= 2.5  && vol >= volMin && rsi > 60 && isSideways) return 'short';
   return null;
 }
 
 function btS4(klines, i) {
-  // S4 улучшенный: MA200 фильтр + ADX
+  // S4: MA cross + MA50 тренд + ADX (MA200 на 1H ненадёжна = только 8 дней)
   const slice = klines.slice(0, i+1);
   if (slice.length < 55) return null;
 
   const cross = calcMACross(slice, 20, 50);
+  if (cross === 'none') return null;
+
   const rsi   = calcRSI(slice, 14);
   const macd  = calcMACD(slice);
   const ma20  = calcSMA(slice, 20);
   const ma50  = calcSMA(slice, 50);
   const price = slice[slice.length-1].close;
 
-  // MA200 — только по тренду
-  const ma200      = slice.length >= 200 ? calcSMA(slice, 200) : null;
-  const aboveMA200 = ma200 ? price > ma200 : true;
-  const belowMA200 = ma200 ? price < ma200 : true;
-
-  // ADX минимальный тренд
+  // ADX — нужен тренд для MA cross
   const adx = calcADX(slice, 14);
   if (adx < 15) return null;
 
+  // Фильтр по MA50: торгуем только когда цена на правильной стороне
+  const aboveMA50 = price > ma50;
+  const belowMA50 = price < ma50;
+
+  // Свежесть кросса
   const maDist      = Math.abs(ma20 - ma50) / ma50 * 100;
   const freshCross  = maDist < 0.5;
   const priceNearMA = Math.abs(price - ma20) / ma20 * 100 < 1.5;
   if (!freshCross && !priceNearMA) return null;
 
-  // Только по MA200 тренду
-  if (cross==='bullish' && rsi<55 && rsi>30 && macd.hist>0 && aboveMA200) return 'long';
-  if (cross==='bearish' && rsi>45 && rsi<70 && macd.hist<0 && belowMA200) return 'short';
+  // MACD двойное подтверждение
+  const macdLong  = macd.hist > 0 && macd.macd > macd.signal;
+  const macdShort = macd.hist < 0 && macd.macd < macd.signal;
+
+  if (cross==='bullish' && rsi<55 && rsi>30 && macdLong  && aboveMA50) return 'long';
+  if (cross==='bearish' && rsi>45 && rsi<70 && macdShort && belowMA50) return 'short';
   return null;
 }
 
@@ -2982,27 +2966,27 @@ function btS9(klines, i) {
   const last6closes = closes.slice(-6);
   const last6vols   = vols.slice(-6);
 
-  // ШОРТ: даунтренд + 3 higher lows + медвежья свеча + объём + RSI
+  // ШОРТ: даунтренд + 3 higher lows + медвежья свеча + объём + RSI строже
   if (downtrend) {
     const pullback = last6lows[2] > last6lows[1] &&
                      last6lows[3] > last6lows[2] &&
                      last6lows[4] > last6lows[3];
     const bearCandle = last6closes[5] < last6closes[4] &&
-                       (last6closes[4] - last6closes[5]) > atr * 0.3;
-    const rsiOk = rsi > 50 && rsi < 70;
-    const volOk = last6vols[5] > avgVol * 1.2;
+                       (last6closes[4] - last6closes[5]) > atr * 0.4; // строже 0.3→0.4
+    const rsiOk = rsi > 52 && rsi < 68; // строже диапазон
+    const volOk = last6vols[5] > avgVol * 1.5; // строже 1.2→1.5
     if (pullback && bearCandle && rsiOk && volOk) return 'short';
   }
 
-  // ЛОНГ: аптренд + 3 lower highs + бычья свеча + объём + RSI
+  // ЛОНГ: аптренд + 3 lower highs + бычья свеча + объём + RSI строже
   if (uptrend) {
     const pullback = last6highs[2] < last6highs[1] &&
                      last6highs[3] < last6highs[2] &&
                      last6highs[4] < last6highs[3];
     const bullCandle = last6closes[5] > last6closes[4] &&
-                       (last6closes[5] - last6closes[4]) > atr * 0.3;
-    const rsiOk = rsi > 30 && rsi < 50;
-    const volOk = last6vols[5] > avgVol * 1.2;
+                       (last6closes[5] - last6closes[4]) > atr * 0.4;
+    const rsiOk = rsi > 32 && rsi < 48; // строже диапазон
+    const volOk = last6vols[5] > avgVol * 1.5;
     if (pullback && bullCandle && rsiOk && volOk) return 'long';
   }
 
@@ -3023,12 +3007,12 @@ function btS10(klines, i) {
   const rangeLow  = Math.min(...block.map(c => c.low));
   const rangeSize = rangeHigh - rangeLow;
 
-  // Фильтр 1: диапазон должен быть значимым (> 0.8% от цены) — ужесточён
+  // Фильтр 1: диапазон должен быть значимым (> 0.5% от цены)
   const price = slice[slice.length-1].close;
-  if (rangeSize / price < 0.008) return null;
+  if (rangeSize / price < 0.005) return null;
 
-  // Фильтр 2: диапазон не должен быть слишком большим (< 4%)
-  if (rangeSize / price > 0.04) return null;
+  // Фильтр 2: диапазон не должен быть слишком большим (< 5%)
+  if (rangeSize / price > 0.05) return null;
 
   // ATR для оценки нормальной волатильности
   const atr = calcATR(slice, 14);
@@ -3045,9 +3029,9 @@ function btS10(klines, i) {
 
     // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
-      // Фильтр 4: пробой значимый (> 0.4% за границу) — ужесточён
+      // Фильтр 4: пробой значимый (> 0.2% за границу)
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.004) continue;
+      if (breakDepth < 0.002) continue;
       // Фильтр 5: возврат уверенный (свеча закрылась выше rangeLow)
       if (curr.close < rangeLow * 1.001) continue;
       // Фильтр 6: RSI не экстремальный
@@ -3059,7 +3043,7 @@ function btS10(klines, i) {
     // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.004) continue;
+      if (breakDepth < 0.002) continue;
       if (curr.close > rangeHigh * 0.999) continue;
       const rsi = calcRSI(slice, 14);
       if (rsi < 20 || rsi > 80) continue;

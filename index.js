@@ -29,7 +29,7 @@ const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, vol
 
 const MIN_VOLUME_24H = 10000000;
 const TOP_N          = 30;
-const COOLDOWN_MIN   = 30;
+const COOLDOWN_MIN   = 15;
 
 // ── Портфельный риск-менеджмент ────────────────────────────
 const MAX_OPEN_TRADES     = 3;    // максимум открытых сделок
@@ -856,11 +856,11 @@ function applySessionFilter(sig, session) {
     sig.confidence = Math.min(sig.confidence + 5, 100);
     sig.sessionNote = `🇺🇸🇪🇺 ${session} → +5%`;
   } else if (session === 'Asia') {
-    sig.confidence = Math.max(sig.confidence - 20, 0);
-    sig.sessionNote = '🌏 Азия (слабый объём) → -20%';
+    sig.confidence = Math.max(sig.confidence - 12, 0);
+    sig.sessionNote = '🌏 Азия (слабый объём) → -12%';
   } else {
-    sig.confidence = Math.max(sig.confidence - 10, 0);
-    sig.sessionNote = '🌙 Нерабочие часы → -10%';
+    sig.confidence = Math.max(sig.confidence - 5, 0);
+    sig.sessionNote = '🌙 Нерабочие часы → -5%';
   }
   return sig;
 }
@@ -1742,28 +1742,33 @@ async function applyMA200(sig, instId) {
 
     // Зона "облизывания" — ±1.5% от MA200 — не торгуем
     if (distPct < 1.5) {
-      sig.confidence = Math.max(sig.confidence - 25, 0);
-      sig.ma200Note  = `⚠️ Цена у MA200 ($${ma200.toFixed(2)}) ±${distPct.toFixed(1)}% — зона неопределённости → -25%`;
+      sig.confidence = Math.max(sig.confidence - 15, 0);
+      sig.ma200Note  = `⚠️ Цена у MA200 ($${ma200.toFixed(2)}) ±${distPct.toFixed(1)}% — зона неопределённости → -15%`;
       return sig;
     }
 
     if (sig.direction === 'long') {
       if (price > ma200) {
-        sig.confidence = Math.min(sig.confidence + 8, 100);
-        sig.ma200Note  = `📈 Выше MA200 ($${ma200.toFixed(2)}) → лонг по тренду +8%`;
+        sig.confidence = Math.min(sig.confidence + 10, 100);
+        sig.ma200Note  = `📈 Выше MA200 ($${ma200.toFixed(2)}) → лонг по тренду +10%`;
       } else {
-        // Ниже MA200 — лонг против глобального тренда — блокируем
-        sig.confidence = Math.max(sig.confidence - 25, 0);
-        sig.ma200Note  = `🚫 Ниже MA200 ($${ma200.toFixed(2)}) — лонг против тренда → -25%`;
+        // Ниже MA200 — лонг против тренда
+        // S10/S9 — меньший штраф (они работают с откатами)
+        const isRangeStrat = sig.strategy.includes('4H Range') || sig.strategy.includes('Pullback');
+        const penalty = isRangeStrat ? 10 : 20;
+        sig.confidence = Math.max(sig.confidence - penalty, 0);
+        sig.ma200Note  = `⚠️ Ниже MA200 ($${ma200.toFixed(2)}) — лонг против тренда → -${penalty}%`;
       }
     } else {
       if (price < ma200) {
         sig.confidence = Math.min(sig.confidence + 15, 100);
         sig.ma200Note  = `📉 Ниже MA200 ($${ma200.toFixed(2)}) → шорт по тренду +15%`;
       } else {
-        // Выше MA200 — шорт против глобального тренда — блокируем
-        sig.confidence = Math.max(sig.confidence - 25, 0);
-        sig.ma200Note  = `🚫 Выше MA200 ($${ma200.toFixed(2)}) — шорт против тренда → -25%`;
+        // Выше MA200 — шорт против тренда
+        const isRangeStrat = sig.strategy.includes('4H Range') || sig.strategy.includes('Pullback');
+        const penalty = isRangeStrat ? 10 : 20;
+        sig.confidence = Math.max(sig.confidence - penalty, 0);
+        sig.ma200Note  = `⚠️ Выше MA200 ($${ma200.toFixed(2)}) — шорт против тренда → -${penalty}%`;
       }
     }
   } catch(e) { console.error('applyMA200 error:', e.message); }

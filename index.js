@@ -2663,7 +2663,6 @@ async function runBacktest(coins, limit = 300) {
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-  'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   //'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
 };
 
@@ -2843,40 +2842,70 @@ function btS7(klines, i) {
   return engulfL ? 'long' : 'short';
 }
 function btS9(klines, i) {
-  // Бэктест S9: Pullback в тренде (1H)
+  // Бэктест S9: Pullback в тренде (строгая версия)
   const slice = klines.slice(0, i+1);
-  if (slice.length < 30) return null;
+  if (slice.length < 55) return null;
 
   const closes = slice.map(c => c.close);
   const highs  = slice.map(c => c.high);
   const lows   = slice.map(c => c.low);
+  const vols   = slice.map(c => c.quoteVolume || c.volume || 0);
 
-  // Тренд по MA20/MA50
+  // Тренд — MA20/MA50 с минимальной силой
   const ma20 = calcSMA(slice, 20);
-  const ma50 = slice.length >= 50 ? calcSMA(slice, 50) : ma20;
-  const downtrend = ma20 < ma50;
-  const uptrend   = ma20 > ma50;
+  const ma50 = calcSMA(slice, 50);
+  const trendStrength = Math.abs(ma20 - ma50) / ma50 * 100;
+
+  // Тренд должен быть чётким — разница MA > 0.5%
+  const downtrend = ma20 < ma50 && trendStrength > 0.5;
+  const uptrend   = ma20 > ma50 && trendStrength > 0.5;
+
+  if (!downtrend && !uptrend) return null;
 
   const rsi = calcRSI(slice, 14);
+  const atr = calcATR(slice, 14);
+  const price = closes[closes.length-1];
 
-  const last5highs  = highs.slice(-5);
-  const last5lows   = lows.slice(-5);
-  const last5closes = closes.slice(-5);
+  // Последние 6 свечей для анализа отката
+  const last6lows   = lows.slice(-6);
+  const last6highs  = highs.slice(-6);
+  const last6closes = closes.slice(-6);
+  const last6vols   = vols.slice(-6);
 
-  // ШОРТ: MA даунтренд + откат вверх (2 higher lows) + разворот вниз
+  // Средний объём
+  const avgVol = vols.slice(-20, -1).reduce((a,b) => a+b, 0) / 19;
+
+  // ШОРТ: чёткий даунтренд + откат вверх 3 свечи + разворот + объём
   if (downtrend) {
-    const pullbackUp = last5lows[3] > last5lows[2] && last5lows[4] > last5lows[3];
-    const bearCandle = last5closes[4] < last5closes[3];
-    const rsiOk = rsi > 40 && rsi < 75;
-    if (pullbackUp && bearCandle && rsiOk) return 'short';
+    // Откат: 3 consecutive higher lows (более строго)
+    const pullback3 = last6lows[2] > last6lows[1] &&
+                      last6lows[3] > last6lows[2] &&
+                      last6lows[4] > last6lows[3];
+    // Разворот: медвежья свеча с закрытием ниже открытия
+    const bearCandle = last6closes[5] < last6closes[4] &&
+                       (last6closes[4] - last6closes[5]) > atr * 0.3;
+    // RSI: умеренно высокий на откате (между 50-70)
+    const rsiOk = rsi > 50 && rsi < 70;
+    // Объём на развороте выше среднего
+    const volOk = last6vols[5] > avgVol * 1.2;
+
+    if (pullback3 && bearCandle && rsiOk && volOk) return 'short';
   }
 
-  // ЛОНГ: MA аптренд + откат вниз (2 lower highs) + разворот вверх
+  // ЛОНГ: чёткий аптренд + откат вниз 3 свечи + разворот + объём
   if (uptrend) {
-    const pullbackDown = last5highs[3] < last5highs[2] && last5highs[4] < last5highs[3];
-    const bullCandle = last5closes[4] > last5closes[3];
-    const rsiOk = rsi > 25 && rsi < 60;
-    if (pullbackDown && bullCandle && rsiOk) return 'long';
+    // Откат: 3 consecutive lower highs
+    const pullback3 = last6highs[2] < last6highs[1] &&
+                      last6highs[3] < last6highs[2] &&
+                      last6highs[4] < last6highs[3];
+    // Разворот: бычья свеча
+    const bullCandle = last6closes[5] > last6closes[4] &&
+                       (last6closes[5] - last6closes[4]) > atr * 0.3;
+    // RSI: умеренно низкий на откате (между 30-50)
+    const rsiOk = rsi > 30 && rsi < 50;
+    const volOk = last6vols[5] > avgVol * 1.2;
+
+    if (pullback3 && bullCandle && rsiOk && volOk) return 'long';
   }
 
   return null;

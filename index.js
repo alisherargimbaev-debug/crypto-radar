@@ -2663,6 +2663,7 @@ async function runBacktest(coins, limit = 300) {
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   //'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
 };
 
@@ -2842,7 +2843,7 @@ function btS7(klines, i) {
   return engulfL ? 'long' : 'short';
 }
 function btS9(klines, i) {
-  // Бэктест S9: Pullback в тренде (упрощён для 1H)
+  // Бэктест S9: Pullback в тренде (1H)
   const slice = klines.slice(0, i+1);
   if (slice.length < 30) return null;
 
@@ -2850,36 +2851,29 @@ function btS9(klines, i) {
   const highs  = slice.map(c => c.high);
   const lows   = slice.map(c => c.low);
 
-  // Тренд: MA20 vs MA50
+  // Тренд по MA20/MA50
   const ma20 = calcSMA(slice, 20);
   const ma50 = slice.length >= 50 ? calcSMA(slice, 50) : ma20;
-
   const downtrend = ma20 < ma50;
   const uptrend   = ma20 > ma50;
 
   const rsi = calcRSI(slice, 14);
 
-  // Последние 5 свечей
-  const last5highs = highs.slice(-5);
-  const last5lows  = lows.slice(-5);
+  const last5highs  = highs.slice(-5);
+  const last5lows   = lows.slice(-5);
   const last5closes = closes.slice(-5);
 
-  // Шорт: MA даунтренд + откат вверх (2 higher lows) + разворот вниз
+  // ШОРТ: MA даунтренд + откат вверх (2 higher lows) + разворот вниз
   if (downtrend) {
-    // Откат: два последовательных higher lows
     const pullbackUp = last5lows[3] > last5lows[2] && last5lows[4] > last5lows[3];
-    // Разворот: последняя свеча медвежья
     const bearCandle = last5closes[4] < last5closes[3];
-    // RSI умеренный (не экстремальный)
     const rsiOk = rsi > 40 && rsi < 75;
     if (pullbackUp && bearCandle && rsiOk) return 'short';
   }
 
-  // Лонг: MA аптренд + откат вниз (2 lower highs) + разворот вверх
+  // ЛОНГ: MA аптренд + откат вниз (2 lower highs) + разворот вверх
   if (uptrend) {
-    // Откат: два последовательных lower highs
     const pullbackDown = last5highs[3] < last5highs[2] && last5highs[4] < last5highs[3];
-    // Разворот: последняя свеча бычья
     const bullCandle = last5closes[4] > last5closes[3];
     const rsiOk = rsi > 25 && rsi < 60;
     if (pullbackDown && bullCandle && rsiOk) return 'long';

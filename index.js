@@ -1938,14 +1938,16 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
-// S2: Liquidity Bounce (1h) — только в боковике или развороте
-    if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
+// S2: Liquidity Bounce (1h) — отскок в обе стороны
+    // Работает в любом рынке: медвежьем (шорт), бычьем (лонг), боковике (оба)
+    if (k1h.length >= 15 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
       const oi   = calcOiChangePct(oi1h);
       const vd   = tf1h ? tf1h.delta : calcVolumeDelta(k1h);
       const vol  = k1h.reduce((s, c) => s + c.quoteVolume, 0);
       const tick = Math.round(k1h[k1h.length-1].quoteVolume / 10000);
-      const rsi  = k1h.length >= 15 ? calcRSI(k1h, 14) : 50;
+      const rsi  = calcRSI(k1h, 14);
+      const atr  = calcATR(k1h, 14);
 
       const k4h  = await getOKXKlinesCached(instId, '4H', 55);
       const ma20_4h = k4h.length >= 20 ? calcSMA(k4h, 20) : 0;
@@ -1953,6 +1955,10 @@ async function runStrategies(instId, coinData, asianSession) {
       const trend4h = ma20_4h > ma50_4h ? 'bullish' : 'bearish';
       const trendStrength = ma50_4h ? Math.abs(ma20_4h - ma50_4h) / ma50_4h * 100 : 0;
       const isSideways = trendStrength < 1.0;
+
+      // ADX для подтверждения что рынок не слишком трендовый
+      const adx_s2 = calcADX(k4h, 14);
+      const notStrongTrend = adx_s2 < 30; // ADX < 30 = нет сильного тренда
 
       const lc = [pc<=S2.priceMax, oi>=S2.oiMin, vd<=S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
       const sc = [pc>=-S2.priceMax, oi>=S2.oiMin, vd>=-S2.vdeltaMax, tick>=S2.ticksMin, vol>=S2.volMin];
@@ -1962,33 +1968,51 @@ async function runStrategies(instId, coinData, asianSession) {
       if (ml >= 4 || ms >= 4) {
         const dir = ml >= ms ? 'long' : 'short';
 
-        // Фильтр 1 — RSI в зоне перепроданности/перекупленности
-        const rsiOk = (dir === 'long' && rsi < 40) || (dir === 'short' && rsi > 60);
+        // Фильтр 1 — RSI строже: лонг < 35 (перепродан), шорт > 65 (перекуплен)
+        const rsiOk = (dir === 'long' && rsi < 35) || (dir === 'short' && rsi > 65);
         if (!rsiOk) {
-          console.log(`[S2 SKIP] ${instId} — RSI не в зоне (${rsi})`);
+          console.log(`[S2 SKIP] ${instId} — RSI не в зоне (${rsi.toFixed(1)})`);
         } else {
-          // Фильтр 2 — объём выше среднего
+          // Фильтр 2 — объём 2x (был 1.5x)
           const avgVol2  = k1h.slice(-11,-1).reduce((a,c) => a + c.quoteVolume, 0) / 10;
           const lastVol2 = k1h[k1h.length-1].quoteVolume;
-          if (lastVol2 < avgVol2 * 1.5) {
-            console.log(`[S2 SKIP] ${instId} — слабый объём`);
-          } else if (!isSideways && dir === 'long' && trend4h === 'bearish') {
-            console.log(`[S2 BLOCK] ${instId} — лонг против медвежьего 4H тренда`);
-          } else if (!isSideways && dir === 'short' && trend4h === 'bullish') {
-            console.log(`[S2 BLOCK] ${instId} — шорт против бычьего 4H тренда`);
+          if (lastVol2 < avgVol2 * 2.0) {
+            console.log(`[S2 SKIP] ${instId} — слабый объём (${(lastVol2/avgVol2).toFixed(1)}x)`);
+          } else if (!notStrongTrend) {
+            // ADX > 30 — сильный тренд, отскок опасен только против него
+            const againstTrend = (dir === 'long' && trend4h === 'bearish') ||
+                                 (dir === 'short' && trend4h === 'bullish');
+            if (againstTrend) {
+              console.log(`[S2 BLOCK] ${instId} — сильный тренд (ADX:${adx_s2.toFixed(0)}), против тренда`);
+            } else {
+              // По тренду — разрешаем даже при сильном ADX
+              let conf = Math.max(ml, ms) * 14;
+              if (rsi < 30) conf = Math.min(conf + 12, 100); // очень перепродан
+              if (rsi > 70) conf = Math.min(conf + 12, 100); // очень перекуплен
+              if (trend4h === 'bearish' && dir === 'short') conf = Math.min(conf + 8, 100); // шорт в медвежьем
+              if (trend4h === 'bullish' && dir === 'long')  conf = Math.min(conf + 8, 100); // лонг в бычьем
+              signals.push({
+                strategy: '2️⃣ Liquidity Bounce (1h)',
+                instId, direction: dir,
+                signal: dir==='long'?'🟢 LONG':'🔴 SHORT',
+                price, confidence: Math.round(conf),
+                metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi.toFixed(0)} Vol:${(lastVol2/avgVol2).toFixed(1)}x ADX:${adx_s2.toFixed(0)} 4H:${trend4h}`,
+                ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', atr)
+              });
+            }
           } else {
-            let conf = Math.max(ml, ms) * 14; // базовый 56-70 вместо 80-100
-            if (dir==='long'  && rsi < 35) conf = Math.min(conf+10, 100);
-            if (dir==='short' && rsi > 65) conf = Math.min(conf+10, 100);
-            if (isSideways) conf = Math.min(conf+10, 100);
-
+            // ADX < 30 — боковик, отскок в обе стороны
+            let conf = Math.max(ml, ms) * 14;
+            if (rsi < 30) conf = Math.min(conf + 12, 100);
+            if (rsi > 70) conf = Math.min(conf + 12, 100);
+            if (isSideways) conf = Math.min(conf + 10, 100);
             signals.push({
               strategy: '2️⃣ Liquidity Bounce (1h)',
               instId, direction: dir,
               signal: dir==='long'?'🟢 LONG':'🔴 SHORT',
               price, confidence: Math.round(conf),
-              metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi} 4H:${isSideways?'Боковик':'Тренд'} Сила:${trendStrength.toFixed(2)}%`,
-              ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', calcATR(k1h, 14))
+              metrics: `Цена:${pc.toFixed(2)}% OI:${oi.toFixed(2)}% RSI:${rsi.toFixed(0)} Vol:${(lastVol2/avgVol2).toFixed(1)}x ADX:${adx_s2.toFixed(0)} Боковик`,
+              ...calcSLTP(price, dir, '2️⃣ Liquidity Bounce (1h)', atr)
             });
           }
         }
@@ -2026,7 +2050,7 @@ async function runStrategies(instId, coinData, asianSession) {
       // Вычисляем FVG зоны один раз для всех стратегий
     const fvgZones1h  = detectFVG(k1h.slice(-30));
     const fvgZones15m = detectFVG(k15m.slice(-20));
-  // S4: MA20/MA50 + RSI — улучшенная версия
+  // S4: MA20/MA50 + RSI — с фильтром MA200 и ADX
 if (k1h.length >= 55) {
   const cross  = calcMACross(k1h, 20, 50);
   const rsi    = calcRSI(k1h, 14);
@@ -2035,44 +2059,57 @@ if (k1h.length >= 55) {
   const macd   = calcMACD(k1h);
   const bb     = calcBollinger(k1h);
   const closes = k1h.map(c => c.close);
+  const lows   = k1h.map(c => c.low);
   const price  = coinData.price;
 
-  // Расстояние между MA — чем меньше тем свежее крест
-  const maDist = Math.abs(ma20 - ma50) / ma50 * 100;
-  const freshCross = maDist < 0.5; // крест произошёл недавно
+  // MA200 фильтр — определяем глобальный тренд
+  const kD_s4 = await getOKXKlinesCached(instId, '1D', 210);
+  const ma200_s4 = kD_s4.length >= 200 ? calcSMA(kD_s4, 200) : null;
+  const aboveMA200 = ma200_s4 ? price > ma200_s4 : true;
+  const belowMA200 = ma200_s4 ? price < ma200_s4 : true;
 
-  // Цена не должна быть далеко от MA20 — значит мы не опоздали
+  // ADX — MA cross работает только в трендовом рынке
+  const k4h_s4 = await getOKXKlinesCached(instId, '4H', 30);
+  const adx_s4 = calcADX(k4h_s4, 14);
+  const hasTrend = adx_s4 > 18; // минимальный тренд
+
+  // Расстояние между MA — свежесть кросса
+  const maDist = Math.abs(ma20 - ma50) / ma50 * 100;
+  const freshCross = maDist < 0.5;
   const priceNearMA = Math.abs(price - ma20) / ma20 * 100 < 1.5;
 
-  // RSI дивергенция как подтверждение разворота
-  const lows   = k1h.map(c => c.low);
+  // RSI дивергенция
   const rsiPrev = calcRSI(k1h.slice(0, -5), 14);
-  const bullDiv = lows[lows.length-1] < Math.min(...lows.slice(-20,-1)) && rsi > rsiPrev + 2; // 20 свечей — лучше качество дивергенции
+  const bullDiv = lows[lows.length-1] < Math.min(...lows.slice(-20,-1)) && rsi > rsiPrev + 2;
   const bearDiv = closes[closes.length-1] > Math.max(...closes.slice(-20,-1)) && rsi < rsiPrev - 2;
 
-  const iL = cross === 'bullish' && rsi < 55 && rsi > 30 && macd.hist > 0;
-  const iS = cross === 'bearish' && rsi > 45 && rsi < 70 && macd.hist < 0;
+  // Условия входа — только по тренду MA200
+  const iL = cross === 'bullish' && rsi < 55 && rsi > 30 && macd.hist > 0 && aboveMA200;
+  const iS = cross === 'bearish' && rsi > 45 && rsi < 70 && macd.hist < 0 && belowMA200;
 
-  if ((iL || iS) && (freshCross || priceNearMA)) {
+  if ((iL || iS) && (freshCross || priceNearMA) && hasTrend) {
     const dir = iL ? 'long' : 'short';
-    let conf  = 58; // снижаем базовый с 68 до 58
+    let conf  = 58;
 
-    // Бонусы за подтверждения
-    if (freshCross)  conf += 8;  // свежий крест
-    if (priceNearMA) conf += 5;  // цена рядом с MA
-    if (iL && bullDiv) conf += 10; // бычья дивергенция RSI
-    if (iS && bearDiv) conf += 10; // медвежья дивергенция RSI
-    if (iL && rsi < 45) conf += 7; // RSI перепродан
-    if (iS && rsi > 55) conf += 7; // RSI перекуплен
-    if (iL && price < bb.lower * 1.01) conf += 5; // цена у нижней BB
-    if (iS && price > bb.upper * 0.99) conf += 5; // цена у верхней BB
+    // Бонусы
+    if (freshCross)          conf += 8;
+    if (priceNearMA)         conf += 5;
+    if (iL && bullDiv)       conf += 12; // усилено с 10 до 12
+    if (iS && bearDiv)       conf += 12;
+    if (iL && rsi < 45)      conf += 7;
+    if (iS && rsi > 55)      conf += 7;
+    if (iL && price < bb.lower * 1.01) conf += 5;
+    if (iS && price > bb.upper * 0.99) conf += 5;
+    if (adx_s4 > 25)         conf += 5;  // сильный тренд — доп. буст
+    if (iL && aboveMA200)    conf += 5;  // по тренду MA200
+    if (iS && belowMA200)    conf += 5;  // по тренду MA200
 
     signals.push({
       strategy:  '4️⃣ MA20/MA50+RSI (1h)',
       instId, direction: dir,
       signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
       price, confidence: Math.min(conf, 100),
-      metrics:   `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} MACD:${macd.hist > 0 ? '▲' : '▼'} Dist:${maDist.toFixed(2)}% ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'}`,
+      metrics:   `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} MACD:${macd.hist > 0 ? '▲' : '▼'} Dist:${maDist.toFixed(2)}% ADX:${adx_s4.toFixed(0)} ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'} ${aboveMA200?'↑MA200':'↓MA200'}`,
       ...calcSLTP(price, dir, '4️⃣ MA20/MA50+RSI (1h)', atr1h),
     });
   }

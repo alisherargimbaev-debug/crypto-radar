@@ -2663,6 +2663,7 @@ async function runBacktest(coins, limit = 300) {
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   //'S9 Pairs Trading':  { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
 };
 

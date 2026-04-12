@@ -21,6 +21,7 @@ const STRATEGY_SL = {
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.0, tp2: 4.5 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
+  '9️⃣ Pullback в тренде (15m)': { sl: 1.5, tp1: 3.0, tp2: 4.5 },
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -112,6 +113,7 @@ const STRATEGY_META = {
   '6️⃣ Funding Extreme (1h)':       { color: '#34d399', rating: 'A', wr: '~68%' },
   '7️⃣ Поглощение на объёме (15m)': { color: '#fbbf24', rating: 'B', wr: '~58%' },
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '9️⃣ Pullback в тренде (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -2263,7 +2265,136 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S8 error:', e.message); }
 
+    // S9: Pullback в тренде (1H/4H + M15)
+    // Логика: глобальный тренд по SMA200 на 4H,
+    // локальный откат на 15m, вход на пробитии отката
+    try {
+      const k4h_s9 = await getOKXKlinesCached(instId, '4H', 60);
+      const k15m_s9 = await getOKXKlinesCached(instId, '15m', 50);
 
+      if (k4h_s9.length >= 50 && k15m_s9.length >= 20) {
+        // ── Шаг 1: Определяем глобальный тренд через SMA200 (1D) ──
+        const kD_s9  = await getOKXKlinesCached(instId, '1D', 210);
+        const ma200_s9 = kD_s9.length >= 200 ? calcSMA(kD_s9, 200) : null;
+
+        // ── Шаг 2: Структура рынка на 4H (lower highs / higher lows) ──
+        const highs4h = k4h_s9.map(c => c.high).slice(-10);
+        const lows4h  = k4h_s9.map(c => c.low).slice(-10);
+
+        // Даунтренд: последний максимум ниже предыдущего
+        const lowerHigh4h = highs4h[highs4h.length-1] < highs4h[highs4h.length-3];
+        const lowerLow4h  = lows4h[lows4h.length-1]  < lows4h[lows4h.length-3];
+
+        // Аптренд: последний минимум выше предыдущего
+        const higherHigh4h = highs4h[highs4h.length-1] > highs4h[highs4h.length-3];
+        const higherLow4h  = lows4h[lows4h.length-1]  > lows4h[lows4h.length-3];
+
+        const downtrend4h = lowerHigh4h && lowerLow4h;
+        const uptrend4h   = higherHigh4h && higherLow4h;
+
+        // ── Шаг 3: Проверяем откат на 15m ──
+        const lows15m   = k15m_s9.map(c => c.low).slice(-15);
+        const highs15m  = k15m_s9.map(c => c.high).slice(-15);
+        const closes15m = k15m_s9.map(c => c.close).slice(-15);
+
+        // Для шорта — откат ВВЕРХ (higher lows на 15m)
+        // Ищем 3+ последовательных higher lows
+        let pullbackUp = 0;
+        for (let j = 1; j < lows15m.length; j++) {
+          if (lows15m[j] > lows15m[j-1]) pullbackUp++;
+          else pullbackUp = 0;
+        }
+
+        // Для лонга — откат ВНИЗ (lower highs на 15m)
+        let pullbackDown = 0;
+        for (let j = 1; j < highs15m.length; j++) {
+          if (highs15m[j] < highs15m[j-1]) pullbackDown++;
+          else pullbackDown = 0;
+        }
+
+        // ── Шаг 4: Пробитие локальной линии отката ──
+        // Для шорта: пробитие последнего higher low вниз
+        const lastLow15m  = Math.min(...lows15m.slice(-4));
+        const prevLow15m  = Math.min(...lows15m.slice(-8, -4));
+        const breakdownShort = closes15m[closes15m.length-1] < lastLow15m && pullbackUp >= 3;
+
+        // Для лонга: пробитие последнего lower high вверх
+        const lastHigh15m = Math.max(...highs15m.slice(-4));
+        const prevHigh15m = Math.max(...highs15m.slice(-8, -4));
+        const breakoutLong = closes15m[closes15m.length-1] > lastHigh15m && pullbackDown >= 3;
+
+        // ── Шаг 5: Зона интереса (SMA200 / FVG) ──
+        const nearMA200_s9 = ma200_s9
+          ? Math.abs(price - ma200_s9) / ma200_s9 * 100 < 2.0
+          : false;
+        const fvgZones_s9 = detectFVG(k15m_s9.slice(-20));
+        const inFVG_s9 = fvgZones_s9.some(z => {
+          return price >= z.bottom && price <= z.top;
+        });
+        const inZoneOfInterest = nearMA200_s9 || inFVG_s9;
+
+        // ── RSI подтверждение ──
+        const rsi15m_s9 = calcRSI(k15m_s9, 14);
+        const atr15m_s9 = calcATR(k15m_s9, 14);
+
+        // ── ШОРТ: даунтренд 4H + откат вверх + пробитие вниз ──
+        if (downtrend4h && breakdownShort) {
+          // SMA200 фильтр — шортуем только если ниже MA200 или нет данных
+          const belowMA200 = ma200_s9 ? price < ma200_s9 * 1.02 : true;
+          if (belowMA200) {
+            let conf = 65;
+            if (inZoneOfInterest)  conf += 12; // в зоне интереса
+            if (nearMA200_s9)      conf += 8;  // у SMA200
+            if (inFVG_s9)          conf += 8;  // в FVG
+            if (rsi15m_s9 > 55)    conf += 7;  // RSI перекуплен на откате
+            if (pullbackUp >= 5)   conf += 5;  // сильный откат = хорошая точка
+            if (lowerLow4h && lowerHigh4h) conf += 5; // чёткая структура
+
+            const slDist  = Math.max(Math.abs(lastHigh15m - price), atr15m_s9 * 1.5);
+            const sl      = (price + slDist).toFixed(4);
+            const tp1     = (price - slDist * 2).toFixed(4);
+            const tp2     = (price - slDist * 3).toFixed(4);
+
+            signals.push({
+              strategy:  '9️⃣ Pullback в тренде (15m)',
+              instId, direction: 'short',
+              signal:    '🔴 SHORT', price,
+              confidence: Math.min(conf, 95),
+              metrics:   `4H даунтренд | Откат ${pullbackUp} свечей вверх | Пробой лоу ${lastLow15m.toFixed(4)} | RSI:${rsi15m_s9.toFixed(0)} ${inFVG_s9?'| FVG ✅':''} ${nearMA200_s9?'| MA200 ✅':''}`,
+              sl, tp1, tp2,
+            });
+          }
+        }
+
+        // ── ЛОНГ: аптренд 4H + откат вниз + пробитие вверх ──
+        if (uptrend4h && breakoutLong) {
+          const aboveMA200 = ma200_s9 ? price > ma200_s9 * 0.98 : true;
+          if (aboveMA200) {
+            let conf = 65;
+            if (inZoneOfInterest)  conf += 12;
+            if (nearMA200_s9)      conf += 8;
+            if (inFVG_s9)          conf += 8;
+            if (rsi15m_s9 < 45)    conf += 7;  // RSI перепродан на откате
+            if (pullbackDown >= 5) conf += 5;
+            if (higherLow4h && higherHigh4h) conf += 5;
+
+            const slDist  = Math.max(Math.abs(price - lastLow15m), atr15m_s9 * 1.5);
+            const sl      = (price - slDist).toFixed(4);
+            const tp1     = (price + slDist * 2).toFixed(4);
+            const tp2     = (price + slDist * 3).toFixed(4);
+
+            signals.push({
+              strategy:  '9️⃣ Pullback в тренде (15m)',
+              instId, direction: 'long',
+              signal:    '🟢 LONG', price,
+              confidence: Math.min(conf, 95),
+              metrics:   `4H аптренд | Откат ${pullbackDown} свечей вниз | Пробой хай ${lastHigh15m.toFixed(4)} | RSI:${rsi15m_s9.toFixed(0)} ${inFVG_s9?'| FVG ✅':''} ${nearMA200_s9?'| MA200 ✅':''}`,
+              sl, tp1, tp2,
+            });
+          }
+        }
+      }
+    } catch(e) { console.error('S9 error:', e.message); }
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
@@ -2556,6 +2687,7 @@ if (klines1h.length < 60) continue;
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
+  { name:'S9 Pullback',        fn: btS9 },
   //{ name:'S9 Pairs Trading',   fn: btS9 },
 ];
 
@@ -2700,36 +2832,55 @@ function btS5(klines, i) {
 
 function btS7(klines, i) {
   const slice = klines.slice(0, i+1);
-  if (slice.length < 15) return null;
+  if (slice.length < 10) return null;
   const last = slice[slice.length-1], prev = slice[slice.length-2];
-
-  // Паттерн поглощения
   const engulfL = last.close>last.open && prev.close<prev.open && last.open<=prev.close && last.close>=prev.open;
   const engulfS = last.close<last.open && prev.close>prev.open && last.open>=prev.close && last.close<=prev.open;
   if (!engulfL && !engulfS) return null;
-
-  // Фильтр 1 — объём 5x (sync с live)
-  const avgVol = slice.slice(-11,-1).reduce((a,c)=>a+c.quoteVolume,0)/10;
-  if (last.quoteVolume < avgVol * 3.5) return null;
-
-  const dir = engulfL ? 'long' : 'short';
-
-  // Фильтр 2 — RSI не экстремальный (sync с live)
-  const rsi = calcRSI(slice, 14);
-  const rsiOk = (dir === 'long'  && rsi < 65 && rsi > 20) ||
-                (dir === 'short' && rsi > 35 && rsi < 80);
-  if (!rsiOk) return null;
-
-  // Фильтр 3 — совпадение с 1H трендом (sync с live)
-  const ma20 = calcSMA(slice, 20);
-  const ma50 = slice.length >= 50 ? calcSMA(slice, 50) : ma20;
-  const trend = ma20 > ma50 ? 'bullish' : 'bearish';
-  const trendOk = (dir === 'long' && trend === 'bullish') ||
-                  (dir === 'short' && trend === 'bearish');
-  if (!trendOk) return null;
-
-  return dir;
+  const avgVol = slice.slice(-10,-1).reduce((a,c)=>a+c.quoteVolume,0)/9;
+  if (last.quoteVolume < avgVol*2.5) return null;
+  return engulfL ? 'long' : 'short';
 }
+function btS9(klines, i) {
+  // Бэктест S9: Pullback в тренде
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 50) return null;
+
+  const highs = slice.map(c => c.high);
+  const lows  = slice.map(c => c.low);
+  const closes = slice.map(c => c.close);
+
+  // Структура рынка — последние 10 свечей
+  const recentHighs = highs.slice(-10);
+  const recentLows  = lows.slice(-10);
+  const lowerHigh = recentHighs[recentHighs.length-1] < recentHighs[recentHighs.length-4];
+  const lowerLow  = recentLows[recentLows.length-1]  < recentLows[recentLows.length-4];
+  const higherHigh = recentHighs[recentHighs.length-1] > recentHighs[recentHighs.length-4];
+  const higherLow  = recentLows[recentLows.length-1]  > recentLows[recentLows.length-4];
+
+  const rsi = calcRSI(slice, 14);
+
+  // Шорт: даунтренд + RSI перекуплен на откате
+  if (lowerHigh && lowerLow && rsi > 55) {
+    // Проверяем что последние 3 свечи формировали higher lows (откат)
+    const last3lows = recentLows.slice(-3);
+    const pullback = last3lows[1] > last3lows[0] && last3lows[2] > last3lows[1];
+    // Пробой — текущая свеча закрылась ниже предыдущего лоу
+    const breakdown = closes[closes.length-1] < lows[lows.length-2];
+    if (pullback && breakdown) return 'short';
+  }
+
+  // Лонг: аптренд + RSI перепродан на откате
+  if (higherHigh && higherLow && rsi < 45) {
+    const last3highs = recentHighs.slice(-3);
+    const pullback = last3highs[1] < last3highs[0] && last3highs[2] < last3highs[1];
+    const breakout = closes[closes.length-1] > highs[highs.length-2];
+    if (pullback && breakout) return 'long';
+  }
+
+  return null;
+}
+
 app.get('/', async (req, res) => {
   try {
     let html = fs.readFileSync(path.join(__dirname, 'unified_dashboard.html'), 'utf8');

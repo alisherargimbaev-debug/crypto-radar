@@ -1,57 +1,29 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Crypto Radar v4</title>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700&family=Space+Mono:wght@400;700&family=Bebas+Neue&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<title>Крипто Радар v4</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
-/* ── DRAGON DARK THEME ── */
-:root, [data-theme="dark"] {
-  --bg:     #060c1a;
-  --panel:  #0a1428;
-  --panel2: #0e1c38;
-  --border: #1a3a5c;
-  --border2:#243d60;
-  --accent: #7dd3fc;
-  --accent2:#38bdf8;
-  --red:    #f87171;
-  --yellow: #fbbf24;
-  --blue:   #60a5fa;
-  --purple: #c084fc;
-  --green:  #4ade80;
-  --text:   #e2eeff;
-  --dim:    #3a5a7a;
-  --dim2:   #2a4560;
-  --glow:   0 0 24px rgba(125,211,252,0.2);
-  --glow-r: 0 0 20px rgba(248,113,113,0.2);
-  --dragon: #0a1428;
-}
-/* ── LIGHT THEME ── */
-[data-theme="light"] {
-  --bg:     #f0f4ff;
-  --panel:  #ffffff;
-  --panel2: #e8eeff;
-  --border: #c5d4f0;
-  --border2:#a8beea;
-  --accent: #0077bb;
-  --accent2:#0066aa;
-  --red:    #dc2626;
-  --yellow: #d97706;
-  --blue:   #2563eb;
-  --purple: #7c3aed;
-  --green:  #059669;
-  --text:   #0f1f3d;
-  --dim:    #6b80a8;
-  --dim2:   #8899bb;
-  --glow:   0 0 16px rgba(0,119,187,0.15);
-  --glow-r: 0 0 16px rgba(220,38,38,0.15);
-  --dragon: #ffffff;
+:root {
+  --bg:     #050810;
+  --panel:  #080d1a;
+  --panel2: #0d1426;
+  --border: #1a2540;
+  --accent: #00ff88;
+  --red:    #ff3366;
+  --yellow: #ffaa00;
+  --blue:   #4488ff;
+  --purple: #aa44ff;
+  --text:   #c8d8f0;
+  --dim:    #4a5a7a;
+  --glow:   0 0 20px rgba(0,255,136,0.25);
+  --glow-r: 0 0 20px rgba(255,51,102,0.25);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;min-height:100vh;overflow-x:hidden;transition:background .3s,color .3s;}
-body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(125,211,252,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(125,211,252,0.02) 1px,transparent 1px);background-size:48px 48px;pointer-events:none;z-index:0;}
-[data-theme="light"] body::before{background-image:linear-gradient(rgba(0,119,187,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,119,187,0.04) 1px,transparent 1px);}
+body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;min-height:100vh;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,255,136,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,136,0.025) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
 .wrap{position:relative;z-index:1;max-width:1600px;margin:0 auto;padding:16px 20px;}
 
 /* HEADER */
@@ -59,9 +31,9 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .logo{display:flex;align-items:center;gap:12px;}
 .logo-svg{width:36px;height:36px;animation:spin 4s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
-h1{font-family:'Cinzel Decorative',serif;font-size:1.6rem;letter-spacing:2px;color:var(--accent);text-shadow:var(--glow);font-style:italic;}
+h1{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;letter-spacing:4px;color:var(--accent);text-shadow:var(--glow);}
 h1 span{color:var(--text);}
-.live-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:var(--glow);animation:pulse 1.5s ease-in-out infinite;display:inline-block;margin-right:2px;}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:var(--glow);animation:pulse 1.5s ease-in-out infinite;display:inline-block;}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
 .hdr-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .hdr-time{font-size:0.65rem;color:var(--dim);}
@@ -72,7 +44,6 @@ h1 span{color:var(--text);}
 .nav-btn{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.62rem;cursor:pointer;transition:all .2s;letter-spacing:1px;margin-bottom:-1px;}
 .nav-btn:hover{color:var(--text);}
 .nav-btn.active{color:var(--accent);border-bottom-color:var(--accent);}
-.nav-btn:hover{color:var(--accent2);}
 .page{display:none;}
 .page.active{display:block;}
 
@@ -81,7 +52,7 @@ h1 span{color:var(--text);}
 @media(max-width:900px){.stats-row{grid-template-columns:repeat(3,1fr);}}
 .stat-card{background:var(--panel);border:1px solid var(--border);padding:12px 14px;position:relative;overflow:hidden;}
 .stat-card::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;}
-.stat-card.green::before{background:var(--green);}
+.stat-card.green::before{background:var(--accent);}
 .stat-card.red::before{background:var(--red);}
 .stat-card.yellow::before{background:var(--yellow);}
 .stat-card.blue::before{background:var(--blue);}
@@ -89,7 +60,7 @@ h1 span{color:var(--text);}
 .stat-card.dim::before{background:var(--dim);}
 .stat-label{font-size:0.55rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;}
 .stat-value{font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:2px;}
-.stat-card.green .stat-value{color:var(--green);}
+.stat-card.green .stat-value{color:var(--accent);}
 .stat-card.red .stat-value{color:var(--red);}
 .stat-card.yellow .stat-value{color:var(--yellow);}
 .stat-card.blue .stat-value{color:var(--blue);}
@@ -108,7 +79,7 @@ h1 span{color:var(--text);}
 .filter-btn.purple.active{border-color:var(--purple);color:var(--purple);}
 .sound-btn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:7px 12px;font-family:'Space Mono',monospace;font-size:0.6rem;cursor:pointer;transition:all .2s;}
 .sound-btn.on{border-color:var(--yellow);color:var(--yellow);}
-.refresh-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);padding:7px 14px;font-family:'Space Mono',monospace;font-size:0.65rem;cursor:pointer;transition:all .2s;border-radius:4px;}
+.refresh-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);padding:7px 14px;font-family:'Space Mono',monospace;font-size:0.65rem;cursor:pointer;transition:all .2s;}
 .refresh-btn:hover{background:rgba(0,255,136,0.08);box-shadow:var(--glow);}
 .refresh-btn:disabled{opacity:.4;cursor:not-allowed;}
 .thr-ctrl{display:flex;align-items:center;gap:8px;margin-left:auto;}
@@ -183,7 +154,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .sig-row:hover{background:rgba(0,255,136,0.03);}
 .sig-row.long-row{border-left:2px solid var(--accent);}
 .sig-row.short-row{border-left:2px solid var(--red);}
-.sym{font-weight:700;font-size:0.72rem;color:#fff;display:flex;align-items:center;}
+.sym{font-weight:700;font-size:0.72rem;color:var(--text);display:flex;align-items:center;}
 .dir-badge{padding:2px 7px;font-size:0.57rem;font-weight:700;letter-spacing:1px;border-radius:2px;display:inline-block;}
 .dir-long{background:rgba(0,255,136,0.13);color:var(--accent);border:1px solid rgba(0,255,136,0.28);}
 .dir-short{background:rgba(255,51,102,0.13);color:var(--red);border:1px solid rgba(255,51,102,0.28);}
@@ -209,7 +180,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .open-trade{padding:9px 0;border-bottom:1px solid rgba(26,37,64,0.5);display:flex;flex-direction:column;gap:3px;}
 .open-trade:last-child{border-bottom:none;}
 .ot-top{display:flex;align-items:center;justify-content:space-between;}
-.ot-sym{font-weight:700;font-size:0.75rem;color:#fff;}
+.ot-sym{font-weight:700;font-size:0.75rem;color:var(--text);}
 .ot-levels{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-top:3px;}
 .ot-sl{font-size:0.57rem;color:var(--red);}
 .ot-tp1{font-size:0.57rem;color:var(--yellow);}
@@ -225,15 +196,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .toast.show{opacity:1;}
 
 /* ═══ NEWS PAGE ═══ */
-.news-grid{display:grid;grid-template-columns:1fr;gap:0;}
-.news-hero{border-bottom:2px solid var(--border);padding:24px 0 20px;margin-bottom:4px;}
-.news-hero .news-title{font-size:1.3rem;line-height:1.4;font-family:'Cinzel Decorative',serif;font-weight:400;}
-.news-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:0;}
-.news-cols .news-card{border-bottom:1px solid var(--border);border-left:none;border-right:none;border-top:none;border-radius:0;}
-.news-cols .news-card:not(:last-child){border-right:1px solid var(--border);}
-.news-date-sep{font-size:0.5rem;letter-spacing:3px;color:var(--dim);text-transform:uppercase;padding:12px 0 8px;border-bottom:1px solid var(--border);margin-bottom:0;}
-.news-card{background:transparent;border:none;border-left:3px solid var(--dim);padding:16px 18px;cursor:pointer;transition:all .2s;}
-.news-card:hover{background:rgba(125,211,252,0.03);border-left-color:var(--accent);}
+.news-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;}
+.news-card{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--dim);padding:14px 16px;cursor:pointer;transition:all .2s;}
+.news-card:hover{border-color:var(--accent);border-left-color:var(--accent);background:var(--panel2);}
 .news-card.cat-btc{border-left-color:#f7931a;}
 .news-card.cat-eth{border-left-color:#627eea;}
 .news-card.cat-sol{border-left-color:#9945ff;}
@@ -243,7 +208,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .news-source{font-size:0.5rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;}
 .news-time-badge{background:rgba(255,255,255,0.05);padding:1px 7px;font-size:0.5rem;color:var(--dim);border:1px solid var(--border);}
 .news-time-badge.fresh{color:var(--accent);border-color:rgba(0,255,136,0.3);}
-.news-title{font-size:0.75rem;color:#fff;line-height:1.55;margin-bottom:8px;font-weight:500;}
+.news-title{font-size:0.75rem;color:var(--text);line-height:1.55;margin-bottom:8px;font-weight:500;}
 .news-body{font-size:0.6rem;color:var(--dim);line-height:1.6;margin-bottom:10px;}
 .news-footer{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
 .news-tag{font-size:0.48rem;padding:2px 7px;letter-spacing:1px;border:1px solid var(--border);color:var(--dim);text-transform:uppercase;}
@@ -284,33 +249,32 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <header>
   <div class="logo">
     <svg class="logo-svg" viewBox="0 0 40 40" fill="none">
-      <circle cx="20" cy="20" r="18" stroke="#7dd3fc" stroke-width="1.2" stroke-opacity=".35"/>
-      <circle cx="20" cy="20" r="11" stroke="#7dd3fc" stroke-width="1" stroke-opacity=".5"/>
-      <circle cx="20" cy="20" r="5"  stroke="#7dd3fc" stroke-width="1"/>
-      <line x1="20" y1="20" x2="31" y2="9" stroke="#7dd3fc" stroke-width="1.5" stroke-linecap="round"/>
-      <circle cx="20" cy="20" r="2" fill="#7dd3fc"/>
+      <circle cx="20" cy="20" r="18" stroke="#00ff88" stroke-width="1.2" stroke-opacity=".35"/>
+      <circle cx="20" cy="20" r="11" stroke="#00ff88" stroke-width="1" stroke-opacity=".5"/>
+      <circle cx="20" cy="20" r="5"  stroke="#00ff88" stroke-width="1"/>
+      <line x1="20" y1="20" x2="31" y2="9" stroke="#00ff88" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="20" cy="20" r="2" fill="#00ff88"/>
     </svg>
     <div>
-      <h1>crypto<span style="font-style:normal;color:var(--text);">-radar</span></h1>
-      <div style="font-size:.55rem;color:var(--dim);letter-spacing:3px;">SIGNALS · ANALYTICS · LIVE</div>
+      <h1>КРИПТО <span>РАДАР</span></h1>
+      <div style="font-size:.55rem;color:var(--dim);letter-spacing:3px;">ANOMALY · SIGNALS · STATISTICS</div>
     </div>
   </div>
   <div class="hdr-right">
-    <div class="status-line"><div class="live-dot"></div><span id="statusTxt">INITIALIZING...</span></div>
+    <div class="status-line"><div class="live-dot"></div><span id="statusTxt">ИНИЦИАЛИЗАЦИЯ...</span></div>
     <div class="hdr-time" id="hdrTime">—</div>
     <div class="hdr-fng" id="hdrFng">F&G: —</div>
-    <button id="themeBtn" onclick="toggleTheme()" style="background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:1px;transition:all .2s;border-radius:4px;" title="Toggle light/dark mode">☾</button>
-  <button id="langBtn" onclick="toggleLang()" style="background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:1px;transition:all .2s;border-radius:4px;">RU</button>
+    <button id="langBtn" onclick="toggleLang()" style="background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:1px;transition:all .2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">EN</button>
   </div>
 </header>
 
 <!-- NAV -->
 <div class="nav">
-  <button class="nav-btn active" onclick="showPage('radar',this)" data-ru="📡 РАДАР" data-en="📡 RADAR">📡 RADAR</button>
-  <button class="nav-btn" onclick="showPage('stats',this)" data-ru="📊 СТАТИСТИКА" data-en="📊 STATISTICS">📊 STATISTICS</button>
-  <button class="nav-btn" onclick="showPage('news',this)" data-ru="📰 НОВОСТИ" data-en="📰 NEWS">📰 NEWS</button>
-  <button class="nav-btn" onclick="showPage('twitter',this)" data-ru="𝕏 TWITTER" data-en="𝕏 MEDIA">𝕏 MEDIA</button>
-  <button class="nav-btn" onclick="showPage('backtest',this)" data-ru="🔬 БЭКТЕСТ" data-en="🔬 BACKTEST">🔬 BACKTEST</button>
+  <button class="nav-btn active" onclick="showPage('radar',this)" data-ru="📡 РАДАР" data-en="📡 RADAR">📡 РАДАР</button>
+  <button class="nav-btn" onclick="showPage('stats',this)" data-ru="📊 СТАТИСТИКА" data-en="📊 STATISTICS">📊 СТАТИСТИКА</button>
+  <button class="nav-btn" onclick="showPage('news',this)" data-ru="📰 НОВОСТИ" data-en="📰 NEWS">📰 НОВОСТИ</button>
+  <button class="nav-btn" onclick="showPage('twitter',this)" data-ru="𝕏 TWITTER" data-en="𝕏 TWITTER">𝕏 TWITTER</button>
+  <button class="nav-btn" onclick="showPage('backtest',this)" data-ru="🔬 БЭКТЕСТ" data-en="🔬 BACKTEST">🔬 БЭКТЕСТ</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -318,16 +282,16 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 
   <!-- Radar top stats -->
   <div class="stats-row" style="grid-template-columns:repeat(5,1fr);">
-    <div class="stat-card green"><div class="stat-label">🚀 Pump</div><div class="stat-value" id="pumpCount">—</div></div>
-    <div class="stat-card red"><div class="stat-label">📉 Dump</div><div class="stat-value" id="dumpCount">—</div></div>
+    <div class="stat-card green"><div class="stat-label">🚀 Памп</div><div class="stat-value" id="pumpCount">—</div></div>
+    <div class="stat-card red"><div class="stat-label">📉 Дамп</div><div class="stat-value" id="dumpCount">—</div></div>
     <div class="stat-card yellow"><div class="stat-label">⭐ Grade A</div><div class="stat-value" id="gradeACount">—</div></div>
     <div class="stat-card purple"><div class="stat-label">💚 Neg Funding</div><div class="stat-value" id="negFundingCount">—</div></div>
-    <div class="stat-card blue"><div class="stat-label">📊 Coins</div><div class="stat-value" id="totalCount">—</div></div>
+    <div class="stat-card blue"><div class="stat-label">📊 Монет</div><div class="stat-value" id="totalCount">—</div></div>
   </div>
 
   <!-- Controls -->
   <div class="controls">
-    <input type="text" class="search-box" id="searchBox" placeholder="🔍 Search..." oninput="renderRadar()">
+    <input type="text" class="search-box" id="searchBox" placeholder="🔍 Поиск..." oninput="renderRadar()">
     <button class="filter-btn active" onclick="setRadarFilter('all',this)">ВСЕ</button>
     <button class="filter-btn" onclick="setRadarFilter('pump',this)">🚀 ПАМП</button>
     <button class="filter-btn red" onclick="setRadarFilter('dump',this)">📉 ДАМП</button>
@@ -449,18 +413,17 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 
 <!-- ═══════════════════ PAGE 3: NEWS ═══════════════════ -->
 <div id="page-news" class="page">
-  <div style="border-bottom:2px solid var(--border);padding-bottom:14px;margin-bottom:20px;">
-    <div style="font-family:'Cinzel Decorative',serif;font-size:1.1rem;color:var(--text);margin-bottom:10px;letter-spacing:1px;">Crypto & Macro Intelligence</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+    <div class="sec-title">📰 Крипто и макро новости</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-      <button class="filter-btn news-filter-btn active" onclick="setNewsFilter('all',this)" style="border-radius:20px;">ALL</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('BTC',this)" style="border-radius:20px;border-color:#f7931a;color:#f7931a;">BTC</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('ETH',this)" style="border-radius:20px;border-color:#627eea;color:#627eea;">ETH</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('SOL',this)" style="border-radius:20px;border-color:#9945ff;color:#9945ff;">SOL</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('XRP',this)" style="border-radius:20px;border-color:#00aae4;color:#00aae4;">XRP</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('macro',this)" style="border-radius:20px;">🌍 MACRO</button>
-      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('regulation',this)" style="border-radius:20px;">⚖️ REGULATION</button>
-      <span style="flex:1;"></span>
-      <button class="refresh-btn" onclick="loadNews()" style="border-radius:4px;">↻ REFRESH</button>
+      <button class="filter-btn news-filter-btn active" onclick="setNewsFilter('all',this)">ВСЕ</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('BTC',this)">BTC</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('ETH',this)">ETH</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('SOL',this)">SOL</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('XRP',this)">XRP</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('macro',this)">🌍 МАКРО</button>
+      <button class="filter-btn news-filter-btn" onclick="setNewsFilter('regulation',this)">⚖️ РЕГУЛЯЦИЯ</button>
+      <button class="refresh-btn" onclick="loadNews()">↻ ОБНОВИТЬ</button>
     </div>
   </div>
   <div id="newsBody"><div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div></div>
@@ -469,7 +432,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <!-- ═══════════════════ PAGE 4: TWITTER ═══════════════════ -->
 <div id="page-twitter" class="page">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-    <div style="font-family:'Cinzel Decorative',serif;font-size:1rem;color:var(--text);letter-spacing:1px;">📡 Crypto Media Feed</div>
+    <div class="sec-title">📡 Крипто Медиа (RSS)</div>
     <button class="refresh-btn" onclick="loadTwitter()">↻ ОБНОВИТЬ</button>
   </div>
   <div class="tw-accounts">
@@ -486,24 +449,29 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 
 <!-- ═══════════════════ PAGE 5: BACKTEST ═══════════════════ -->
 <div id="page-backtest" class="page">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
     <div>
-      <div class="sec-title" style="font-size:0.75rem;letter-spacing:3px;margin-bottom:4px;">🔬 STRATEGY BACKTESTING</div>
-      <div style="font-size:0.55rem;color:var(--dim);">Historical performance analysis on selected coins</div>
+      <div class="sec-title">🔬 STRATEGY BACKTEST</div>
+      <div style="font-size:0.52rem;color:var(--dim);margin-top:3px;letter-spacing:1px;">Historical performance analysis</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <input type="text" class="search-box" id="btCoins" placeholder="BTC,ETH,SOL,XRP,BNB" style="width:240px;border-radius:4px;">
-      <select id="btLimit" style="background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 14px;font-family:'Space Mono',monospace;font-size:0.65rem;border-radius:4px;outline:none;">
+      <!-- PROP MODE TOGGLE -->
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:4px;transition:all .2s;" id="propToggleWrap">
+        <input type="checkbox" id="btPropMode" onchange="toggleBtPropMode(this)" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer;">
+        <span style="font-size:0.6rem;letter-spacing:1px;color:var(--dim);" id="propToggleLabel">🏆 PROP MODE</span>
+      </label>
+      <input type="text" class="search-box" id="btCoins" placeholder="BTC,ETH,SOL,XRP" style="width:200px;">
+      <select id="btLimit" style="background:var(--panel);border:1px solid var(--border);color:var(--text);padding:7px 12px;font-family:'Space Mono',monospace;font-size:0.65rem;outline:none;">
         <option value="100">~4 days</option>
         <option value="200">~8 days</option>
         <option value="300" selected>~12 days</option>
         <option value="500">~20 days</option>
       </select>
-      <button class="refresh-btn" id="btRunBtn" onclick="runBacktest()" style="padding:8px 18px;font-size:0.7rem;border-radius:4px;">▶ RUN</button>
+      <button class="refresh-btn" id="btRunBtn" onclick="runBacktest()">▶ RUN</button>
     </div>
   </div>
-  <div id="btStatus" style="font-size:0.65rem;color:var(--dim);margin-bottom:16px;padding:8px 12px;background:var(--panel2);border-left:3px solid var(--accent);border-radius:0 4px 4px 0;display:none;"></div>
-  <div id="btResults" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:20px;"></div>
+  <div id="btStatus" style="font-size:0.65rem;color:var(--dim);margin-bottom:12px;padding:6px 10px;background:var(--panel2);border-left:2px solid var(--accent);display:none;"></div>
+  <div id="btResults"></div>
 </div>
 
 
@@ -530,7 +498,7 @@ function showPage(id, btn) {
   if (id === 'stats' && !allTrades.length) loadStats();
   if (id === 'news' && !allNews.length) loadNews();
   if (id === 'twitter' && !allTweets.length) {} // загружается по кнопке
-  if (id === 'backtest') { const el = document.getElementById('btStatus'); if(el){el.textContent = 'Enter coins and click ▶ RUN to start'; el.style.display='block';} }
+  if (id === 'backtest') { const el = document.getElementById('btStatus'); if(el) el.textContent = 'Введи монеты и нажми ▶ ЗАПУСТИТЬ'; }
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -619,7 +587,7 @@ function renderRadar() {
   if ([...newIds].some(id=>!prevIds.has(id)) && prevIds.size>0) playBeep();
   prevIds = newIds;
 
-  if (!coins.length) { document.getElementById('radarBody').innerHTML='<div class="empty">NO ANOMALIES WITH CURRENT SETTINGS</div>'; return; }
+  if (!coins.length) { document.getElementById('radarBody').innerHTML='<div class="empty">НЕТ АНОМАЛИЙ С ТЕКУЩИМИ НАСТРОЙКАМИ</div>'; return; }
 
   document.getElementById('radarBody').innerHTML = coins.map((coin,i) => {
     const c1h   = coin.price_change_percentage_1h_in_currency || 0;
@@ -673,19 +641,19 @@ async function getFundingRates(coins) {
 }
 async function loadRadar() {
   const btn=document.getElementById('refreshBtn');
-  btn.disabled=true; document.getElementById('statusTxt').textContent='LOADING...';
+  btn.disabled=true; document.getElementById('statusTxt').textContent='ЗАГРУЗКА...';
   try {
     const res=await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=volume_desc&per_page=100&page=1&sparkline=false&price_change_percentage=1h,24h');
     if(!res.ok) throw new Error('API error');
     allCoins=await res.json();
     allCoins.forEach(c=>{c.fundingRate=null;c.nextFunding='N/A';});
     getFundingRates(allCoins).then(()=>renderRadar());
-    document.getElementById('lastUpd').textContent='Updated: '+new Date().toLocaleTimeString('en');
-    document.getElementById('statusTxt').textContent='ACTIVE · '+allCoins.length+' COINS';
+    document.getElementById('lastUpd').textContent='Обновлено: '+new Date().toLocaleTimeString('ru');
+    document.getElementById('statusTxt').textContent='АКТИВЕН · '+allCoins.length+' МОНЕТ';
     renderRadar();
   } catch(e) {
-    document.getElementById('statusTxt').textContent='API ERROR';
-    document.getElementById('radarBody').innerHTML='<div class="empty">LOAD ERROR</div>';
+    document.getElementById('statusTxt').textContent='ОШИБКА API';
+    document.getElementById('radarBody').innerHTML='<div class="empty">ОШИБКА ЗАГРУЗКИ</div>';
   } finally { btn.disabled=false; }
 }
 
@@ -941,15 +909,9 @@ function renderNews() {
     });
   }
   if (!filtered.length) { body.innerHTML = '<div class="no-data">Нет новостей</div>'; return; }
-  if (!filtered.length) { body.innerHTML = '<div class="no-data">No news</div>'; return; }
-
-  // NYT-style: hero + grouped by date
-  const first = filtered[0];
-  const rest = filtered.slice(1);
-
-  const mkCard = (n, isHero=false) => {
+  body.innerHTML = `<div class="news-grid">${filtered.map(n => {
     const diff = Math.round((Date.now() - n.published_on * 1000) / 60000);
-    const timeStr = diff < 60 ? diff+'m ago' : diff < 1440 ? Math.round(diff/60)+'h ago' : Math.round(diff/1440)+'d ago';
+    const timeStr = diff < 60 ? `${diff} мин назад` : diff < 1440 ? `${Math.round(diff/60)} ч назад` : `${Math.round(diff/1440)} д назад`;
     const isFresh = diff < 60;
     const cats = (n.categories || '').toUpperCase();
     let cardCat = 'cat-macro';
@@ -958,45 +920,20 @@ function renderNews() {
     else if (cats.includes('SOL')) cardCat = 'cat-sol';
     else if (cats.includes('XRP')) cardCat = 'cat-xrp';
     else if (cats.includes('REGULATION')) cardCat = 'cat-regulation';
-    const tags = (n.categories || '').split('|').filter(Boolean).slice(0, 3);
+    const tags = (n.categories || '').split('|').filter(Boolean).slice(0, 4);
     const tagHtml = tags.map(t => {
       const tc = t.trim().toLowerCase();
       const cls = ['btc','eth','sol','xrp','business','market','regulation','macro'].includes(tc) ? `t-${tc}` : '';
       return `<span class="news-tag ${cls}">${t.trim()}</span>`;
     }).join('');
     const source = n.source_info?.name || n.source || '—';
-    const date = new Date(n.published_on * 1000).toLocaleDateString('en',{month:'short',day:'numeric',year:'numeric'});
-    if (isHero) {
-      return `<div class="news-hero ${cardCat}" onclick="window.open('${encodeURI(n.url)}','_blank')" style="cursor:pointer;">
-        <div class="news-source" style="margin-bottom:10px;"><span style="font-weight:bold;color:var(--accent);">${source}</span><span class="news-time-badge ${isFresh?'fresh':''}" style="margin-left:10px;">${timeStr}</span><span style="color:var(--dim);font-size:0.5rem;margin-left:10px;">${date}</span></div>
-        <div class="news-title" style="font-size:1.3rem;line-height:1.45;color:var(--text);margin-bottom:12px;">${n.title}</div>
-        <div class="news-body" style="font-size:0.7rem;color:var(--dim);line-height:1.65;margin-bottom:12px;">${(n.body||'').substr(0,280)}...</div>
-        <div class="news-footer">${tagHtml}</div>
-      </div>`;
-    }
     return `<div class="news-card ${cardCat}" onclick="window.open('${encodeURI(n.url)}','_blank')">
-      <div class="news-source"><span>${source}</span><div style="display:flex;gap:8px;"><span class="news-time-badge ${isFresh?'fresh':''}">${timeStr}</span><span style="color:var(--dim);font-size:0.48rem;">${date}</span></div></div>
+      <div class="news-source"><span>${source}</span><span class="news-time-badge ${isFresh?'fresh':''}">${timeStr}</span></div>
       <div class="news-title">${n.title}</div>
-      <div class="news-body">${(n.body||'').substr(0,120)}...</div>
+      <div class="news-body">${(n.body||'').substr(0,130)}...</div>
       <div class="news-footer">${tagHtml}</div>
     </div>`;
-  };
-
-  // Group rest by date
-  const byDate = {};
-  rest.forEach(n => {
-    const d = new Date(n.published_on * 1000).toLocaleDateString('en',{weekday:'long',month:'long',day:'numeric'});
-    if (!byDate[d]) byDate[d] = [];
-    byDate[d].push(n);
-  });
-
-  let html = `<div class="news-grid">${mkCard(first, true)}<div class="news-cols">`;
-  Object.entries(byDate).forEach(([date, items]) => {
-    html += `<div style="grid-column:1/-1;" class="news-date-sep">${date}</div>`;
-    html += `<div class="news-cols" style="grid-column:1/-1;">` + items.map(n => mkCard(n)).join('') + '</div>';
-  });
-  html += '</div></div>';
-  body.innerHTML = html;
+  }).join('')}</div>`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1075,6 +1012,23 @@ function renderTweets() {
 // ══════════════════════════════════════════════════════════
 //  BACKTEST
 // ══════════════════════════════════════════════════════════
+let btPropModeActive = false;
+
+function toggleBtPropMode(cb) {
+  btPropModeActive = cb.checked;
+  const wrap = document.getElementById('propToggleWrap');
+  const lbl  = document.getElementById('propToggleLabel');
+  if (btPropModeActive) {
+    wrap.style.borderColor = 'var(--accent)';
+    wrap.style.background  = 'rgba(125,211,252,0.06)';
+    lbl.style.color        = 'var(--accent)';
+  } else {
+    wrap.style.borderColor = 'var(--border)';
+    wrap.style.background  = 'transparent';
+    lbl.style.color        = 'var(--dim)';
+  }
+}
+
 async function runBacktest() {
   const btn = document.getElementById('btRunBtn');
   const status = document.getElementById('btStatus');
@@ -1088,120 +1042,49 @@ async function runBacktest() {
     const r = await fetch(`/backtest/run?coins=${encodeURIComponent(coins)}&limit=${limit}`);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
-    status.textContent = `✅ Done — coins: ${coins} | candles: ${limit}`;
+    // Filter out disabled strategies (S2 disabled for rework)
+    let filteredData = data.filter(s => !s.name.includes('S2') && !s.name.includes('Bounce'));
+
+    // Prop mode: only S5 RSI + S10 4H Range
+    if (btPropModeActive) {
+      filteredData = filteredData.filter(s =>
+        s.name.includes('RSI') || s.name.includes('4H Range') || s.name.includes('Pullback')
+      );
+      status.textContent = '🏆 PROP MODE: showing S5 + S9 + S10 only';
+      status.style.display = 'block';
+      status.style.borderLeftColor = 'var(--yellow)';
+    }
+    status.textContent = btPropModeActive ? `🏆 PROP MODE: showing S5+S9+S10 | coins: ${coins} | candles: ${limit}` : `✅ Done — coins: ${coins} | candles: ${limit}`;
     status.style.display = 'block';
-    let _btId = 0;
-    results.innerHTML = '';
-    data.forEach(s => {
-      const wrColor = s.winRate >= 55 ? 'var(--green)' : s.winRate >= 40 ? 'var(--yellow)' : 'var(--red)';
-      const pnlColor = s.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    status.style.borderLeftColor = 'var(--accent)';
+    results.innerHTML = filteredData.map(s => {
+      const wrColor = s.winRate >= 55 ? 'var(--accent)' : s.winRate >= 40 ? 'var(--yellow)' : 'var(--red)';
+      const pnlColor = s.pnl >= 0 ? 'var(--accent)' : 'var(--red)';
       const emoji = s.winRate >= 55 ? '🟢' : s.winRate >= 40 ? '🟡' : '🔴';
-      const cid = _btId++;
-
-      // Format timestamp from klines (approximate based on limit and bar index)
-      const fmtBtDate = idx => {
-        const hoursBack = (s.trades.length - 1 - idx) * 1;
-        const d = new Date(Date.now() - hoursBack * 3600000);
-        return d.toLocaleDateString('en', {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',hour12:false});
-      };
-
-      const renderTrade = (t, idx) => {
+      const tradesHtml = s.trades.slice(-10).reverse().map(t => {
         const oc = t.outcome==='tp1'||t.outcome==='tp2' ? '✅' : t.outcome==='sl' ? '❌' : '⏰';
-        const pc = t.pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)';
-        const dc = t.direction==='long' ? 'color:var(--green)' : 'color:var(--red)';
-        const dateStr = t.ts ? new Date(t.ts).toLocaleDateString('en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}).replace(',',' ') : '';
-        return `<div style="display:grid;grid-template-columns:50px 30px 80px 70px 1fr;gap:4px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:0.62rem;">
-          <span style="font-weight:bold;color:var(--text);">${t.symbol}</span>
-          <span style="${dc};">${t.direction==='long'?'▲':'▼'}</span>
+        const pc = t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+        return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(26,37,64,.3);font-size:0.58rem;">
+          <span style="color:var(--dim)">${t.symbol}</span>
+          <span style="color:${t.direction==='long'?'var(--accent)':'var(--red)'};">${t.direction==='long'?'▲':'▼'}</span>
           <span>${oc} ${t.outcome.toUpperCase()}</span>
-          <span style="${pc};font-weight:bold;">${t.pnl>=0?'+':''}${t.pnl}%</span>
-          <span style="color:var(--dim);font-size:0.55rem;text-align:right;">${dateStr}</span>
-        </div>`;
-      };
-
-      const last10 = s.trades.slice(-10).reverse();
-      const tradesHtml = last10.map((t,i) => renderTrade(t,i)).join('');
-      const allTradesHtml = [...s.trades].reverse().map((t,i) => renderTrade(t,i)).join('');
-
-      // Per-symbol stats
-      const sym = {};
-      s.trades.forEach(t => {
-        if(!sym[t.symbol]) sym[t.symbol]={tp:0,sl:0,exp:0,pnl:0,n:0};
-        if(t.outcome==='tp1'||t.outcome==='tp2') sym[t.symbol].tp++;
-        else if(t.outcome==='sl') sym[t.symbol].sl++;
-        else sym[t.symbol].exp++;
-        sym[t.symbol].pnl += t.pnl||0;
-        sym[t.symbol].n++;
-      });
-      const symHtml = Object.entries(sym).sort((a,b)=>b[1].pnl-a[1].pnl).map(([nm,v])=>{
-        const wr=v.n?Math.round(v.tp/v.n*100):0;
-        return `<div style="display:grid;grid-template-columns:55px 50px 60px 1fr;gap:4px;padding:4px 0;border-bottom:1px solid var(--border2);font-size:0.6rem;">
-          <span style="font-weight:bold;color:var(--text);">${nm}</span>
-          <span style="color:var(--dim);">${v.n} trades</span>
-          <span style="color:${wr>=50?'var(--green)':'var(--red)'};">WR ${wr}%</span>
-          <span style="color:${v.pnl>=0?'var(--green)':'var(--red)'};text-align:right;font-weight:bold;">${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</span>
+          <span class="${pc}">${t.pnl>=0?'+':''}${t.pnl}%</span>
         </div>`;
       }).join('');
-
-      // Max SL streak
-      let maxSL=0,cur=0;
-      s.trades.forEach(t=>{if(t.outcome==='sl'){cur++;maxSL=Math.max(maxSL,cur);}else cur=0;});
-      const slColor=maxSL>=5?'var(--red)':maxSL>=3?'var(--yellow)':'var(--green)';
-
-      const card = document.createElement('div');
-      card.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:22px;border-top:3px solid ' + wrColor + ';';
-      card.innerHTML = `
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
-          <div>
-            <div style="font-size:0.85rem;color:var(--text);font-weight:bold;margin-bottom:4px;">${emoji} ${s.name}</div>
-            <div style="font-size:0.55rem;color:var(--dim);">${s.signals} signals analyzed</div>
-          </div>
-          <div style="display:flex;gap:20px;flex-wrap:wrap;">
-            <div style="text-align:center;">
-              <div style="font-size:0.48rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">SIGNALS</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;color:var(--blue);line-height:1;">${s.signals}</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.48rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">WIN RATE</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;color:${wrColor};line-height:1;">${s.winRate}%</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.48rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">PnL</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;color:${pnlColor};line-height:1;">${s.pnl>=0?'+':''}${s.pnl}%</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.48rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">TP/SL</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;line-height:1;">${s.wins}/${s.losses}</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:0.48rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">MAX SL STREAK</div>
-              <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;color:${slColor};line-height:1;">${maxSL}</div>
-            </div>
+      return `<div class="tbl-wrap" style="margin-bottom:14px;padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:0.75rem;color:#fff;">${emoji} ${s.name}</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">СИГНАЛОВ</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--blue);">${s.signals}</div></div>
+            <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">WIN RATE</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${wrColor};">${s.winRate}%</div></div>
+            <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">PnL</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${pnlColor};">${s.pnl>=0?'+':''}${s.pnl}%</div></div>
+            <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">TP/SL</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;">${s.wins}/${s.losses}</div></div>
           </div>
         </div>
-        <div style="font-size:0.55rem;color:var(--dim);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase;">Last 10 Trades</div>
-        ${tradesHtml || '<div style="padding:16px;text-align:center;color:var(--dim);font-size:0.65rem;">No trades</div>'}
-        <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
-          <button onclick="btToggle('bt-all-${cid}',this,'All ${s.trades.length} trades','Hide trades')" style="font-size:0.6rem;padding:6px 14px;background:transparent;border:1px solid var(--border);color:var(--dim);cursor:pointer;border-radius:4px;transition:all .2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📋 All ${s.trades.length} trades</button>
-          <button onclick="btToggle('bt-sym-${cid}',this,'By coin (${Object.keys(sym).length})','Hide coins')" style="font-size:0.6rem;padding:6px 14px;background:transparent;border:1px solid var(--border);color:var(--dim);cursor:pointer;border-radius:4px;transition:all .2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📊 By coin (${Object.keys(sym).length})</button>
-        </div>
-        <div id="bt-all-${cid}" style="display:none;margin-top:12px;">
-          <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;margin-bottom:8px;text-transform:uppercase;">All Trades (newest first)</div>
-          <div style="display:grid;grid-template-columns:50px 30px 80px 70px 1fr;gap:4px;font-size:0.48rem;color:var(--dim);padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px;">
-            <span>Coin</span><span>Dir</span><span>Result</span><span>PnL</span><span style="text-align:right">Date</span>
-          </div>
-          ${allTradesHtml}
-        </div>
-        <div id="bt-sym-${cid}" style="display:none;margin-top:12px;">
-          <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;margin-bottom:8px;text-transform:uppercase;">Performance by Coin</div>
-          <div style="display:grid;grid-template-columns:55px 50px 60px 1fr;gap:4px;font-size:0.48rem;color:var(--dim);padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px;">
-            <span>Coin</span><span>Trades</span><span>WR</span><span style="text-align:right">PnL</span>
-          </div>
-          ${symHtml}
-        </div>
-      `;
-      results.appendChild(card);
-    });
+        <div style="font-size:0.55rem;color:var(--dim);margin-bottom:8px;letter-spacing:1px;">ПОСЛЕДНИЕ 10 СДЕЛОК</div>
+        ${tradesHtml || '<div class="no-data">Нет сделок</div>'}
+      </div>`;
+    }).join('');
   } catch(e) {
     status.textContent = `❌ Ошибка: ${e.message}`;
     results.innerHTML = '';
@@ -1214,7 +1097,7 @@ async function runBacktest() {
 // ══════════════════════════════════════════════════════════════
 //  LANGUAGE TOGGLE
 // ══════════════════════════════════════════════════════════════
-let currentLang = 'en';
+let currentLang = 'ru';
 
 const TRANSLATIONS = {
   // Header
@@ -1376,7 +1259,7 @@ function applyLang() {
 
   // Radar filter buttons
   const radarBtns = document.querySelectorAll('#page-radar .filter-btn');
-  const radarKeys = ['radarAll','radarLong','radarShort','radarAnomaly'];
+  const radarKeys = ['radarAll',null,null,null,null,null]; // radar filter btns keep their original labels
   radarBtns.forEach((btn, i) => { if (radarKeys[i]) btn.textContent = t(radarKeys[i]); });
 
   // Refresh buttons
@@ -1430,29 +1313,9 @@ function safeText(selector, text) {
   if (el) el.textContent = text;
 }
 
-// ── THEME TOGGLE ────────────────────────────────────────────
-function toggleTheme() {
-  const html = document.documentElement;
-  const isDark = html.getAttribute('data-theme') === 'dark';
-  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
-  const btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = isDark ? '☀' : '☾';
-}
-
-// ── BACKTEST EXPAND ──────────────────────────────────────────
-function btToggle(id, btn, showLabel, hideLabel) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const isHidden = el.style.display === 'none';
-  el.style.display = isHidden ? 'block' : 'none';
-  if (btn) btn.textContent = isHidden ? (hideLabel || 'Hide') : (showLabel || 'Show');
-}
-
 // ── INIT ─────────────────────────────────────────────────────
 
 
-// Apply English by default
-applyLang();
 loadRadar();
 setInterval(loadRadar, 60000);
 setInterval(()=>{if(document.getElementById('page-stats').classList.contains('active'))loadStats();}, 60000);

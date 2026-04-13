@@ -14,7 +14,7 @@ const CHAT_ID        = process.env.CHAT_ID;
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
-  '2️⃣ Liquidity Bounce (1h)':       { sl: 2.5, tp1: 5.0, tp2: 7.5 },
+  // '2️⃣ Liquidity Bounce (1h)': { sl: 2.5, tp1: 5.0, tp2: 7.5 }, // ОТКЛЮЧЕНА
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 2.0, tp2: 3.0 },
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 4.0, tp2: 6.0 },
@@ -34,7 +34,7 @@ const COOLDOWN_MIN   = 15;
 // ── Портфельный риск-менеджмент ────────────────────────────
 const MAX_OPEN_TRADES     = 3;    // максимум открытых сделок
 const MAX_CORRELATED      = 2;    // максимум сделок в одном секторе
-const MAX_DAILY_LOSS_PCT  = 5.0;  // дневной лимит убытка %
+const MAX_DAILY_LOSS_PCT  = 3.0;  // дневной лимит убытка % (снижен для проп-фирмы)
 const MAX_SAME_DIRECTION  = 2;    // максимум лонгов или шортов одновременно
 
 // Секторы монет для проверки корреляции
@@ -107,7 +107,7 @@ function updateDailyPnl(pnl) {
 
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
-  '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
+  // '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' }, // ОТКЛЮЧЕНА
   '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
   '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~40%' },
   '5️⃣ RSI Дивергенция (1h)':       { color: '#34d399', rating: 'A', wr: '~67%' },
@@ -1938,6 +1938,7 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
+/* S2 ОТКЛЮЧЕНА — низкий WR
 // S2: Liquidity Bounce (1h) — только в боковике или развороте
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
@@ -1994,6 +1995,8 @@ async function runStrategies(instId, coinData, asianSession) {
         }
       }
     }
+
+    S2 ОТКЛЮЧЕНА */
 
     // S3: Ранний вход 5m
     /* if (k5m.length >= 7 && oi5m.length >= 2) {
@@ -2735,7 +2738,7 @@ async function httpGetFast(url) {
 async function runBacktest(coins, limit = 300) {
   const strategies = {
   /* 'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, */
-  'S2 Bounce 1h':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  // 'S2 Bounce 1h': { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, // ОТКЛЮЧЕНА
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
@@ -2761,7 +2764,7 @@ if (klines1h.length < 60) continue;
 
     const runs = [
   /* { name:'S1 Пробой 15m',      fn: btS1 }, */
-  { name:'S2 Bounce 1h',       fn: btS2 },
+  // { name:'S2 Bounce 1h', fn: btS2 }, // ОТКЛЮЧЕНА
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
@@ -3073,6 +3076,27 @@ let isRunning = false;
 
 async function checkSignals() {
   if (isRunning) { console.log('[SKIP] checkSignals уже выполняется'); return; }
+
+  // ── ПРОП-ЗАЩИТА: автостоп при 3 SL подряд ──────────────────
+  const recentTrades = store.tradeHistory.slice(-3);
+  if (recentTrades.length >= 3 && recentTrades.every(t => t.outcome === 'sl')) {
+    const lastSL = recentTrades[recentTrades.length-1].closedAt || 0;
+    const pauseMs = 4 * 60 * 60 * 1000; // пауза 4 часа
+    if (Date.now() - lastSL < pauseMs) {
+      const remainMin = Math.round((pauseMs - (Date.now() - lastSL)) / 60000);
+      console.log(`[PROP STOP] 3 SL подряд — пауза ещё ${remainMin} мин`);
+      return;
+    }
+  }
+
+  // ── ПРОП-ЗАЩИТА: общий дневной лимит ────────────────────────
+  const today = new Date().toISOString().split('T')[0];
+  if (global.dailyPnlTracker?.date === today &&
+      global.dailyPnlTracker?.losses >= MAX_DAILY_LOSS_PCT) {
+    console.log(`[PROP STOP] Дневной лимит ${MAX_DAILY_LOSS_PCT}% достигнут — торговля остановлена`);
+    return;
+  }
+
   isRunning = true;
   try {
     console.log(`[${getAlmatyTime()}] checkSignals запущен`);

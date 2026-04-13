@@ -1018,32 +1018,84 @@ async function runBacktest() {
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     status.textContent = `✅ Готово — монеты: ${coins} | свечей: ${limit}`;
+    let _btId = 0;
     results.innerHTML = data.map(s => {
       const wrColor = s.winRate >= 55 ? 'var(--accent)' : s.winRate >= 40 ? 'var(--yellow)' : 'var(--red)';
       const pnlColor = s.pnl >= 0 ? 'var(--accent)' : 'var(--red)';
       const emoji = s.winRate >= 55 ? '🟢' : s.winRate >= 40 ? '🟡' : '🔴';
-      const tradesHtml = s.trades.slice(-10).reverse().map(t => {
+      const cid = _btId++;
+
+      const renderTrade = t => {
         const oc = t.outcome==='tp1'||t.outcome==='tp2' ? '✅' : t.outcome==='sl' ? '❌' : '⏰';
         const pc = t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+        const dc = t.direction==='long' ? 'var(--accent)' : 'var(--red)';
         return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(26,37,64,.3);font-size:0.58rem;">
-          <span style="color:var(--dim)">${t.symbol}</span>
-          <span style="color:${t.direction==='long'?'var(--accent)':'var(--red)'};">${t.direction==='long'?'▲':'▼'}</span>
+          <span style="color:var(--dim);min-width:44px;">${t.symbol}</span>
+          <span style="color:${dc};">${t.direction==='long'?'▲':'▼'}</span>
           <span>${oc} ${t.outcome.toUpperCase()}</span>
           <span class="${pc}">${t.pnl>=0?'+':''}${t.pnl}%</span>
         </div>`;
-      }).join('');
+      };
+
+      const tradesHtml = s.trades.slice(-10).reverse().map(renderTrade).join('');
+      const allTradesHtml = [...s.trades].reverse().map(renderTrade).join('');
+
+      // Статистика по монетам
+      const sym = {};
+      s.trades.forEach(t => {
+        if (!sym[t.symbol]) sym[t.symbol] = {tp:0,sl:0,exp:0,pnl:0,n:0};
+        if (t.outcome==='tp1'||t.outcome==='tp2') sym[t.symbol].tp++;
+        else if (t.outcome==='sl') sym[t.symbol].sl++;
+        else sym[t.symbol].exp++;
+        sym[t.symbol].pnl += t.pnl||0;
+        sym[t.symbol].n++;
+      });
+      const symHtml = Object.entries(sym)
+        .sort((a,b)=>b[1].pnl-a[1].pnl)
+        .map(([s2,v])=>{
+          const wr=v.n?Math.round(v.tp/v.n*100):0;
+          const pc=v.pnl>=0?'var(--accent)':'var(--red)';
+          return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(26,37,64,.2);font-size:0.55rem;">
+            <span style="color:#fff;min-width:50px;font-weight:bold;">${s2}</span>
+            <span style="color:var(--dim);">${v.n} сд.</span>
+            <span style="color:${wr>=50?'var(--accent)':'var(--red)'};">WR:${wr}%</span>
+            <span style="color:${pc};">${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</span>
+          </div>`;
+        }).join('');
+
+      // Макс. серия SL подряд
+      let maxSL=0,cur=0;
+      s.trades.forEach(t=>{ if(t.outcome==='sl'){cur++;maxSL=Math.max(maxSL,cur);}else cur=0; });
+      const slColor = maxSL>=5?'var(--red)':maxSL>=3?'var(--yellow)':'var(--accent)';
+
       return `<div class="tbl-wrap" style="margin-bottom:14px;padding:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
           <div style="font-size:0.75rem;color:#fff;">${emoji} ${s.name}</div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
             <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">СИГНАЛОВ</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--blue);">${s.signals}</div></div>
             <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">WIN RATE</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${wrColor};">${s.winRate}%</div></div>
             <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">PnL</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${pnlColor};">${s.pnl>=0?'+':''}${s.pnl}%</div></div>
             <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">TP/SL</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;">${s.wins}/${s.losses}</div></div>
+            <div style="text-align:center;"><div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;">MAX SL ПОДРЯД</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${slColor};">${maxSL}</div></div>
           </div>
         </div>
         <div style="font-size:0.55rem;color:var(--dim);margin-bottom:8px;letter-spacing:1px;">ПОСЛЕДНИЕ 10 СДЕЛОК</div>
         ${tradesHtml || '<div class="no-data">Нет сделок</div>'}
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="btToggle('bt-all-${cid}')" style="font-size:0.55rem;padding:5px 12px;background:var(--panel);border:1px solid var(--border);color:var(--text);cursor:pointer;border-radius:3px;">📋 Все ${s.trades.length} сделок</button>
+          <button onclick="btToggle('bt-sym-${cid}')" style="font-size:0.55rem;padding:5px 12px;background:var(--panel);border:1px solid var(--border);color:var(--text);cursor:pointer;border-radius:3px;">📊 По монетам (${Object.keys(sym).length})</button>
+        </div>
+        <div id="bt-all-${cid}" style="display:none;margin-top:8px;">
+          <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;margin-bottom:6px;">ВСЕ СДЕЛКИ</div>
+          ${allTradesHtml||'<div class="no-data">Нет сделок</div>'}
+        </div>
+        <div id="bt-sym-${cid}" style="display:none;margin-top:8px;">
+          <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;margin-bottom:6px;">СТАТИСТИКА ПО МОНЕТАМ</div>
+          <div style="display:flex;justify-content:space-between;font-size:0.48rem;color:var(--dim);padding:2px 0;margin-bottom:4px;border-bottom:1px solid rgba(26,37,64,.4);">
+            <span>МОНЕТА</span><span>СДЕЛОК</span><span>WR</span><span>PnL</span>
+          </div>
+          ${symHtml||'<div class="no-data">Нет данных</div>'}
+        </div>
       </div>`;
     }).join('');
   } catch(e) {
@@ -1054,6 +1106,11 @@ async function runBacktest() {
   }
 }
 
+
+function btToggle(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
 
 // ══════════════════════════════════════════════════════════════
 //  LANGUAGE TOGGLE

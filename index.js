@@ -14,7 +14,7 @@ const CHAT_ID        = process.env.CHAT_ID;
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
-  // '2️⃣ Liquidity Bounce (1h)': { sl: 2.5, tp1: 5.0, tp2: 7.5 }, // ОТКЛЮЧЕНА
+  '2️⃣ Liquidity Bounce (1h)':       { sl: 2.5, tp1: 5.0, tp2: 7.5 },
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 2.0, tp2: 3.0 },
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 4.0, tp2: 6.0 },
@@ -34,7 +34,7 @@ const COOLDOWN_MIN   = 15;
 // ── Портфельный риск-менеджмент ────────────────────────────
 const MAX_OPEN_TRADES     = 3;    // максимум открытых сделок
 const MAX_CORRELATED      = 2;    // максимум сделок в одном секторе
-const MAX_DAILY_LOSS_PCT  = 3.0;  // дневной лимит убытка % (снижен для проп-фирмы)
+const MAX_DAILY_LOSS_PCT  = 5.0;  // дневной лимит убытка %
 const MAX_SAME_DIRECTION  = 2;    // максимум лонгов или шортов одновременно
 
 // Секторы монет для проверки корреляции
@@ -57,9 +57,20 @@ function checkPortfolioRisk(sig) {
   const open = store.openTrades;
   const symbol = sig.instId.replace('-USDT-SWAP', '');
 
-  // 1. Максимум открытых сделок
-  if (open.length >= MAX_OPEN_TRADES) {
-    console.log(`[PORTFOLIO] Лимит сделок (${open.length}/${MAX_OPEN_TRADES})`);
+  // Проп-режим: только S5 и S10
+  if (store.propMode) {
+    const allowed = sig.strategy.includes('RSI Диверг') ||
+                    sig.strategy.includes('4H Range');
+    if (!allowed) {
+      console.log(`[PROP] ${sig.instId} — стратегия не в проп-режиме: ${sig.strategy.split(' ')[0]}`);
+      return { allowed: false, reason: 'Проп-режим: только S5+S10' };
+    }
+  }
+
+  // Лимит сделок (проп: 2, обычный: 3)
+  const maxTrades = store.propMode ? 2 : MAX_OPEN_TRADES;
+  if (open.length >= maxTrades) {
+    console.log(`[PORTFOLIO] Лимит сделок (${open.length}/${maxTrades})`);
     return { allowed: false, reason: 'Лимит открытых сделок' };
   }
 
@@ -88,8 +99,9 @@ function checkPortfolioRisk(sig) {
   if (global.dailyPnlTracker.date !== today) {
     global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
   }
-  if (global.dailyPnlTracker.losses >= MAX_DAILY_LOSS_PCT) {
-    console.log(`[PORTFOLIO] Дневной лимит убытка достигнут: ${global.dailyPnlTracker.losses}%`);
+  const dailyLimit = store.propMode ? 3.0 : MAX_DAILY_LOSS_PCT;
+  if (global.dailyPnlTracker.losses >= dailyLimit) {
+    console.log(`[PORTFOLIO] Дневной лимит убытка достигнут: ${global.dailyPnlTracker.losses}% (лимит: ${dailyLimit}%)`);
     return { allowed: false, reason: 'Дневной лимит убытка' };
   }
 
@@ -107,7 +119,7 @@ function updateDailyPnl(pnl) {
 
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
-  // '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' }, // ОТКЛЮЧЕНА
+  '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
   '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~40%' },
   '5️⃣ RSI Дивергенция (1h)':       { color: '#34d399', rating: 'A', wr: '~67%' },
@@ -128,6 +140,7 @@ const store = {
   fngTs:        0,
   oiCache:      {},
   klinesCache:  {},  // кэш свечей на 60 секунд
+  propMode:     false, // режим проп-фирмы
 };
 
 // ── Сессии UTC ─────────────────────────────────────────────
@@ -286,14 +299,78 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/prop') {
+    // Переключаем проп-режим
+    store.propMode = !store.propMode;
+
+    if (store.propMode) {
+      await sendTelegramTo(chatId,
+        `🏆 ПРОП-РЕЖИМ ВКЛЮЧЁН\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `⚙️ Настройки изменены:\n` +
+        `  Стратегии: только S5 + S10\n` +
+        `  Макс. сделок: 2 (было 3)\n` +
+        `  Дневной лимит: 3% (было 5%)\n` +
+        `  Авто-стоп: 3 SL подряд → пауза 4ч\n\n` +
+        `🎯 Цель: пройти челлендж проп-фирмы\n` +
+        `  Daily Loss Limit: 5% (наш: 3%)\n` +
+        `  Overall Loss Limit: 10%\n\n` +
+        `⚠️ Выключить: /prop`
+      );
+    } else {
+      await sendTelegramTo(chatId,
+        `📊 ПРОП-РЕЖИМ ВЫКЛЮЧЕН\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `⚙️ Настройки восстановлены:\n` +
+        `  Все стратегии: S4 S5 S6 S7 S8 S9 S10\n` +
+        `  Макс. сделок: 3\n` +
+        `  Дневной лимит: 5%\n\n` +
+        `💡 Включить снова: /prop`
+      );
+    }
+  }
+
+  else if (cmd === '/propstatus') {
+    const slStreak = (() => {
+      let streak = 0;
+      for (let i = store.tradeHistory.length - 1; i >= 0; i--) {
+        if (store.tradeHistory[i].outcome === 'sl') streak++;
+        else break;
+      }
+      return streak;
+    })();
+    const today = new Date().toISOString().split('T')[0];
+    const dayLoss = global.dailyPnlTracker?.date === today
+      ? global.dailyPnlTracker.losses.toFixed(2)
+      : '0.00';
+    const propLimit = store.propMode ? 3.0 : 5.0;
+    const remaining = Math.max(0, propLimit - parseFloat(dayLoss)).toFixed(2);
+
+    await sendTelegramTo(chatId,
+      `🏆 СТАТУС ПРОП-РЕЖИМА\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `Режим: ${store.propMode ? '🟢 ВКЛЮЧЁН' : '🔴 ВЫКЛЮЧЕН'}\n\n` +
+      `📊 Текущий день:\n` +
+      `  Потери сегодня: -${dayLoss}%\n` +
+      `  Лимит: ${propLimit}%\n` +
+      `  Осталось до лимита: ${remaining}%\n\n` +
+      `🔴 SL подряд сейчас: ${slStreak}\n` +
+      `  (Авто-стоп при 3)\n\n` +
+      `📈 Открытых сделок: ${store.openTrades.length}\n` +
+      `  Макс: ${store.propMode ? 2 : 3}`
+    );
+  }
+
   else if (cmd === '/help') {
     await sendTelegramTo(chatId,
       `🤖 КРИПТО РАДАР\n━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `/status — открытые сделки\n` +
-      `/trades — последние 10 сделок\n` +
-      `/stats  — статистика за день\n` +
-      `/guide  — инструкция по сигналам\n` +
-      `/help   — это сообщение`
+      `/status     — открытые сделки\n` +
+      `/trades     — последние 10 сделок\n` +
+      `/stats      — статистика за день\n` +
+      `/guide      — инструкция по сигналам\n` +
+      `/prop       — 🏆 вкл/выкл проп-режим\n` +
+      `/propstatus — статус проп-режима\n` +
+      `/help       — это сообщение`
     );
   }
 
@@ -1938,7 +2015,6 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
-/* S2 ОТКЛЮЧЕНА — низкий WR
 // S2: Liquidity Bounce (1h) — только в боковике или развороте
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
@@ -1995,8 +2071,6 @@ async function runStrategies(instId, coinData, asianSession) {
         }
       }
     }
-
-    S2 ОТКЛЮЧЕНА */
 
     // S3: Ранний вход 5m
     /* if (k5m.length >= 7 && oi5m.length >= 2) {
@@ -2738,7 +2812,7 @@ async function httpGetFast(url) {
 async function runBacktest(coins, limit = 300) {
   const strategies = {
   /* 'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, */
-  // 'S2 Bounce 1h': { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, // ОТКЛЮЧЕНА
+  'S2 Bounce 1h':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
@@ -2764,7 +2838,7 @@ if (klines1h.length < 60) continue;
 
     const runs = [
   /* { name:'S1 Пробой 15m',      fn: btS1 }, */
-  // { name:'S2 Bounce 1h', fn: btS2 }, // ОТКЛЮЧЕНА
+  { name:'S2 Bounce 1h',       fn: btS2 },
   { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
@@ -3078,23 +3152,17 @@ async function checkSignals() {
   if (isRunning) { console.log('[SKIP] checkSignals уже выполняется'); return; }
 
   // ── ПРОП-ЗАЩИТА: автостоп при 3 SL подряд ──────────────────
-  const recentTrades = store.tradeHistory.slice(-3);
-  if (recentTrades.length >= 3 && recentTrades.every(t => t.outcome === 'sl')) {
-    const lastSL = recentTrades[recentTrades.length-1].closedAt || 0;
-    const pauseMs = 4 * 60 * 60 * 1000; // пауза 4 часа
-    if (Date.now() - lastSL < pauseMs) {
-      const remainMin = Math.round((pauseMs - (Date.now() - lastSL)) / 60000);
-      console.log(`[PROP STOP] 3 SL подряд — пауза ещё ${remainMin} мин`);
-      return;
+  if (store.propMode) {
+    const recentTrades = store.tradeHistory.slice(-3);
+    if (recentTrades.length >= 3 && recentTrades.every(t => t.outcome === 'sl')) {
+      const lastSL = recentTrades[recentTrades.length-1].closedAt || 0;
+      const pauseMs = 4 * 60 * 60 * 1000; // 4 часа
+      if (Date.now() - lastSL < pauseMs) {
+        const left = Math.round((pauseMs - (Date.now() - lastSL)) / 60000);
+        console.log(`[PROP STOP] 3 SL подряд — пауза ещё ${left} мин`);
+        return;
+      }
     }
-  }
-
-  // ── ПРОП-ЗАЩИТА: общий дневной лимит ────────────────────────
-  const today = new Date().toISOString().split('T')[0];
-  if (global.dailyPnlTracker?.date === today &&
-      global.dailyPnlTracker?.losses >= MAX_DAILY_LOSS_PCT) {
-    console.log(`[PROP STOP] Дневной лимит ${MAX_DAILY_LOSS_PCT}% достигнут — торговля остановлена`);
-    return;
   }
 
   isRunning = true;

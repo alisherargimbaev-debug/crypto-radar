@@ -22,8 +22,8 @@ const STRATEGY_SL = {
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.5, tp2: 5.0 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '9️⃣ Pullback в тренде (15m)': { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 для надёжности
-  '🔟 4H Range Breakout (5m)':  { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3 — автостоп при 3 SL подряд
-  '1️⃣1️⃣ Elliott+Fib+SMA (1h)':  { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3
+  '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 3.0, tp2: 4.5 },
+  '1️⃣1️⃣ Elliott+Fib+SMA':       { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -61,11 +61,10 @@ function checkPortfolioRisk(sig) {
   // Проп-режим: только S5 и S10
   if (store.propMode) {
     const allowed = sig.strategy.includes('RSI Диверг') ||
-                    sig.strategy.includes('4H Range')   ||
-                    sig.strategy.includes('Поглощение');
+                    sig.strategy.includes('4H Range');
     if (!allowed) {
       console.log(`[PROP] ${sig.instId} — стратегия не в проп-режиме: ${sig.strategy.split(' ')[0]}`);
-      return { allowed: false, reason: 'Проп-режим: S5+S7+S10' };
+      return { allowed: false, reason: 'Проп-режим: только S5+S10' };
     }
   }
 
@@ -130,7 +129,6 @@ const STRATEGY_META = {
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '9️⃣ Pullback в тренде (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '🔟 4H Range Breakout (5m)':  { color: '#34d399', rating: 'A', wr: 'Новая' },
-  '1️⃣1️⃣ Elliott+Fib+SMA (1h)':  { color: '#a78bfa', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -2835,8 +2833,17 @@ const klines1h = data1h.data.reverse().map(c => ({
   volume:+c[5], quoteVolume:+c[7],
 }));
 
-// Загружаем 15m свечи для S1
+// Загружаем 30m свечи для S11
+const data30m = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=30m&limit=300`);
+const klines30m = (data30m?.code === '0' && data30m.data?.length)
+  ? data30m.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
+  : [];
 
+// Загружаем 4H свечи для S11
+const data4h = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=4H&limit=200`);
+const klines4h = (data4h?.code === '0' && data4h.data?.length)
+  ? data4h.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
+  : [];
 
 if (klines1h.length < 60) continue;
 
@@ -2856,9 +2863,11 @@ if (klines1h.length < 60) continue;
       // S1 использует 15m свечи, остальные — 1H
       const klines = klines1h;
       let lastI = -10;
+      const isS11 = name.includes('Elliott');
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
-        const direction = fn(klines, i);
+        // S11 получает доп. таймфреймы 30m и 4H
+        const direction = isS11 ? fn(klines, i, klines30m, klines4h) : fn(klines, i);
         if (!direction) continue;
 
         const price = klines[i].close;
@@ -3140,47 +3149,89 @@ function btS10(klines, i) {
 }
 
 
-function btS11(klines, i) {
-  // Бэктест S11: Elliott + Fibonacci + SMA200
-  const slice = klines.slice(0, i+1);
-  if (slice.length < 50) return null;
-  const closes = slice.map(c => c.close);
-  const highs  = slice.map(c => c.high);
-  const lows   = slice.map(c => c.low);
-  const price  = closes[closes.length-1];
-  // SMA200 тренд
-  const sma200  = calcSMA(slice, Math.min(200, slice.length));
-  const sma200p = calcSMA(slice.slice(0,-8), Math.min(200, slice.length-8));
+function btS11(klines, i, klines30m, klines4h) {
+  // S11: Elliott Wave + Fibonacci + SMA200
+  // Таймфреймы: 4H для тренда/волн, 30m для входа
+  // Если 4H не передан — используем 1H как резерв
+
+  const tf4h = (klines4h && klines4h.length >= 30) ? klines4h : klines;
+  const tf30m = (klines30m && klines30m.length >= 20) ? klines30m : klines;
+
+  // ── 1. Тренд по SMA200 на 1H ────────────────────────────────
+  const slice1h = klines.slice(0, i+1);
+  if (slice1h.length < 50) return null;
+
+  const price   = slice1h[slice1h.length-1].close;
+  const sma200  = calcSMA(slice1h, Math.min(200, slice1h.length));
+  const sma200p = calcSMA(slice1h.slice(0,-5), Math.min(200, slice1h.length-5));
   const uptrend   = price > sma200 && sma200 > sma200p * 0.998;
   const downtrend = price < sma200 && sma200 < sma200p * 1.002;
   if (!uptrend && !downtrend) return null;
-  if (Math.abs(price - sma200) / sma200 < 0.01) return null;
-  // Волна 1
-  const lb = Math.min(30, slice.length - 3);
-  const rH = highs.slice(-lb), rL = lows.slice(-lb);
+  if (Math.abs(price - sma200) / sma200 < 0.012) return null; // слишком близко
+
+  // ── 2. Волна 1 на 4H (импульс) ──────────────────────────────
+  const highs4h = tf4h.map(c => c.high);
+  const lows4h  = tf4h.map(c => c.low);
+  const n4h = tf4h.length;
+  if (n4h < 15) return null;
+
+  const lb = Math.min(40, n4h - 3);
+  const rH = highs4h.slice(-lb), rL = lows4h.slice(-lb);
   let w0p, w1p, w0i = 0, w1i = 0;
+
   if (uptrend) {
-    w0p = Math.min(...rL); w0i = rL.indexOf(w0p); w1p = rH[0]; w1i = 0;
+    // Волна 0 = swing low, Волна 1 = следующий swing high
+    w0p = Math.min(...rL); w0i = rL.indexOf(w0p);
+    w1p = rH[0]; w1i = 0;
     for (let w = w0i+1; w < rH.length; w++) if (rH[w] > w1p) { w1p = rH[w]; w1i = w; }
   } else {
-    w0p = Math.max(...rH); w0i = rH.indexOf(w0p); w1p = rL[0]; w1i = 0;
+    w0p = Math.max(...rH); w0i = rH.indexOf(w0p);
+    w1p = rL[0]; w1i = 0;
     for (let w = w0i+1; w < rL.length; w++) if (rL[w] < w1p) { w1p = rL[w]; w1i = w; }
   }
   if (w1i <= w0i) return null;
   const w1size = Math.abs(w1p - w0p);
-  if (w1size / price < 0.01) return null;
-  // Fib 61.8%
+  if (w1size / price < 0.015) return null; // волна 1 минимум 1.5%
+
+  // ── 3. Fibonacci 61.8% для Волны 2 ──────────────────────────
   const fib618 = uptrend ? w1p - w1size * 0.618 : w1p + w1size * 0.618;
-  if (Math.abs(price - fib618) / w1size > 0.25) return null;
-  // Флаг
-  const flagH = Math.max(...highs.slice(-5));
-  const flagL = Math.min(...lows.slice(-5));
-  if ((flagH - flagL) / price > 0.05) return null;
-  // Пробой
-  const last = slice[slice.length-1], prev = slice[slice.length-2];
-  const rsi  = calcRSI(slice, 14);
-  if (uptrend   && last.close > flagH && prev.close <= flagH && rsi < 75) return 'long';
-  if (downtrend && last.close < flagL && prev.close >= flagL && rsi > 25) return 'short';
+  const fib382 = uptrend ? w1p - w1size * 0.382 : w1p + w1size * 0.382;
+  const fibDist = Math.abs(price - fib618) / w1size;
+  // Принимаем диапазон 38.2%-76.4% (между fib382 и fib764)
+  const fib764 = uptrend ? w1p - w1size * 0.764 : w1p + w1size * 0.764;
+  const inFibZone = uptrend
+    ? price >= fib764 && price <= fib382   // цена между 76.4% и 38.2% отката
+    : price <= fib764 && price >= fib382;
+  if (!inFibZone) return null;
+
+  // ── 4. Флаг/коррекция на 30m ────────────────────────────────
+  const highs30m = tf30m.map(c => c.high);
+  const lows30m  = tf30m.map(c => c.low);
+  const closes30m = tf30m.map(c => c.close);
+  const n30m = tf30m.length;
+  if (n30m < 8) return null;
+
+  // Флаг = последние 6-8 свечей 30m в узком диапазоне
+  const flagH = Math.max(...highs30m.slice(-8));
+  const flagL = Math.min(...lows30m.slice(-8));
+  const flagSize = (flagH - flagL) / price;
+  if (flagSize > 0.06) return null; // флаг < 6%
+
+  // Флаг против тренда (наклон флага)
+  const flagStart = closes30m[n30m-8] || closes30m[0];
+  const flagEnd   = closes30m[n30m-1];
+  const flagSlope = (flagEnd - flagStart) / flagStart;
+  // Для аптренда флаг должен быть нейтральным или слегка вниз
+  if (uptrend   && flagSlope > 0.02) return null;
+  if (downtrend && flagSlope < -0.02) return null;
+
+  // ── 5. Пробой флага ─────────────────────────────────────────
+  const last30m = tf30m[n30m-1];
+  const prev30m = tf30m[n30m-2];
+  const rsi1h   = calcRSI(slice1h, 14);
+
+  if (uptrend && last30m.close > flagH && prev30m.close <= flagH && rsi1h < 72) return 'long';
+  if (downtrend && last30m.close < flagL && prev30m.close >= flagL && rsi1h > 28) return 'short';
   return null;
 }
 

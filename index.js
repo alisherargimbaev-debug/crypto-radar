@@ -22,8 +22,8 @@ const STRATEGY_SL = {
   '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.5, tp2: 5.0 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '9️⃣ Pullback в тренде (15m)': { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 для надёжности
-  '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 3.0, tp2: 4.5 },
-  '1️⃣1️⃣ Elliott+Fib+SMA (1h)':  { sl: 1.5, tp1: 4.5, tp2: 7.5 },
+  '🔟 4H Range Breakout (5m)':  { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3 — автостоп при 3 SL подряд
+  '1️⃣1️⃣ Elliott+Fib+SMA (1h)':  { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -130,6 +130,7 @@ const STRATEGY_META = {
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '9️⃣ Pullback в тренде (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '🔟 4H Range Breakout (5m)':  { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '1️⃣1️⃣ Elliott+Fib+SMA (1h)':  { color: '#a78bfa', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -3076,9 +3077,10 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // Бэктест S10: 4H Range Breakout (оригинальная версия — больше сигналов)
+  // Бэктест S10: 4H Range Breakout — сбалансированная версия
+  // Цель: ~80-100 сигналов, WR 44-48%, SL < 70
   const slice = klines.slice(0, i+1);
-  if (slice.length < 20) return null;
+  if (slice.length < 22) return null;
 
   const block = slice.slice(-12, -8);
   if (block.length < 4) return null;
@@ -3088,12 +3090,22 @@ function btS10(klines, i) {
   const rangeSize = rangeHigh - rangeLow;
   const price = slice[slice.length-1].close;
 
-  // Диапазон 0.5%-5%
-  if (rangeSize / price < 0.005) return null;
-  if (rangeSize / price > 0.05)  return null;
+  // Фильтр 1: диапазон 0.7%-4.5%
+  if (rangeSize / price < 0.007) return null;
+  if (rangeSize / price > 0.045) return null;
 
+  // Фильтр 2: ATR
   const atr = calcATR(slice, 14);
   if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
+
+  const rsi = calcRSI(slice, 14);
+  // Фильтр 3: RSI не экстремальный (22-78)
+  if (rsi < 22 || rsi > 78) return null;
+
+  // Фильтр 4: объём не ниже 70% среднего
+  const vols = slice.map(c => c.quoteVolume || c.volume || 0);
+  const avgVol = vols.slice(-15,-1).reduce((a,b)=>a+b,0) / 14;
+  if (vols[vols.length-1] < avgVol * 0.7) return null;
 
   const today = slice.slice(-6);
 
@@ -3101,21 +3113,25 @@ function btS10(klines, i) {
     const prev = today[j-1];
     const curr = today[j];
 
+    // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
+      // Пробой значимый (0.3% — компромисс между 0.2% и 0.4%)
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.002) continue;
+      if (breakDepth < 0.003) continue;
+      // Возврат уверенный
       if (curr.close < rangeLow * 1.001) continue;
-      const rsi = calcRSI(slice, 14);
-      if (rsi < 20 || rsi > 80) continue;
+      // RSI не перекуплен (лонг при RSI < 55)
+      if (rsi > 55) continue;
       return 'long';
     }
 
+    // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.002) continue;
+      if (breakDepth < 0.003) continue;
       if (curr.close > rangeHigh * 0.999) continue;
-      const rsi = calcRSI(slice, 14);
-      if (rsi < 20 || rsi > 80) continue;
+      // RSI не перепродан (шорт при RSI > 45)
+      if (rsi < 45) continue;
       return 'short';
     }
   }
@@ -3125,58 +3141,44 @@ function btS10(klines, i) {
 
 
 function btS11(klines, i) {
-  // Бэктест S11: Elliott + Fibonacci + SMA200 (расслабленные фильтры)
+  // Бэктест S11: Elliott + Fibonacci + SMA200
   const slice = klines.slice(0, i+1);
   if (slice.length < 50) return null;
-
   const closes = slice.map(c => c.close);
   const highs  = slice.map(c => c.high);
   const lows   = slice.map(c => c.low);
   const price  = closes[closes.length-1];
-
   // SMA200 тренд
-  const sma200 = calcSMA(slice, Math.min(200, slice.length));
+  const sma200  = calcSMA(slice, Math.min(200, slice.length));
   const sma200p = calcSMA(slice.slice(0,-8), Math.min(200, slice.length-8));
   const uptrend   = price > sma200 && sma200 > sma200p * 0.998;
   const downtrend = price < sma200 && sma200 < sma200p * 1.002;
   if (!uptrend && !downtrend) return null;
-
-  // Цена не слишком близко к SMA200 (>1%)
   if (Math.abs(price - sma200) / sma200 < 0.01) return null;
-
-  // Волна 1 — ищем в последних 30 свечах
+  // Волна 1
   const lb = Math.min(30, slice.length - 3);
-  const rH = highs.slice(-lb);
-  const rL = lows.slice(-lb);
-
+  const rH = highs.slice(-lb), rL = lows.slice(-lb);
   let w0p, w1p, w0i = 0, w1i = 0;
   if (uptrend) {
-    w0p = Math.min(...rL); w0i = rL.indexOf(w0p);
-    w1p = rH[0]; w1i = 0;
+    w0p = Math.min(...rL); w0i = rL.indexOf(w0p); w1p = rH[0]; w1i = 0;
     for (let w = w0i+1; w < rH.length; w++) if (rH[w] > w1p) { w1p = rH[w]; w1i = w; }
   } else {
-    w0p = Math.max(...rH); w0i = rH.indexOf(w0p);
-    w1p = rL[0]; w1i = 0;
+    w0p = Math.max(...rH); w0i = rH.indexOf(w0p); w1p = rL[0]; w1i = 0;
     for (let w = w0i+1; w < rL.length; w++) if (rL[w] < w1p) { w1p = rL[w]; w1i = w; }
   }
   if (w1i <= w0i) return null;
   const w1size = Math.abs(w1p - w0p);
-  if (w1size / price < 0.01) return null; // волна > 1%
-
-  // Fibonacci 61.8% — широкий допуск ±25%
+  if (w1size / price < 0.01) return null;
+  // Fib 61.8%
   const fib618 = uptrend ? w1p - w1size * 0.618 : w1p + w1size * 0.618;
   if (Math.abs(price - fib618) / w1size > 0.25) return null;
-
-  // Флаг — последние 5 свечей (допуск до 5%)
+  // Флаг
   const flagH = Math.max(...highs.slice(-5));
   const flagL = Math.min(...lows.slice(-5));
   if ((flagH - flagL) / price > 0.05) return null;
-
-  // Пробой флага
-  const last = slice[slice.length-1];
-  const prev = slice[slice.length-2];
+  // Пробой
+  const last = slice[slice.length-1], prev = slice[slice.length-2];
   const rsi  = calcRSI(slice, 14);
-
   if (uptrend   && last.close > flagH && prev.close <= flagH && rsi < 75) return 'long';
   if (downtrend && last.close < flagL && prev.close >= flagL && rsi > 25) return 'short';
   return null;

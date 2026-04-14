@@ -19,7 +19,7 @@ const STRATEGY_SL = {
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 5.0, tp2: 7.0 },
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
-  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.5, tp2: 5.0 },
+  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.75, tp1: 4.5, tp2: 6.0 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '9️⃣ Pullback в тренде (15m)': { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 для надёжности
   '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 3.0, tp2: 4.5 },

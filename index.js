@@ -3072,58 +3072,70 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // Бэктест S10: 4H Range Breakout (строгая версия)
+  // Бэктест S10: 4H Range Breakout (оптимизирован для снижения SL)
   const slice = klines.slice(0, i+1);
-  if (slice.length < 20) return null;
+  if (slice.length < 25) return null;
 
-  // "4H диапазон" = первые 4 свечи из предыдущих 8
+  // "4H диапазон" = блок из 4 свечей
   const block = slice.slice(-12, -8);
   if (block.length < 4) return null;
 
   const rangeHigh = Math.max(...block.map(c => c.high));
   const rangeLow  = Math.min(...block.map(c => c.low));
   const rangeSize = rangeHigh - rangeLow;
-
-  // Фильтр 1: диапазон должен быть значимым (> 0.5% от цены)
   const price = slice[slice.length-1].close;
-  if (rangeSize / price < 0.005) return null;
 
-  // Фильтр 2: диапазон не должен быть слишком большим (< 5%)
-  if (rangeSize / price > 0.05) return null;
+  // Фильтр 1: диапазон значимый (0.8% - 4%)
+  // Увеличен нижний порог 0.5%→0.8% — убираем мелкие диапазоны
+  if (rangeSize / price < 0.008) return null;
+  if (rangeSize / price > 0.04) return null;
 
-  // ATR для оценки нормальной волатильности
+  // Фильтр 2: ATR — нормальная волатильность
   const atr = calcATR(slice, 14);
-  // Фильтр 3: размер диапазона близок к ATR (0.5x - 3x)
-  if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
+  if (rangeSize < atr * 0.6 || rangeSize > atr * 2.5) return null;
 
-  // "Текущий день" = последние 6 свечей
-  const today = slice.slice(-6);
+  // Фильтр 3: RSI не в нейтральной зоне 42-58 (боковик — нет убеждённости)
+  const rsi = calcRSI(slice, 14);
+  if (rsi > 42 && rsi < 58) return null;
 
-  // Ищем: пробой закрытием + возврат закрытием
+  // Фильтр 4: Объём — последняя свеча должна быть активной
+  const vols = slice.map(c => c.quoteVolume || c.volume || 0);
+  const avgVol = vols.slice(-15, -1).reduce((a,b) => a+b, 0) / 14;
+  const lastVol = vols[vols.length-1];
+  if (lastVol < avgVol * 0.8) return null; // слишком низкий объём
+
+  // Последние 5 свечей для поиска паттерна
+  const today = slice.slice(-5);
+
   for (let j = 1; j < today.length; j++) {
     const prev = today[j - 1];
     const curr = today[j];
 
     // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
-      // Фильтр 4: пробой значимый (> 0.2% за границу)
+      // Фильтр 5: пробой значимый (0.4% за границу — было 0.2%)
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.002) continue;
-      // Фильтр 5: возврат уверенный (свеча закрылась выше rangeLow)
-      if (curr.close < rangeLow * 1.001) continue;
-      // Фильтр 6: RSI не экстремальный
-      const rsi = calcRSI(slice, 14);
-      if (rsi < 20 || rsi > 80) continue;
+      if (breakDepth < 0.004) continue;
+
+      // Фильтр 6: возврат уверенный (+0.15% выше нижней границы)
+      if (curr.close < rangeLow * 1.0015) continue;
+
+      // Фильтр 7: RSI должен быть в перепроданной зоне для лонга
+      if (rsi > 45) continue; // лонг только при RSI < 45
+
       return 'long';
     }
 
     // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.002) continue;
-      if (curr.close > rangeHigh * 0.999) continue;
-      const rsi = calcRSI(slice, 14);
-      if (rsi < 20 || rsi > 80) continue;
+      if (breakDepth < 0.004) continue;
+
+      if (curr.close > rangeHigh * 0.9985) continue;
+
+      // Фильтр 7: RSI должен быть в перекупленной зоне для шорта
+      if (rsi < 55) continue; // шорт только при RSI > 55
+
       return 'short';
     }
   }

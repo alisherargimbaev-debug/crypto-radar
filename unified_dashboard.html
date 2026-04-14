@@ -1111,7 +1111,7 @@ async function runBacktest() {
     // Prop mode filter
     if (btPropModeActive) {
       filteredData = filteredData.filter(s =>
-        s.name.includes('RSI') || s.name.includes('4H Range') || s.name.includes('Pullback')
+        s.name.includes('RSI') || s.name.includes('4H Range')
       );
     }
     status.textContent = `✅ Done — coins: ${coins} | candles: ${limit}`;

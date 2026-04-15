@@ -60,12 +60,13 @@ function checkPortfolioRisk(sig) {
 
   // Проп-режим: только S5 и S10
   if (store.propMode) {
+    // Prop mode: только S5 + S10
+    // S7 исключена: MAX SL STREAK=5 → риск пробить daily limit 3%
     const allowed = sig.strategy.includes('RSI Диверг') ||
-                    sig.strategy.includes('4H Range')   ||
-                    sig.strategy.includes('Поглощение');
+                    sig.strategy.includes('4H Range');
     if (!allowed) {
       console.log(`[PROP] ${sig.instId} — стратегия не в проп-режиме: ${sig.strategy.split(' ')[0]}`);
-      return { allowed: false, reason: 'Проп-режим: S5+S7+S10' };
+      return { allowed: false, reason: 'Проп-режим: только S5+S10' };
     }
   }
 
@@ -241,9 +242,9 @@ async function handleTelegramCommand(text, chatId) {
     // Читаем из Supabase — не из памяти (память обнуляется при рестарте)
     const { data: dbTrades } = await supabase
       .from('trades')
-      .select('pnl,outcome')
+      .select('pnl,outcome,direction,strategy')
       .order('closed_at', { ascending: true })
-      .limit(500);
+      .limit(1000);
     const allDbTrades = dbTrades || [];
     const allW   = allDbTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
     const allWR  = allDbTrades.length ? Math.round(allW.length / allDbTrades.length * 100) : 0;
@@ -294,6 +295,16 @@ async function handleTelegramCommand(text, chatId) {
     const totalNetPnl = allDbTrades.reduce((a,t) => a+(parseFloat(t.pnl)||0), 0);
     const recoveryFactor = maxDD > 0 ? (totalNetPnl / maxDD).toFixed(2) : '∞';
 
+    // Среднее время удержания сделки (из Supabase с полными данными)
+    const { data: holdingData } = await supabase
+      .from('trades')
+      .select('ts, closed_at')
+      .not('closed_at', 'is', null)
+      .limit(100);
+    const avgHoldingHrs = holdingData?.length
+      ? (holdingData.reduce((a,t) => a + ((+t.closed_at - +t.ts) / 3600000), 0) / holdingData.length).toFixed(1)
+      : '—';
+
     // Calmar Ratio (годовой PnL / MaxDD) — важнее Sharpe для проп
     const tradingDays = Math.max(1, allDbTrades.length / 3); // ~3 сделки в день
     const annualized = totalNetPnl * (252 / tradingDays);
@@ -310,10 +321,13 @@ async function handleTelegramCommand(text, chatId) {
       `📈 За всё время:\n` +
       `  Сделок: ${allDbTrades.length}\n` +
       `  Win Rate: ${allWR}%\n` +
-      `  Открытых: ${store.openTrades.length}\n\n` +
+      `  Открытых: ${store.openTrades.length}\n` +
+      `  LONG WR: ${(() => { const lt = allDbTrades.filter(t=>t.direction==='long'); return lt.length ? Math.round(lt.filter(t=>t.outcome==='tp1'||t.outcome==='tp2').length/lt.length*100) : 0; })()}% (${allDbTrades.filter(t=>t.direction==='long').length} сд.)\n` +
+      `  SHORT WR: ${(() => { const st = allDbTrades.filter(t=>t.direction==='short'); return st.length ? Math.round(st.filter(t=>t.outcome==='tp1'||t.outcome==='tp2').length/st.length*100) : 0; })()}% (${allDbTrades.filter(t=>t.direction==='short').length} сд.)\n\n` +
       `📐 Расширенные метрики:\n` +
       `  Recovery Factor: ${recoveryFactor}\n` +
       `  Calmar Ratio: ${calmar}\n` +
+      `  Avg Hold Time: ${avgHoldingHrs}ч\n` +
       `  Sharpe: ${sharpe} | MaxDD: -${maxDD.toFixed(1)}%\n` +
       `  Profit Factor: ${pf} | Серия SL: ${maxConsecLoss}\n\n` +
       `📊 Sharpe по стратегиям:\n${stratSharpeLines || '  Нужно 5+ сделок на стратегию'}`
@@ -1476,16 +1490,20 @@ function calcSLTP(price, direction, strategy, atr = null) {
   const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 4.5, tp2: 7.5 };
 
   if (atr && atr > 0) {
-    // Динамический SL: разный коэффициент по типу стратегии
-    // S10 4H Range: более узкий SL (пробой должен быть чётким)
-    // S5 RSI Div: стандартный SL
-    // Остальные: стандартный
+    // Динамический SL через ATR с проверкой на соответствие STRATEGY_SL
+    // Если ATR даёт SL за пределами ±30% от STRATEGY_SL — используем STRATEGY_SL
+    // Это устраняет конфликт между двумя системами и делает SL предсказуемым
     const isS10 = strategy.includes('4H Range');
     const isS5  = strategy.includes('RSI Диверг');
     const atrMult = isS10 ? 1.2 : isS5 ? 1.4 : 1.5;
 
-    slDist  = atr * atrMult;
-    tp1Dist = slDist * (params.tp1 / params.sl); // сохраняем RR из STRATEGY_SL
+    const atrSL   = atr * atrMult;
+    const paramSL = price * params.sl / 100;
+    const deviation = Math.abs(atrSL - paramSL) / paramSL;
+
+    // Если ATR SL отклоняется от STRATEGY_SL более чем на 30% → используем STRATEGY_SL
+    slDist = deviation < 0.30 ? atrSL : paramSL;
+    tp1Dist = slDist * (params.tp1 / params.sl);
     tp2Dist = slDist * (params.tp2 / params.sl);
   } else {
     slDist  = price * params.sl  / 100;
@@ -3185,11 +3203,16 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // S10: 4H Range Breakout — ~100 сигналов (чуть строже оригинала)
-  const slice = klines.slice(0, i+1);
-  if (slice.length < 22) return null;
+  // Бэктест S10: 4H Range Breakout — РЕАЛЬНАЯ симуляция на 5m
+  // Если klines5m переданы — используем их (точнее)
+  // Если нет — fallback на 1H (менее точно)
+  const use5m = klines5m && klines5m.length >= 20;
 
-  const block = slice.slice(-12, -8);
+  // ── Определяем 4H диапазон из 1H данных ────────────────────
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 20) return null;
+
+  const block = slice.slice(-12, -8); // 4 свечи × 1H = 4-часовой блок
   if (block.length < 4) return null;
 
   const rangeHigh = Math.max(...block.map(c => c.high));
@@ -3197,33 +3220,38 @@ function btS10(klines, i) {
   const rangeSize = rangeHigh - rangeLow;
   const price = slice[slice.length-1].close;
 
-  // Диапазон 0.6%-4.5% (было 0.5%-5%)
-  if (rangeSize / price < 0.006) return null;
-  if (rangeSize / price > 0.045) return null;
+  // Диапазон 0.5%-5%
+  if (rangeSize / price < 0.005) return null;
+  if (rangeSize / price > 0.05)  return null;
 
   const atr = calcATR(slice, 14);
-  if (rangeSize < atr * 0.6 || rangeSize > atr * 2.8) return null;
+  if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
 
-  const today = slice.slice(-6);
+  // ── Поиск паттерна ─────────────────────────────────────────
+  // Если есть 5m данные — ищем на них (реалистично)
+  // Если нет — ищем на 1H (приближение)
+  const tf = use5m ? klines5m : slice;
+  const today = tf.slice(-12); // последние 12 свечей (1ч на 5m или 12ч на 1H)
+
   const rsi = calcRSI(slice, 14);
-  // Убираем сигналы в нейтральной зоне RSI (45-55) — нет убеждённости
-  if (rsi > 45 && rsi < 55) return null;
   if (rsi < 20 || rsi > 80) return null;
 
   for (let j = 1; j < today.length; j++) {
     const prev = today[j-1];
     const curr = today[j];
 
+    // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.003) continue; // было 0.002
+      if (breakDepth < 0.002) continue;
       if (curr.close < rangeLow * 1.001) continue;
       return 'long';
     }
 
+    // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.003) continue;
+      if (breakDepth < 0.002) continue;
       if (curr.close > rangeHigh * 0.999) continue;
       return 'short';
     }
@@ -3268,10 +3296,11 @@ function btS11(klines, i, klines30m, klines4h) {
   const w1size = Math.abs(w1p - w0p);
   if (w1size / price < 0.015) return null;
 
-  // Fibonacci 38.2%-76.4% зона (нормальная коррекция)
-  const fib382 = uptrend ? w1p - w1size * 0.382 : w1p + w1size * 0.382;
-  const fib764 = uptrend ? w1p - w1size * 0.764 : w1p + w1size * 0.764;
-  const inFibZone = uptrend ? (price <= fib382 && price >= fib764) : (price >= fib382 && price <= fib764);
+  // Fibonacci зона 50%-70% (ужесточено с 38-76%)
+  // Только классическая коррекция Эллиотта — не любой откат
+  const fib500 = uptrend ? w1p - w1size * 0.500 : w1p + w1size * 0.500;
+  const fib700 = uptrend ? w1p - w1size * 0.700 : w1p + w1size * 0.700;
+  const inFibZone = uptrend ? (price <= fib500 && price >= fib700) : (price >= fib500 && price <= fib700);
   if (!inFibZone) return null;
 
   // Флаг на 30m (последние 8 свечей)

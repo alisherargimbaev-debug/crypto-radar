@@ -2959,10 +2959,14 @@ if (klines1h.length < 60) continue;
       const klines = klines1h;
       let lastI = -10;
       const isS11 = name.includes('Elliott');
+      const isS10 = name.includes('4H Range');
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
-        // S11 получает 4H и 30m данные для реалистичного бэктеста
-        const direction = isS11 ? fn(klines, i, klines30m, klines4h) : fn(klines, i);
+        // S11: 4H волны + 30m вход, S10: 5m данные для реалистичного пробоя
+        let direction;
+        if (isS11) direction = fn(klines, i, klines30m, klines4h);
+        else if (isS10) direction = fn(klines, i, klines5m);
+        else direction = fn(klines, i);
         if (!direction) continue;
 
         const price = klines[i].close;
@@ -3181,11 +3185,10 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // Бэктест S10: 4H Range Breakout (оригинальная версия — максимум сигналов)
+  // S10: 4H Range Breakout — ~100 сигналов (чуть строже оригинала)
   const slice = klines.slice(0, i+1);
-  if (slice.length < 20) return null;
+  if (slice.length < 22) return null;
 
-  // "4H диапазон" = блок из 4 свечей
   const block = slice.slice(-12, -8);
   if (block.length < 4) return null;
 
@@ -3194,38 +3197,34 @@ function btS10(klines, i) {
   const rangeSize = rangeHigh - rangeLow;
   const price = slice[slice.length-1].close;
 
-  // Диапазон 0.5%-5%
-  if (rangeSize / price < 0.005) return null;
-  if (rangeSize / price > 0.05)  return null;
+  // Диапазон 0.6%-4.5% (было 0.5%-5%)
+  if (rangeSize / price < 0.006) return null;
+  if (rangeSize / price > 0.045) return null;
 
-  // ATR фильтр
   const atr = calcATR(slice, 14);
-  if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
+  if (rangeSize < atr * 0.6 || rangeSize > atr * 2.8) return null;
 
-  // Последние 6 свечей — ищем пробой + возврат
   const today = slice.slice(-6);
+  const rsi = calcRSI(slice, 14);
+  // Убираем сигналы в нейтральной зоне RSI (45-55) — нет убеждённости
+  if (rsi > 45 && rsi < 55) return null;
+  if (rsi < 20 || rsi > 80) return null;
 
   for (let j = 1; j < today.length; j++) {
     const prev = today[j-1];
     const curr = today[j];
 
-    // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.002) continue;
+      if (breakDepth < 0.003) continue; // было 0.002
       if (curr.close < rangeLow * 1.001) continue;
-      const rsi = calcRSI(slice, 14);
-      if (rsi < 20 || rsi > 80) continue;
       return 'long';
     }
 
-    // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.002) continue;
+      if (breakDepth < 0.003) continue;
       if (curr.close > rangeHigh * 0.999) continue;
-      const rsi = calcRSI(slice, 14);
-      if (rsi < 20 || rsi > 80) continue;
       return 'short';
     }
   }

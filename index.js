@@ -19,7 +19,7 @@ const STRATEGY_SL = {
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
   '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 5.0, tp2: 7.0 },
   '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
-  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.75, tp1: 4.5, tp2: 6.0 },
+  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.5, tp2: 5.0 },
   '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
   '9️⃣ Pullback в тренде (15m)': { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 для надёжности
   '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 3.0, tp2: 4.5 },
@@ -135,14 +135,22 @@ const STRATEGY_META = {
 const store = {
   cooldowns:    {},
   openTrades:   [],
-  tradeHistory: [],
-  signalLog:    [],
+  tradeHistory: [], // ограничен 500 записями (защита от memory leak)
+  signalLog:    [], // ограничен 300 записями
   fngCache:     null,
   fngTs:        0,
   oiCache:      {},
   klinesCache:  {},  // кэш свечей на 60 секунд
   propMode:     false, // режим проп-фирмы
 };
+
+// ── Добавить в tradeHistory с защитой от переполнения ──────
+function pushTradeHistory(trade) {
+  store.tradeHistory.push(trade);
+  if (store.tradeHistory.length > 500) {
+    store.tradeHistory = store.tradeHistory.slice(-500);
+  }
+}
 
 // ── Сессии UTC ─────────────────────────────────────────────
 const SESSION_ASIA   = { from: 1,  to: 8  };
@@ -281,6 +289,15 @@ async function handleTelegramCommand(text, chatId) {
 
     const fng    = store.fngCache || { value: '?', label: '?' };
 
+    // Recovery Factor = Net PnL / Max Drawdown (> 2.0 = хорошо для проп)
+    const totalNetPnl = allDbTrades.reduce((a,t) => a+(parseFloat(t.pnl)||0), 0);
+    const recoveryFactor = maxDD > 0 ? (totalNetPnl / maxDD).toFixed(2) : '∞';
+
+    // Calmar Ratio (годовой PnL / MaxDD) — важнее Sharpe для проп
+    const tradingDays = Math.max(1, allDbTrades.length / 3); // ~3 сделки в день
+    const annualized = totalNetPnl * (252 / tradingDays);
+    const calmar = maxDD > 0 ? (annualized / maxDD).toFixed(2) : '∞';
+
     await sendTelegramTo(chatId,
       `📊 СТАТИСТИКА\n━━━━━━━━━━━━━━━━━━━━━━\n` +
       `😐 F&G: ${fng.value} (${fng.label})\n\n` +
@@ -294,6 +311,8 @@ async function handleTelegramCommand(text, chatId) {
       `  Win Rate: ${allWR}%\n` +
       `  Открытых: ${store.openTrades.length}\n\n` +
       `📐 Расширенные метрики:\n` +
+      `  Recovery Factor: ${recoveryFactor}\n` +
+      `  Calmar Ratio: ${calmar}\n` +
       `  Sharpe: ${sharpe} | MaxDD: -${maxDD.toFixed(1)}%\n` +
       `  Profit Factor: ${pf} | Серия SL: ${maxConsecLoss}\n\n` +
       `📊 Sharpe по стратегиям:\n${stratSharpeLines || '  Нужно 5+ сделок на стратегию'}`
@@ -1101,15 +1120,30 @@ async function checkMacroEvents() {
     const data = await httpGet('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
     if (!data || !Array.isArray(data)) return null;
     const now = Date.now();
-    const twoHours = 2 * 60 * 60 * 1000;
+    const BLOCK_BEFORE = 30 * 60 * 1000;  // блокируем за 30 мин до события
+    const BLOCK_AFTER  = 30 * 60 * 1000;  // и 30 мин после
+    const WARN_WINDOW  = 2 * 60 * 60 * 1000; // предупреждение за 2 часа
+
     const highImpact = data.filter(e => {
       if (e.impact !== 'High') return false;
       if (e.country !== 'USD') return false;
       const eventTime = new Date(e.date).getTime();
-      return Math.abs(now - eventTime) < twoHours;
+      return Math.abs(now - eventTime) < WARN_WINDOW;
     });
     if (!highImpact.length) return null;
-    return { events: highImpact.map(e => e.title).join(', '), count: highImpact.length };
+
+    // Определяем — блокировать торговлю или только предупредить
+    const blocking = highImpact.filter(e => {
+      const eventTime = new Date(e.date).getTime();
+      return (now >= eventTime - BLOCK_BEFORE) && (now <= eventTime + BLOCK_AFTER);
+    });
+
+    return {
+      events:   highImpact.map(e => e.title).join(', '),
+      count:    highImpact.length,
+      blocking: blocking.length > 0, // true = блокируем сигналы
+      blockReason: blocking.length > 0 ? blocking.map(e => e.title).join(', ') : null,
+    };
   } catch(e) { return null; }
 }
 
@@ -1167,9 +1201,15 @@ function applyETFFlow(sig, etfFlow) {
 function applyMacroFilter(sig, macroEvent) {
   if (!macroEvent) return sig;
 
-  // За 2 часа до и после важного события — снижаем уверенность
-  sig.confidence  = Math.max(sig.confidence - 20, 0);
-  sig.macroNote   = `⚠️ Макро событие: ${macroEvent.events} → -20%`;
+  if (macroEvent.blocking) {
+    // В окне ±30 мин от события — обнуляем confidence (блокировка)
+    sig.confidence = 0;
+    sig.macroNote  = `🚫 NEWS BLOCK: ${macroEvent.blockReason} → торговля заблокирована`;
+  } else {
+    // За 2 часа до события — снижаем уверенность на 25%
+    sig.confidence  = Math.max(sig.confidence - 25, 0);
+    sig.macroNote   = `⚠️ Скоро макро событие: ${macroEvent.events} → -25%`;
+  }
   return sig;
 }
 
@@ -1419,20 +1459,31 @@ function calcBollinger(klines, period = 20, mult = 2) {
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
 function calcSLTP(price, direction, strategy, atr = null) {
-  // Минимальные пороги
-  const MIN_SL_PCT  = 1.0; // минимум 1% стоп
-  const MAX_SL_PCT  = 2.7; // максимум 2.7% стоп
-  const MIN_TP1_PCT = 3.0; // минимум 3% TP1
-  const MIN_TP2_PCT = 5.0; // минимум 5% TP2
+  // ── Динамический SL на основе ATR (рекомендация аудита) ────
+  // ATR отражает реальную волатильность текущего рынка
+  // Фиксированный % SL игнорирует рыночные условия
+
+  const MIN_SL_PCT  = 0.8; // снижен с 1.0 — ATR может быть узким
+  const MAX_SL_PCT  = 3.0; // поднят с 2.7 — волатильный рынок
+  const MIN_TP1_PCT = 2.4; // минимум TP1
+  const MIN_TP2_PCT = 4.8; // минимум TP2
 
   let slDist, tp1Dist, tp2Dist;
+  const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 4.5, tp2: 7.5 };
 
   if (atr && atr > 0) {
-    slDist  = atr * 1.5;
-    tp1Dist = atr * 3.0;
-    tp2Dist = atr * 4.5;
+    // Динамический SL: разный коэффициент по типу стратегии
+    // S10 4H Range: более узкий SL (пробой должен быть чётким)
+    // S5 RSI Div: стандартный SL
+    // Остальные: стандартный
+    const isS10 = strategy.includes('4H Range');
+    const isS5  = strategy.includes('RSI Диверг');
+    const atrMult = isS10 ? 1.2 : isS5 ? 1.4 : 1.5;
+
+    slDist  = atr * atrMult;
+    tp1Dist = slDist * (params.tp1 / params.sl); // сохраняем RR из STRATEGY_SL
+    tp2Dist = slDist * (params.tp2 / params.sl);
   } else {
-    const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 3.0, tp2: 4.5 };
     slDist  = price * params.sl  / 100;
     tp1Dist = price * params.tp1 / 100;
     tp2Dist = price * params.tp2 / 100;
@@ -1448,9 +1499,9 @@ function calcSLTP(price, direction, strategy, atr = null) {
   tp1Dist = Math.max(tp1Dist, minTP1);
   tp2Dist = Math.max(tp2Dist, minTP2);
 
-  // Гарантируем RR минимум 1:2
-  if (tp1Dist < slDist * 2) tp1Dist = slDist * 2;
-  if (tp2Dist < slDist * 3) tp2Dist = slDist * 3;
+  // Гарантируем RR минимум 1:2 и 1:3
+  if (tp1Dist < slDist * 2)   tp1Dist = slDist * 2;
+  if (tp2Dist < slDist * 3)   tp2Dist = slDist * 3;
 
   return direction === 'long'
     ? {
@@ -2800,21 +2851,41 @@ app.get('/backtest/run', async (req, res) => {
   }
 });
 
-async function httpGetFast(url) {
-  try {
-    await new Promise(r => setTimeout(r, 300)); // быстрая пауза 300ms
-    const resp = await axios.get(url, { timeout: 30000 });
-    return resp.data;
-  } catch(e) {
-    return null;
+async function httpGetFast(url, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const mod = url.startsWith('https') ? require('https') : require('http');
+        const req = mod.get(url, { timeout: 8000, headers: { 'User-Agent': 'CryptoRadar/4.0' } }, res => {
+          let body = '';
+          res.on('data', d => body += d);
+          res.on('end', () => {
+            try { resolve(JSON.parse(body)); } catch { reject(new Error('JSON parse error')); }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      return data;
+    } catch(e) {
+      if (attempt < retries) {
+        const delay = Math.pow(2, attempt) * 500; // 500ms, 1000ms
+        await new Promise(r => setTimeout(r, delay));
+        console.log(`[RETRY] ${url.split('?')[0]} attempt ${attempt + 2}/${retries + 1}`);
+      } else {
+        console.error(`[HTTP ERROR] ${url.split('?')[0]}: ${e.message}`);
+        return null;
+      }
+    }
   }
 }
+
 
 async function runBacktest(coins, limit = 300) {
   const strategies = {
   /* 'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, */
   'S2 Bounce 1h':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-  'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
+  // 'S4 MA/RSI': { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, // ОТКЛЮЧЕНА
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
@@ -2833,16 +2904,16 @@ const klines1h = data1h.data.reverse().map(c => ({
   volume:+c[5], quoteVolume:+c[7],
 }));
 
-// Загружаем 30m свечи для S11
-const data30m = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=30m&limit=300`);
-const klines30m = (data30m?.code === '0' && data30m.data?.length)
-  ? data30m.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
-  : [];
-
-// Загружаем 4H свечи для S11
+// 4H данные для S11 Elliott (аудит: бэктест должен соответствовать live)
 const data4h = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=4H&limit=200`);
 const klines4h = (data4h?.code === '0' && data4h.data?.length)
   ? data4h.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
+  : [];
+
+// 30m данные для S11 (вход)
+const data30m = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=30m&limit=300`);
+const klines30m = (data30m?.code === '0' && data30m.data?.length)
+  ? data30m.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
   : [];
 
 if (klines1h.length < 60) continue;
@@ -2850,7 +2921,7 @@ if (klines1h.length < 60) continue;
     const runs = [
   /* { name:'S1 Пробой 15m',      fn: btS1 }, */
   { name:'S2 Bounce 1h',       fn: btS2 },
-  { name:'S4 MA/RSI',          fn: btS4 },
+  // { name:'S4 MA/RSI', fn: btS4 }, // ОТКЛЮЧЕНА
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
   { name:'S9 Pullback',        fn: btS9 },
@@ -2866,7 +2937,7 @@ if (klines1h.length < 60) continue;
       const isS11 = name.includes('Elliott');
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
-        // S11 получает доп. таймфреймы 30m и 4H
+        // S11 получает 4H и 30m данные для реалистичного бэктеста
         const direction = isS11 ? fn(klines, i, klines30m, klines4h) : fn(klines, i);
         if (!direction) continue;
 
@@ -3150,88 +3221,59 @@ function btS10(klines, i) {
 
 
 function btS11(klines, i, klines30m, klines4h) {
-  // S11: Elliott Wave + Fibonacci + SMA200
-  // Таймфреймы: 4H для тренда/волн, 30m для входа
-  // Если 4H не передан — используем 1H как резерв
+  // S11: Elliott Wave + Fibonacci + SMA200 (мультитаймфрейм)
+  // 4H: волна + Fib зона, 30m: флаг + вход, 1H: тренд
+  const tf4h  = (klines4h  && klines4h.length  >= 15) ? klines4h  : klines;
+  const tf30m = (klines30m && klines30m.length >= 10) ? klines30m : klines;
 
-  const tf4h = (klines4h && klines4h.length >= 30) ? klines4h : klines;
-  const tf30m = (klines30m && klines30m.length >= 20) ? klines30m : klines;
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 50) return null;
 
-  // ── 1. Тренд по SMA200 на 1H ────────────────────────────────
-  const slice1h = klines.slice(0, i+1);
-  if (slice1h.length < 50) return null;
-
-  const price   = slice1h[slice1h.length-1].close;
-  const sma200  = calcSMA(slice1h, Math.min(200, slice1h.length));
-  const sma200p = calcSMA(slice1h.slice(0,-5), Math.min(200, slice1h.length-5));
+  const price   = slice[slice.length-1].close;
+  const sma200  = calcSMA(slice, Math.min(200, slice.length));
+  const sma200p = calcSMA(slice.slice(0,-5), Math.min(200, slice.length-5));
   const uptrend   = price > sma200 && sma200 > sma200p * 0.998;
   const downtrend = price < sma200 && sma200 < sma200p * 1.002;
   if (!uptrend && !downtrend) return null;
-  if (Math.abs(price - sma200) / sma200 < 0.012) return null; // слишком близко
+  if (Math.abs(price - sma200) / sma200 < 0.012) return null;
 
-  // ── 2. Волна 1 на 4H (импульс) ──────────────────────────────
+  // Волна 1 на 4H
   const highs4h = tf4h.map(c => c.high);
   const lows4h  = tf4h.map(c => c.low);
-  const n4h = tf4h.length;
-  if (n4h < 15) return null;
-
-  const lb = Math.min(40, n4h - 3);
+  const lb = Math.min(40, tf4h.length - 3);
   const rH = highs4h.slice(-lb), rL = lows4h.slice(-lb);
   let w0p, w1p, w0i = 0, w1i = 0;
-
   if (uptrend) {
-    // Волна 0 = swing low, Волна 1 = следующий swing high
-    w0p = Math.min(...rL); w0i = rL.indexOf(w0p);
-    w1p = rH[0]; w1i = 0;
+    w0p = Math.min(...rL); w0i = rL.indexOf(w0p); w1p = rH[0]; w1i = 0;
     for (let w = w0i+1; w < rH.length; w++) if (rH[w] > w1p) { w1p = rH[w]; w1i = w; }
   } else {
-    w0p = Math.max(...rH); w0i = rH.indexOf(w0p);
-    w1p = rL[0]; w1i = 0;
+    w0p = Math.max(...rH); w0i = rH.indexOf(w0p); w1p = rL[0]; w1i = 0;
     for (let w = w0i+1; w < rL.length; w++) if (rL[w] < w1p) { w1p = rL[w]; w1i = w; }
   }
   if (w1i <= w0i) return null;
   const w1size = Math.abs(w1p - w0p);
-  if (w1size / price < 0.015) return null; // волна 1 минимум 1.5%
+  if (w1size / price < 0.015) return null;
 
-  // ── 3. Fibonacci 61.8% для Волны 2 ──────────────────────────
-  const fib618 = uptrend ? w1p - w1size * 0.618 : w1p + w1size * 0.618;
+  // Fibonacci 38.2%-76.4% зона (нормальная коррекция)
   const fib382 = uptrend ? w1p - w1size * 0.382 : w1p + w1size * 0.382;
-  const fibDist = Math.abs(price - fib618) / w1size;
-  // Принимаем диапазон 38.2%-76.4% (между fib382 и fib764)
   const fib764 = uptrend ? w1p - w1size * 0.764 : w1p + w1size * 0.764;
-  const inFibZone = uptrend
-    ? price >= fib764 && price <= fib382   // цена между 76.4% и 38.2% отката
-    : price <= fib764 && price >= fib382;
+  const inFibZone = uptrend ? (price <= fib382 && price >= fib764) : (price >= fib382 && price <= fib764);
   if (!inFibZone) return null;
 
-  // ── 4. Флаг/коррекция на 30m ────────────────────────────────
+  // Флаг на 30m (последние 8 свечей)
   const highs30m = tf30m.map(c => c.high);
   const lows30m  = tf30m.map(c => c.low);
-  const closes30m = tf30m.map(c => c.close);
   const n30m = tf30m.length;
   if (n30m < 8) return null;
-
-  // Флаг = последние 6-8 свечей 30m в узком диапазоне
   const flagH = Math.max(...highs30m.slice(-8));
   const flagL = Math.min(...lows30m.slice(-8));
-  const flagSize = (flagH - flagL) / price;
-  if (flagSize > 0.06) return null; // флаг < 6%
+  if ((flagH - flagL) / price > 0.06) return null;
 
-  // Флаг против тренда (наклон флага)
-  const flagStart = closes30m[n30m-8] || closes30m[0];
-  const flagEnd   = closes30m[n30m-1];
-  const flagSlope = (flagEnd - flagStart) / flagStart;
-  // Для аптренда флаг должен быть нейтральным или слегка вниз
-  if (uptrend   && flagSlope > 0.02) return null;
-  if (downtrend && flagSlope < -0.02) return null;
-
-  // ── 5. Пробой флага ─────────────────────────────────────────
-  const last30m = tf30m[n30m-1];
-  const prev30m = tf30m[n30m-2];
-  const rsi1h   = calcRSI(slice1h, 14);
-
-  if (uptrend && last30m.close > flagH && prev30m.close <= flagH && rsi1h < 72) return 'long';
-  if (downtrend && last30m.close < flagL && prev30m.close >= flagL && rsi1h > 28) return 'short';
+  // Пробой флага
+  const last = tf30m[n30m-1], prev = tf30m[n30m-2];
+  const rsi  = calcRSI(slice, 14);
+  if (uptrend   && last.close > flagH && prev.close <= flagH && rsi < 72) return 'long';
+  if (downtrend && last.close < flagL && prev.close >= flagL && rsi > 28) return 'short';
   return null;
 }
 
@@ -3455,6 +3497,12 @@ if (alreadyOpen) {
       best.ts      = Date.now();
       best.fng     = fng;
       best.session = session;
+
+      // ── Оценка slippage (аудит: скрытые потери) ─────────
+      // Реальная цена входа хуже сигнальной на 0.05-0.3%
+      // Логируем для анализа (не корректируем — биржа делает сама)
+      const estSlippage = best.price * 0.001; // ~0.1% оценочный slippage
+      console.log(`[SLIP] ${best.instId}: est. slippage ±$${estSlippage.toFixed(4)}`);
 
       // Проверка портфельного риска ПЕРЕД AI валидацией
       const portfolioCheck = checkPortfolioRisk(best);

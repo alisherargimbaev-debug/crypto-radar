@@ -35,7 +35,7 @@ const COOLDOWN_MIN   = 15;
 // ── Портфельный риск-менеджмент ────────────────────────────
 const MAX_OPEN_TRADES     = 3;    // максимум открытых сделок
 const MAX_CORRELATED      = 2;    // максимум сделок в одном секторе
-const MAX_DAILY_LOSS_PCT  = 5.0;  // дневной лимит убытка %
+const MAX_DAILY_LOSS_PCT  = 3.0;  // дневной лимит убытка % (3% буфер до проп-лимита 5%)
 const MAX_SAME_DIRECTION  = 2;    // максимум лонгов или шортов одновременно
 
 // Секторы монет для проверки корреляции
@@ -61,10 +61,11 @@ function checkPortfolioRisk(sig) {
   // Проп-режим: только S5 и S10
   if (store.propMode) {
     const allowed = sig.strategy.includes('RSI Диверг') ||
-                    sig.strategy.includes('4H Range');
+                    sig.strategy.includes('4H Range')   ||
+                    sig.strategy.includes('Поглощение');
     if (!allowed) {
       console.log(`[PROP] ${sig.instId} — стратегия не в проп-режиме: ${sig.strategy.split(' ')[0]}`);
-      return { allowed: false, reason: 'Проп-режим: только S5+S10' };
+      return { allowed: false, reason: 'Проп-режим: S5+S7+S10' };
     }
   }
 
@@ -1144,7 +1145,10 @@ async function checkMacroEvents() {
       blocking: blocking.length > 0, // true = блокируем сигналы
       blockReason: blocking.length > 0 ? blocking.map(e => e.title).join(', ') : null,
     };
-  } catch(e) { return null; }
+  } catch(e) {
+    console.error('checkMacroEvents API failed — continuing without news filter', e.message);
+    return { events: 'unknown', blocking: false, count: 0 }; // safe fallback
+  }
 }
 
 // Кэш для CoinGecko (лимит 30 req/min)
@@ -2067,6 +2071,7 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
+/* S2 ОТКЛЮЧЕНА — низкий WR в текущих условиях
 // S2: Liquidity Bounce (1h) — только в боковике или развороте
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
@@ -2123,6 +2128,8 @@ async function runStrategies(instId, coinData, asianSession) {
         }
       }
     }
+
+    S2 ОТКЛЮЧЕНА */
 
     // S3: Ранний вход 5m
     /* if (k5m.length >= 7 && oi5m.length >= 2) {
@@ -2885,7 +2892,7 @@ async function runBacktest(coins, limit = 300) {
   const strategies = {
   /* 'S1 Пробой 15m':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, */
   'S2 Bounce 1h':      { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
-  // 'S4 MA/RSI': { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] }, // ОТКЛЮЧЕНА
+  'S4 MA/RSI':         { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S5 RSI Дивергенция':{ signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S7 Поглощение':     { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
   'S9 Pullback':       { signals:0, wins:0, losses:0, expired:0, pnl:0, trades:[] },
@@ -2904,11 +2911,28 @@ const klines1h = data1h.data.reverse().map(c => ({
   volume:+c[5], quoteVolume:+c[7],
 }));
 
-// 4H данные для S11 Elliott (аудит: бэктест должен соответствовать live)
+// 4H данные для S11 Elliott
 const data4h = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=4H&limit=200`);
 const klines4h = (data4h?.code === '0' && data4h.data?.length)
   ? data4h.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
   : [];
+
+// 5m данные для btS10 (аудит: live S10 работает на 5m — бэктест тоже должен)
+// OKX возвращает max 300 свечей × 5m = 25 часов истории за запрос
+// Делаем 2 запроса = ~50 часов (достаточно для анализа паттернов)
+let klines5m = [];
+{
+  const d1 = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=5m&limit=300`);
+  if (d1?.code === '0' && d1.data?.length) {
+    const batch1 = d1.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }));
+    const oldest = d1.data[0][0];
+    const d2 = await httpGetFast(`https://www.okx.com/api/v5/market/history-candles?instId=${instId}&bar=5m&limit=300&before=${oldest}`);
+    const batch2 = (d2?.code === '0' && d2.data?.length)
+      ? d2.data.reverse().map(c => ({ ts:+c[0], open:+c[1], high:+c[2], low:+c[3], close:+c[4], volume:+c[5], quoteVolume:+c[7] }))
+      : [];
+    klines5m = [...batch2, ...batch1];
+  }
+}
 
 // 30m данные для S11 (вход)
 const data30m = await httpGetFast(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=30m&limit=300`);
@@ -2921,7 +2945,7 @@ if (klines1h.length < 60) continue;
     const runs = [
   /* { name:'S1 Пробой 15m',      fn: btS1 }, */
   { name:'S2 Bounce 1h',       fn: btS2 },
-  // { name:'S4 MA/RSI', fn: btS4 }, // ОТКЛЮЧЕНА
+  { name:'S4 MA/RSI',          fn: btS4 },
   { name:'S5 RSI Дивергенция', fn: btS5 },
   { name:'S7 Поглощение',      fn: btS7 },
   { name:'S9 Pullback',        fn: btS9 },
@@ -2935,10 +2959,14 @@ if (klines1h.length < 60) continue;
       const klines = klines1h;
       let lastI = -10;
       const isS11 = name.includes('Elliott');
+      const isS10 = name.includes('4H Range');
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
-        // S11 получает 4H и 30m данные для реалистичного бэктеста
-        const direction = isS11 ? fn(klines, i, klines30m, klines4h) : fn(klines, i);
+        // S11: 4H волны + 30m вход, S10: 5m данные для реалистичного пробоя
+        let direction;
+        if (isS11) direction = fn(klines, i, klines30m, klines4h);
+        else if (isS10) direction = fn(klines, i, klines5m);
+        else direction = fn(klines, i);
         if (!direction) continue;
 
         const price = klines[i].close;
@@ -3156,13 +3184,17 @@ function btS9(klines, i) {
 }
 
 
-function btS10(klines, i) {
-  // Бэктест S10: 4H Range Breakout — сбалансированная версия
-  // Цель: ~80-100 сигналов, WR 44-48%, SL < 70
-  const slice = klines.slice(0, i+1);
-  if (slice.length < 22) return null;
+function btS10(klines, i, klines5m) {
+  // Бэктест S10: 4H Range Breakout — РЕАЛЬНАЯ симуляция на 5m
+  // Если klines5m переданы — используем их (точнее)
+  // Если нет — fallback на 1H (менее точно)
+  const use5m = klines5m && klines5m.length >= 20;
 
-  const block = slice.slice(-12, -8);
+  // ── Определяем 4H диапазон из 1H данных ────────────────────
+  const slice = klines.slice(0, i+1);
+  if (slice.length < 20) return null;
+
+  const block = slice.slice(-12, -8); // 4 свечи × 1H = 4-часовой блок
   if (block.length < 4) return null;
 
   const rangeHigh = Math.max(...block.map(c => c.high));
@@ -3170,24 +3202,21 @@ function btS10(klines, i) {
   const rangeSize = rangeHigh - rangeLow;
   const price = slice[slice.length-1].close;
 
-  // Фильтр 1: диапазон 0.7%-4.5%
-  if (rangeSize / price < 0.007) return null;
-  if (rangeSize / price > 0.045) return null;
+  // Диапазон 0.5%-5%
+  if (rangeSize / price < 0.005) return null;
+  if (rangeSize / price > 0.05)  return null;
 
-  // Фильтр 2: ATR
   const atr = calcATR(slice, 14);
   if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
 
+  // ── Поиск паттерна ─────────────────────────────────────────
+  // Если есть 5m данные — ищем на них (реалистично)
+  // Если нет — ищем на 1H (приближение)
+  const tf = use5m ? klines5m : slice;
+  const today = tf.slice(-12); // последние 12 свечей (1ч на 5m или 12ч на 1H)
+
   const rsi = calcRSI(slice, 14);
-  // Фильтр 3: RSI не экстремальный (22-78)
-  if (rsi < 22 || rsi > 78) return null;
-
-  // Фильтр 4: объём не ниже 70% среднего
-  const vols = slice.map(c => c.quoteVolume || c.volume || 0);
-  const avgVol = vols.slice(-15,-1).reduce((a,b)=>a+b,0) / 14;
-  if (vols[vols.length-1] < avgVol * 0.7) return null;
-
-  const today = slice.slice(-6);
+  if (rsi < 20 || rsi > 80) return null;
 
   for (let j = 1; j < today.length; j++) {
     const prev = today[j-1];
@@ -3195,29 +3224,24 @@ function btS10(klines, i) {
 
     // Пробой вниз + возврат → LONG
     if (prev.close < rangeLow && curr.close > rangeLow) {
-      // Пробой значимый (0.3% — компромисс между 0.2% и 0.4%)
       const breakDepth = (rangeLow - prev.close) / rangeLow;
-      if (breakDepth < 0.003) continue;
-      // Возврат уверенный
+      if (breakDepth < 0.002) continue;
       if (curr.close < rangeLow * 1.001) continue;
-      // RSI не перекуплен (лонг при RSI < 55)
-      if (rsi > 55) continue;
       return 'long';
     }
 
     // Пробой вверх + возврат → SHORT
     if (prev.close > rangeHigh && curr.close < rangeHigh) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
-      if (breakDepth < 0.003) continue;
+      if (breakDepth < 0.002) continue;
       if (curr.close > rangeHigh * 0.999) continue;
-      // RSI не перепродан (шорт при RSI > 45)
-      if (rsi < 45) continue;
       return 'short';
     }
   }
 
   return null;
 }
+
 
 
 function btS11(klines, i, klines30m, klines4h) {

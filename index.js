@@ -2959,14 +2959,10 @@ if (klines1h.length < 60) continue;
       const klines = klines1h;
       let lastI = -10;
       const isS11 = name.includes('Elliott');
-      const isS10 = name.includes('4H Range');
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
-        // S11: 4H волны + 30m вход, S10: 5m данные для реалистичного пробоя
-        let direction;
-        if (isS11) direction = fn(klines, i, klines30m, klines4h);
-        else if (isS10) direction = fn(klines, i, klines5m);
-        else direction = fn(klines, i);
+        // S11 получает 4H и 30m данные для реалистичного бэктеста
+        const direction = isS11 ? fn(klines, i, klines30m, klines4h) : fn(klines, i);
         if (!direction) continue;
 
         const price = klines[i].close;
@@ -3184,17 +3180,13 @@ function btS9(klines, i) {
 }
 
 
-function btS10(klines, i, klines5m) {
-  // Бэктест S10: 4H Range Breakout — РЕАЛЬНАЯ симуляция на 5m
-  // Если klines5m переданы — используем их (точнее)
-  // Если нет — fallback на 1H (менее точно)
-  const use5m = klines5m && klines5m.length >= 20;
-
-  // ── Определяем 4H диапазон из 1H данных ────────────────────
+function btS10(klines, i) {
+  // Бэктест S10: 4H Range Breakout (оригинальная версия — максимум сигналов)
   const slice = klines.slice(0, i+1);
   if (slice.length < 20) return null;
 
-  const block = slice.slice(-12, -8); // 4 свечи × 1H = 4-часовой блок
+  // "4H диапазон" = блок из 4 свечей
+  const block = slice.slice(-12, -8);
   if (block.length < 4) return null;
 
   const rangeHigh = Math.max(...block.map(c => c.high));
@@ -3206,17 +3198,12 @@ function btS10(klines, i, klines5m) {
   if (rangeSize / price < 0.005) return null;
   if (rangeSize / price > 0.05)  return null;
 
+  // ATR фильтр
   const atr = calcATR(slice, 14);
   if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
 
-  // ── Поиск паттерна ─────────────────────────────────────────
-  // Если есть 5m данные — ищем на них (реалистично)
-  // Если нет — ищем на 1H (приближение)
-  const tf = use5m ? klines5m : slice;
-  const today = tf.slice(-12); // последние 12 свечей (1ч на 5m или 12ч на 1H)
-
-  const rsi = calcRSI(slice, 14);
-  if (rsi < 20 || rsi > 80) return null;
+  // Последние 6 свечей — ищем пробой + возврат
+  const today = slice.slice(-6);
 
   for (let j = 1; j < today.length; j++) {
     const prev = today[j-1];
@@ -3227,6 +3214,8 @@ function btS10(klines, i, klines5m) {
       const breakDepth = (rangeLow - prev.close) / rangeLow;
       if (breakDepth < 0.002) continue;
       if (curr.close < rangeLow * 1.001) continue;
+      const rsi = calcRSI(slice, 14);
+      if (rsi < 20 || rsi > 80) continue;
       return 'long';
     }
 
@@ -3235,6 +3224,8 @@ function btS10(klines, i, klines5m) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
       if (breakDepth < 0.002) continue;
       if (curr.close > rangeHigh * 0.999) continue;
+      const rsi = calcRSI(slice, 14);
+      if (rsi < 20 || rsi > 80) continue;
       return 'short';
     }
   }

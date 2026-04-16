@@ -11,6 +11,7 @@ const supabase = createClient(
 // ── Настройки ──────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const CHAT_ID        = process.env.CHAT_ID;
+const CHAT_IDS       = [process.env.CHAT_ID, process.env.CHAT_ID_2].filter(Boolean);
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
@@ -190,7 +191,9 @@ async function httpPost(url, data, headers = {}) {
 // ============================================================
 async function sendTelegram(text) {
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-  await httpPost(url, { chat_id: CHAT_ID, text });
+  for (const id of CHAT_IDS) {
+    await httpPost(url, { chat_id: id, text });
+  }
   console.log(`[TG] Отправлено: ${text.substring(0, 60)}...`);
 }
 // ============================================================

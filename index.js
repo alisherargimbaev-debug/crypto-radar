@@ -15,16 +15,17 @@ const CHAT_IDS       = [process.env.CHAT_ID, process.env.CHAT_ID_2].filter(Boole
 const GROQ_KEY       = process.env.GROQ_KEY;
 
 const STRATEGY_SL = {
-  '2️⃣ Liquidity Bounce (1h)':       { sl: 1.5, tp1: 5.0, tp2: 7.5 },
-  '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 3.0, tp2: 5.0 },
-  '4️⃣ MA20/MA50+RSI (1h)':          { sl: 2.7, tp1: 6.0, tp2: 9.0 }, // sync с MAX_SL_PCT
-  '5️⃣ RSI Дивергенция (1h)':        { sl: 2.0, tp1: 5.0, tp2: 7.0 },
-  '6️⃣ Funding Extreme (1h)':        { sl: 2.5, tp1: 5.0, tp2: 7.5 },
-  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.5, tp2: 5.0 },
-  '8️⃣ Basis Farming (1h)': { sl: 2.0, tp1: 4.0, tp2: 6.0 },
-  '9️⃣ Pullback в тренде (15m)': { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 для надёжности
-  '🔟 4H Range Breakout (5m)':  { sl: 1.2, tp1: 3.0, tp2: 4.5 },
-  '1️⃣1️⃣ Elliott+Fib+SMA':       { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3
+  // Все SL ограничены 1.5% максимум — защита для проп-аккаунта
+  '2️⃣ Liquidity Bounce (1h)':       { sl: 1.5, tp1: 4.5, tp2: 7.5 },  // RR 1:3
+  '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 3.0, tp2: 5.0 },  // RR 1:3
+  '4️⃣ MA20/MA50+RSI (1h)':          { sl: 1.5, tp1: 4.5, tp2: 7.5 },  // было 2.7 → 1.5
+  '5️⃣ RSI Дивергенция (1h)':        { sl: 1.5, tp1: 4.5, tp2: 7.5 },  // было 2.0 → 1.5, RR 1:3
+  '6️⃣ Funding Extreme (1h)':        { sl: 1.5, tp1: 4.5, tp2: 7.5 },  // было 2.5 → 1.5
+  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 3.5, tp2: 5.0 },  // без изменений
+  '8️⃣ Basis Farming (1h)':          { sl: 1.5, tp1: 4.5, tp2: 7.5 },  // было 2.0 → 1.5
+  '9️⃣ Pullback в тренде (15m)':     { sl: 1.2, tp1: 3.6, tp2: 6.0 },  // без изменений
+  '🔟 4H Range Breakout (5m)':       { sl: 1.2, tp1: 3.0, tp2: 4.5 },  // без изменений
+  '1️⃣1️⃣ Elliott+Fib+SMA':           { sl: 1.5, tp1: 4.5, tp2: 7.5 },  // RR 1:3
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -1484,8 +1485,8 @@ function calcSLTP(price, direction, strategy, atr = null) {
   // ATR отражает реальную волатильность текущего рынка
   // Фиксированный % SL игнорирует рыночные условия
 
-  const MIN_SL_PCT  = 0.8; // снижен с 1.0 — ATR может быть узким
-  const MAX_SL_PCT  = 3.0; // поднят с 2.7 — волатильный рынок
+  const MIN_SL_PCT  = 0.8; // минимум SL
+  const MAX_SL_PCT  = 1.5; // максимум 1.5% — все стратегии не превышают
   const MIN_TP1_PCT = 2.4; // минимум TP1
   const MIN_TP2_PCT = 4.8; // минимум TP2
 
@@ -2980,14 +2981,10 @@ if (klines1h.length < 60) continue;
       const klines = klines1h;
       let lastI = -10;
       const isS11 = name.includes('Elliott');
-      const isS10 = name.includes('4H Range');
       for (let i = 55; i < klines.length - 15; i++) {
         if (i - lastI < 5) continue;
-        // S11: 4H волны + 30m вход, S10: 5m данные для реалистичного пробоя
-        let direction;
-        if (isS11) direction = fn(klines, i, klines30m, klines4h);
-        else if (isS10) direction = fn(klines, i, klines5m);
-        else direction = fn(klines, i);
+        // S11 получает 4H и 30m данные
+        const direction = isS11 ? fn(klines, i, klines30m, klines4h) : fn(klines, i);
         if (!direction) continue;
 
         const price = klines[i].close;
@@ -3206,16 +3203,12 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // Бэктест S10: 4H Range Breakout — РЕАЛЬНАЯ симуляция на 5m
-  // Если klines5m переданы — используем их (точнее)
-  // Если нет — fallback на 1H (менее точно)
-  const use5m = klines5m && klines5m.length >= 20;
-
-  // ── Определяем 4H диапазон из 1H данных ────────────────────
+  // S10: 4H Range Breakout — торгуем ТОЛЬКО по тренду MA200
+  // Это исправляет проблему 100% SHORT в нисходящем тренде
   const slice = klines.slice(0, i+1);
-  if (slice.length < 20) return null;
+  if (slice.length < 22) return null;
 
-  const block = slice.slice(-12, -8); // 4 свечи × 1H = 4-часовой блок
+  const block = slice.slice(-12, -8);
   if (block.length < 4) return null;
 
   const rangeHigh = Math.max(...block.map(c => c.high));
@@ -3223,19 +3216,21 @@ function btS10(klines, i) {
   const rangeSize = rangeHigh - rangeLow;
   const price = slice[slice.length-1].close;
 
-  // Диапазон 0.5%-5%
-  if (rangeSize / price < 0.005) return null;
-  if (rangeSize / price > 0.05)  return null;
+  // Диапазон 0.6%-4.5%
+  if (rangeSize / price < 0.006) return null;
+  if (rangeSize / price > 0.045) return null;
 
   const atr = calcATR(slice, 14);
-  if (rangeSize < atr * 0.5 || rangeSize > atr * 3) return null;
+  if (rangeSize < atr * 0.6 || rangeSize > atr * 2.8) return null;
 
-  // ── Поиск паттерна ─────────────────────────────────────────
-  // Если есть 5m данные — ищем на них (реалистично)
-  // Если нет — ищем на 1H (приближение)
-  const tf = use5m ? klines5m : slice;
-  const today = tf.slice(-12); // последние 12 свечей (1ч на 5m или 12ч на 1H)
+  // ── MA200 тренд-фильтр ─────────────────────────────────────
+  // Торгуем только по направлению тренда:
+  // Цена выше MA200 → разрешены только LONG (пробой вниз + возврат)
+  // Цена ниже MA200 → разрешены только SHORT (пробой вверх + возврат)
+  const ma200 = calcSMA(slice, Math.min(200, slice.length));
+  const uptrend = price > ma200;
 
+  const today = slice.slice(-6);
   const rsi = calcRSI(slice, 14);
   if (rsi < 20 || rsi > 80) return null;
 
@@ -3243,16 +3238,16 @@ function btS10(klines, i) {
     const prev = today[j-1];
     const curr = today[j];
 
-    // Пробой вниз + возврат → LONG
-    if (prev.close < rangeLow && curr.close > rangeLow) {
+    // Пробой вниз + возврат → LONG (только в аптренд)
+    if (prev.close < rangeLow && curr.close > rangeLow && uptrend) {
       const breakDepth = (rangeLow - prev.close) / rangeLow;
       if (breakDepth < 0.002) continue;
       if (curr.close < rangeLow * 1.001) continue;
       return 'long';
     }
 
-    // Пробой вверх + возврат → SHORT
-    if (prev.close > rangeHigh && curr.close < rangeHigh) {
+    // Пробой вверх + возврат → SHORT (только в даунтренд)
+    if (prev.close > rangeHigh && curr.close < rangeHigh && !uptrend) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
       if (breakDepth < 0.002) continue;
       if (curr.close > rangeHigh * 0.999) continue;
@@ -3262,7 +3257,6 @@ function btS10(klines, i) {
 
   return null;
 }
-
 
 
 function btS11(klines, i, klines30m, klines4h) {

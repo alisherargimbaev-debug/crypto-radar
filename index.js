@@ -14,19 +14,19 @@ const CHAT_ID        = process.env.CHAT_ID;
 const CHAT_IDS       = [process.env.CHAT_ID, process.env.CHAT_ID_2].filter(Boolean);
 const GROQ_KEY       = process.env.GROQ_KEY;
 
-// ── STRATEGY_SL: все SL ≤ 1.5% (проп-безопасность) ──────────
-// RR минимум 1:3 для положительного математического ожидания при WR < 50%
+// Все SL ≤ 1.5% — максимальная защита для проп-аккаунта
+// RR 1:3 минимум — математически оправдано при WR 40-50%
 const STRATEGY_SL = {
-  '2️⃣ Liquidity Bounce (1h)':       { sl: 1.5, tp1: 4.5, tp2: 6.0 }, // RR 1:3/1:4
-  '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 3.0, tp2: 4.5 }, // RR 1:3/1:4.5
-  '4️⃣ MA20/MA50+RSI (1h)':          { sl: 1.5, tp1: 4.5, tp2: 6.0 }, // было 2.7 → 1.5
-  '5️⃣ RSI Дивергенция (1h)':        { sl: 1.5, tp1: 4.5, tp2: 7.0 }, // было 2.0 → 1.5, RR 1:3
-  '6️⃣ Funding Extreme (1h)':        { sl: 1.5, tp1: 4.5, tp2: 6.5 }, // было 2.5 → 1.5
-  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 4.5, tp2: 6.0 }, // RR 1:3
-  '8️⃣ Basis Farming (1h)':          { sl: 1.5, tp1: 4.5, tp2: 7.0 }, // было 2.0 → 1.5
-  '9️⃣ Pullback в тренде (15m)':     { sl: 1.2, tp1: 3.6, tp2: 6.0 }, // RR 1:3 — без изменений
-  '🔟 4H Range Breakout (5m)':       { sl: 1.2, tp1: 3.6, tp2: 5.4 }, // RR 1:3/1:4.5
-  '1️⃣1️⃣ Elliott+Fib+SMA':           { sl: 1.5, tp1: 4.5, tp2: 7.5 }, // RR 1:3/1:5
+  '2️⃣ Liquidity Bounce (1h)':       { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // RR 1:3/1:4.5
+  '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 3.0, tp2: 4.5  }, // RR 1:3/1:4.5
+  '4️⃣ MA20/MA50+RSI (1h)':          { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // было 2.7 → 1.5
+  '5️⃣ RSI Дивергенция (1h)':        { sl: 1.5, tp1: 4.5, tp2: 7.5  }, // было 2.0 → 1.5
+  '6️⃣ Funding Extreme (1h)':        { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // было 2.5 → 1.5
+  '7️⃣ Поглощение на объёме (15m)':  { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // RR 1:3
+  '8️⃣ Basis Farming (1h)':          { sl: 1.5, tp1: 4.5, tp2: 7.5  }, // было 2.0 → 1.5
+  '9️⃣ Pullback в тренде (15m)':     { sl: 1.2, tp1: 3.6, tp2: 5.4  }, // RR 1:3/1:4.5
+  '🔟 4H Range Breakout (5m)':       { sl: 1.2, tp1: 3.6, tp2: 5.4  }, // RR 1:3/1:4.5
+  '1️⃣1️⃣ Elliott+Fib+SMA':           { sl: 1.5, tp1: 4.5, tp2: 7.5  }, // RR 1:3/1:5
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -1487,7 +1487,7 @@ function calcSLTP(price, direction, strategy, atr = null) {
   // Фиксированный % SL игнорирует рыночные условия
 
   const MIN_SL_PCT  = 0.8; // снижен с 1.0 — ATR может быть узким
-  const MAX_SL_PCT  = 1.5; // максимум 1.5% — синхронизировано с STRATEGY_SL
+  const MAX_SL_PCT  = 1.5; // ≤ 1.5% — синхронизировано с STRATEGY_SL
   const MIN_TP1_PCT = 2.4; // минимум TP1
   const MIN_TP2_PCT = 4.8; // минимум TP2
 
@@ -1546,6 +1546,26 @@ function calcSLTP(price, direction, strategy, atr = null) {
 // ============================================================
 //  FVG (Fair Value Gap) и FIBONACCI
 // ============================================================
+
+// ── IFVG (Inverse Fair Value Gap) — Smart Money Concept ─────
+// FVG заполнена = переворачивается (поддержка → сопротивление и наоборот)
+function detectIFVG(klines, fvgZones) {
+  if (!fvgZones || !fvgZones.length) return [];
+  const ifvgs = [];
+  const allCloses = klines.map(c => c.close);
+  const allLows   = klines.map(c => c.low);
+  const allHighs  = klines.map(c => c.high);
+  for (const fvg of fvgZones) {
+    const filled = fvg.type === 'bullish'
+      ? allLows.some(l => l <= fvg.bottom)
+      : allHighs.some(h => h >= fvg.top);
+    if (filled) {
+      ifvgs.push({ ...fvg, type: fvg.type === 'bullish' ? 'bearish' : 'bullish', isIFVG: true });
+    }
+  }
+  return ifvgs;
+}
+
 function detectFVG(klines) {
   const zones = [];
   for (let i = 2; i < klines.length; i++) {
@@ -2237,66 +2257,53 @@ if (k1h.length >= 55) {
   }
 }
 
-    // S5: RSI Дивергенция (1h) — УЛУЧШЕНА
-    // Ключевое исправление: стратегия работает только в БОКОВИКЕ (ADX < 28)
-    // В трендовом рынке бычьи дивергенции = ловушки (опыт апреля 2026)
+    // S5: RSI Дивергенция (1h) v2 — только в боковике (ADX < 30)
+    // Урок апреля 2026: в трендовом рынке RSI div = ловушка
     if (k1h.length >= 25) {
-      const closes  = k1h.map(c => c.close);
-      const lows    = k1h.map(c => c.low);
-      const rsiNow  = calcRSI(k1h, 14);
-      const rsiPrev = calcRSI(k1h.slice(0, -5), 14);
-
-      // ── Фильтр 1: ADX < 28 — боковик (дивергенции надёжны) ────
-      const adx5 = calcADX(k1h, 14);
-      if (adx5 > 28) {
-        console.log(`[S5 SKIP] ${instId} — тренд ADX:${adx5.toFixed(1)} > 28 (дивергенции ненадёжны)`);
+      // ── Режим рынка: ADX < 30 = боковик, только тогда торгуем дивергенции ──
+      const adxS5 = calcADX(k1h, 14);
+      if (adxS5 > 30) {
+        console.log(`[S5 SKIP] ${instId} — тренд ADX:${adxS5.toFixed(1)}`);
       } else {
-        // ── Фильтр 2: CVD подтверждение (объём на стороне разворота) ─
-        // CVD = Cumulative Volume Delta — реальный поток ордеров
-        const last10 = k1h.slice(-10);
-        const cvdBullish = last10.reduce((acc, c) => {
-          // Если закрылась выше открытия — покупки доминируют
-          const buyVol  = c.close > c.open ? c.quoteVolume * 0.6 : c.quoteVolume * 0.4;
-          const sellVol = c.quoteVolume - buyVol;
-          return acc + (buyVol - sellVol);
-        }, 0) > 0; // true = покупатели доминируют в последние 10 часов
-        const cvdBearish = !cvdBullish;
+        const closes  = k1h.map(c => c.close);
+        const lows    = k1h.map(c => c.low);
+        const highs   = k1h.map(c => c.high);
+        const rsiNow  = calcRSI(k1h, 14);
+        const rsiPrev = calcRSI(k1h.slice(0, -5), 14);
 
-        // ── Фильтр 3: Volume подтверждение ───────────────────────
-        const avgVol = k1h.slice(-20,-1).reduce((a,c)=>a+c.quoteVolume,0)/19;
+        // ── Объёмный фильтр — подтверждение разворота ───────────
+        const avgVol  = k1h.slice(-20,-1).reduce((a,c)=>a+c.quoteVolume,0)/19;
         const lastVol = k1h[k1h.length-1].quoteVolume;
-        const volOk = lastVol > avgVol * 0.8; // объём не ниже среднего
+        const volConf = lastVol >= avgVol * 0.9; // объём не ниже 90% среднего
 
-        // ── Бычья дивергенция → LONG ──────────────────────────────
+        // ── Бычья дивергенция: цена новый лоу, RSI выше ─────────
         const priceNewLow = lows[lows.length-1] < Math.min(...lows.slice(-20,-1));
-        const rsiHigher   = rsiNow > rsiPrev + 3;
-
-        if (priceNewLow && rsiHigher && rsiNow < 42 && cvdBullish && volOk) {
-          let conf = 78;
-          if (rsiNow < 35)   conf += 5;  // глубокое перепродание
-          if (adx5 < 20)     conf += 5;  // чёткий боковик
-          if (cvdBullish)    conf += 3;  // CVD подтверждает
+        const rsiHigher   = rsiNow > rsiPrev + 2; // снижен порог: +2 вместо +3
+        if (priceNewLow && rsiHigher && rsiNow < 45 && volConf) {
+          let conf = 75;
+          if (rsiNow < 35)   conf += 7;   // глубокое перепродание
+          if (adxS5 < 20)    conf += 5;   // чёткий боковик
+          if (lastVol > avgVol * 1.2) conf += 3; // объём выше среднего
           signals.push({
             strategy: '5️⃣ RSI Дивергенция (1h)', instId, direction: 'long',
             signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
-            metrics: `RSI:${rsiNow.toFixed(1)}→${rsiPrev.toFixed(1)} | ADX:${adx5.toFixed(1)} | CVD:✅ Bull | Vol:${(lastVol/avgVol).toFixed(1)}x`,
+            metrics: `RSI:${rsiNow.toFixed(1)}→${rsiPrev.toFixed(1)} | ADX:${adxS5.toFixed(1)} боковик | Vol:${(lastVol/avgVol).toFixed(1)}x`,
             ...calcSLTP(price, 'long', '5️⃣ RSI Дивергенция (1h)', atr1h)
           });
         }
 
-        // ── Медвежья дивергенция → SHORT ──────────────────────────
+        // ── Медвежья дивергенция: цена новый хай, RSI ниже ──────
         const priceNewHigh = closes[closes.length-1] > Math.max(...closes.slice(-20,-1));
-        const rsiLower     = rsiNow < rsiPrev - 3;
-
-        if (priceNewHigh && rsiLower && rsiNow > 55 && cvdBearish && volOk) {
-          let conf = 78;
-          if (rsiNow > 65)   conf += 5;  // перекупленность
-          if (adx5 < 20)     conf += 5;  // чёткий боковик
-          if (cvdBearish)    conf += 3;  // CVD подтверждает
+        const rsiLower     = rsiNow < rsiPrev - 2; // снижен порог
+        if (priceNewHigh && rsiLower && rsiNow > 55 && volConf) {
+          let conf = 75;
+          if (rsiNow > 65)   conf += 7;
+          if (adxS5 < 20)    conf += 5;
+          if (lastVol > avgVol * 1.2) conf += 3;
           signals.push({
             strategy: '5️⃣ RSI Дивергенция (1h)', instId, direction: 'short',
             signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
-            metrics: `RSI:${rsiNow.toFixed(1)}→${rsiPrev.toFixed(1)} | ADX:${adx5.toFixed(1)} | CVD:✅ Bear | Vol:${(lastVol/avgVol).toFixed(1)}x`,
+            metrics: `RSI:${rsiNow.toFixed(1)}→${rsiPrev.toFixed(1)} | ADX:${adxS5.toFixed(1)} боковик | Vol:${(lastVol/avgVol).toFixed(1)}x`,
             ...calcSLTP(price, 'short', '5️⃣ RSI Дивергенция (1h)', atr1h)
           });
         }
@@ -2372,9 +2379,10 @@ if (k1h.length >= 55) {
       }
     }
 
-    // S7: Поглощение на объёме — ОТКЛЮЧЕНА (WR 26% убивает дневной лимит)
-    // Остаётся в бэктесте для наблюдения. Включить когда WR > 40% на 30+ сделках
+    // S7: Поглощение на объёме — ОТКЛЮЧЕНА (WR 26% < безубытка)
+    // Оставлена в бэктесте. Включить при WR > 42% на 30+ live сделках.
     /* S7 ОТКЛЮЧЕНА
+— жёсткие фильтры
     if (k15m.length >= 15) {
       const patterns  = detectCandlePatterns(k15m);
       const engulfing = patterns.find(p => p.name.includes('engulfing'));
@@ -3016,6 +3024,7 @@ if (klines1h.length < 60) continue;
 ];
 
     for (const { name, fn } of runs) {
+      // S1 использует 15m свечи, остальные — 1H
       const klines = klines1h;
       let lastI = -10;
       const isS11 = name.includes('Elliott');
@@ -3144,32 +3153,43 @@ function btS4(klines, i) {
 }
 
 function btS5(klines, i) {
-  // S5 бэктест — синхронизирован с live: ADX < 28 (боковик)
+  // S5 бэктест v2: ADX боковик + RSI дивергенция
   const slice  = klines.slice(0, i+1);
   if (slice.length < 25) return null;
 
-  // ADX фильтр — только в боковике
+  // ADX фильтр — боковик ADX < 30
   const adx = calcADX(slice, 14);
-  if (adx > 28) return null;
+  if (adx > 30) return null;
 
   const closes = slice.map(c => c.close);
   const lows   = slice.map(c => c.low);
   const rsiNow = calcRSI(slice, 14);
   const rsiPrev= calcRSI(slice.slice(0,-5), 14);
 
-  // CVD — упрощённая версия для бэктеста
-  const last10 = slice.slice(-10);
-  const cvdBull = last10.reduce((a,c) => a + (c.close>c.open ? 1 : -1), 0) > 0;
-
   if (lows[lows.length-1] < Math.min(...lows.slice(-20,-1)) &&
-      rsiNow > rsiPrev+3 && rsiNow < 42 && cvdBull) return 'long';
-
+      rsiNow > rsiPrev + 2 && rsiNow < 47) return 'long';
   if (closes[closes.length-1] > Math.max(...closes.slice(-20,-1)) &&
-      rsiNow < rsiPrev-3 && rsiNow > 55 && !cvdBull) return 'short';
-
+      rsiNow < rsiPrev - 2 && rsiNow > 53) return 'short';
   return null;
 }
 
+/*function btS9(klines, i) {
+  if (i < 10) return null;
+  const slice  = klines.slice(0, i+1);
+  const last   = slice[slice.length-1];
+  const prev4  = slice[slice.length-5];
+  const prev8  = slice[slice.length-9];
+  if (!prev4 || !prev8) return null;
+
+  const change4h = (last.close - prev4.close) / prev4.close * 100;
+  const change8h = (last.close - prev8.close) / prev8.close * 100;
+  const rsi = calcRSI(slice, 14);
+
+  if (change4h < -1.5 && change8h > 0 && rsi < 50) return 'long';
+  if (change4h > 1.5 && change8h < 0 && rsi > 50) return 'short';
+
+  return null;
+} */
 
 function btS7(klines, i) {
   const slice = klines.slice(0, i+1);
@@ -3238,14 +3258,13 @@ function btS9(klines, i) {
 
 
 function btS10(klines, i) {
-  // S10: 4H Range Breakout — ТОЛЬКО ПО ТРЕНДУ MA200
-  // Это исправляет проблему 100% SHORT в нисходящем рынке (апрель 2026)
+  // S10: 4H Range Breakout v2 — торгуем только по тренду MA200
+  // Исправляет: 100% SHORT в нисходящем тренде = серия SL
   const slice = klines.slice(0, i+1);
   if (slice.length < 22) return null;
 
-  // MA200 trend filter
-  const ma200 = calcSMA(slice, Math.min(200, slice.length));
   const price  = slice[slice.length-1].close;
+  const ma200  = calcSMA(slice, Math.min(200, slice.length));
   const uptrend = price > ma200;
 
   const block = slice.slice(-12, -8);
@@ -3255,6 +3274,7 @@ function btS10(klines, i) {
   const rangeLow  = Math.min(...block.map(c => c.low));
   const rangeSize = rangeHigh - rangeLow;
 
+  // Диапазон 0.6%-4.5%
   if (rangeSize / price < 0.006) return null;
   if (rangeSize / price > 0.045) return null;
 
@@ -3265,12 +3285,11 @@ function btS10(klines, i) {
   if (rsi < 20 || rsi > 80) return null;
 
   const today = slice.slice(-6);
-
   for (let j = 1; j < today.length; j++) {
     const prev = today[j-1];
     const curr = today[j];
 
-    // Пробой вниз + возврат → LONG (только если цена выше MA200)
+    // Пробой вниз + возврат → LONG (только выше MA200)
     if (prev.close < rangeLow && curr.close > rangeLow && uptrend) {
       const breakDepth = (rangeLow - prev.close) / rangeLow;
       if (breakDepth < 0.002) continue;
@@ -3278,7 +3297,7 @@ function btS10(klines, i) {
       return 'long';
     }
 
-    // Пробой вверх + возврат → SHORT (только если цена ниже MA200)
+    // Пробой вверх + возврат → SHORT (только ниже MA200)
     if (prev.close > rangeHigh && curr.close < rangeHigh && !uptrend) {
       const breakDepth = (prev.close - rangeHigh) / rangeHigh;
       if (breakDepth < 0.002) continue;
@@ -3286,7 +3305,6 @@ function btS10(klines, i) {
       return 'short';
     }
   }
-
   return null;
 }
 
@@ -3347,33 +3365,6 @@ function btS11(klines, i, klines30m, klines4h) {
   if (uptrend   && last.close > flagH && prev.close <= flagH && rsi < 72) return 'long';
   if (downtrend && last.close < flagL && prev.close >= flagL && rsi > 28) return 'short';
   return null;
-}
-
-
-// ── IFVG (Inverse Fair Value Gap) ────────────────────────────
-// Когда цена заполняет FVG и та переворачивается из поддержки в сопротивление
-function detectIFVG(klines, existingFVGs) {
-  if (!existingFVGs || !existingFVGs.length) return [];
-  const price = klines[klines.length-1].close;
-  const ifvgs = [];
-
-  for (const fvg of existingFVGs) {
-    // FVG заполнена если цена прошла сквозь неё
-    const filled = fvg.type === 'bullish'
-      ? klines.some(c => c.low <= fvg.bottom)   // бычья FVG заполнена когда цена упала ниже
-      : klines.some(c => c.high >= fvg.top);     // медвежья FVG заполнена когда цена выросла выше
-
-    if (filled) {
-      // Если бычья FVG заполнена — она стала сопротивлением (медвежья IFVG)
-      // Если медвежья FVG заполнена — она стала поддержкой (бычья IFVG)
-      ifvgs.push({
-        ...fvg,
-        type: fvg.type === 'bullish' ? 'bearish' : 'bullish', // инвертируем
-        isIFVG: true,
-      });
-    }
-  }
-  return ifvgs;
 }
 
 app.get('/', async (req, res) => {
@@ -3490,11 +3481,23 @@ if (alreadyOpen) {
           sig.fvgNote    = `📊 Цена в FVG зоне → +12%`;
         }
 
+        // IFVG (Inverse FVG) — сильнее обычного FVG (+15%)
+        const ifvgZones = detectIFVG(fvgKlines.slice(-30), fvgZones);
+        const inIFVG = ifvgZones.some(z =>
+          sig.price >= z.bottom && sig.price <= z.top &&
+          z.type === (sig.direction === 'long' ? 'bullish' : 'bearish')
+        );
+        if (inIFVG) {
+          sig.confidence = Math.min(sig.confidence + 15, 100);
+          sig.fvgNote = (sig.fvgNote || '') + ` 🔄 IFVG → +15%`;
+        }
+
         // FVG стоп-лосс
         const fvgSL = calcFVGStopLoss(sig.price, sig.direction, fvgZones, atrForFVG);
         if (fvgSL) {
           sig.sl     = fvgSL.sl;
           sig.slNote = fvgSL.note;
+          // Пересчитываем TP на основе нового SL (RR 1:2 и 1:3)
           const slDist = Math.abs(sig.price - parseFloat(fvgSL.sl));
           if (sig.direction === 'long') {
             sig.tp1 = (sig.price + slDist * 2).toFixed(4);
@@ -3503,18 +3506,6 @@ if (alreadyOpen) {
             sig.tp1 = (sig.price - slDist * 2).toFixed(4);
             sig.tp2 = (sig.price - slDist * 3).toFixed(4);
           }
-        }
-
-        // ── IFVG (Inverse Fair Value Gap) ────────────────────────
-        // IFVG = когда цена возвращается в FVG зону и она "переворачивается"
-        // Это Strong Money Concept — подтверждает что разворот реальный
-        const ifvgZones = detectIFVG(fvgKlines.slice(-30), fvgZones);
-        const inIFVG = ifvgZones.some(z =>
-          sig.price >= z.bottom && sig.price <= z.top && z.type === (sig.direction === 'long' ? 'bullish' : 'bearish')
-        );
-        if (inIFVG) {
-          sig.confidence = Math.min(sig.confidence + 15, 100); // сильнее FVG
-          sig.fvgNote = (sig.fvgNote || '') + ` 🔄 IFVG подтверждение → +15%`;
         }
 
         // Fibonacci TP — берём только если даёт ЛУЧШИЙ (дальше) TP

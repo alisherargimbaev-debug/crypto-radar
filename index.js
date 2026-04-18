@@ -3037,9 +3037,18 @@ if (klines1h.length < 60) continue;
         const atr   = calcATR(klines.slice(0, i+1), 14);
         if (!atr || atr === 0) continue;
 
-        const sl  = direction === 'long' ? price - atr*1.5 : price + atr*1.5;
-        const tp1 = direction === 'long' ? price + atr*3.0 : price - atr*3.0;
-        const tp2 = direction === 'long' ? price + atr*4.5 : price - atr*4.5;
+        // ── SL/TP с ограничением максимума 1.5% ─────────────────
+        // ATR даёт динамический SL, но cap 1.5% гарантирует
+        // что бэктест соответствует реальным параметрам стратегии
+        const MAX_BT_SL_PCT = 1.5; // максимум как в STRATEGY_SL
+        const atrSL = atr * 1.5;
+        const maxSL = price * MAX_BT_SL_PCT / 100;
+        const slDist = Math.min(atrSL, maxSL); // берём меньшее — строже ограничение
+
+        const sl  = direction === 'long' ? price - slDist : price + slDist;
+        // TP масштабируем к фактическому SL (RR 1:3 и 1:4.5)
+        const tp1 = direction === 'long' ? price + slDist * 2.5 : price - slDist * 2.5;
+        const tp2 = direction === 'long' ? price + slDist * 4.0 : price - slDist * 4.0;
 
         const future = klines.slice(i+1, i+49); // 48 свечей = 48 часов для 1H
         let outcome  = 'expired', pnl = 0;

@@ -33,7 +33,7 @@ const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, vol
 
 const MIN_VOLUME_24H = 10000000;
 const TOP_N          = 30;
-const COOLDOWN_MIN   = 15;
+const COOLDOWN_MIN   = 60;  // 60 мин — защита от серий по одной монете
 
 // ── Портфельный риск-менеджмент ────────────────────────────
 const MAX_OPEN_TRADES     = 3;    // максимум открытых сделок
@@ -3037,16 +3037,12 @@ if (klines1h.length < 60) continue;
         const atr   = calcATR(klines.slice(0, i+1), 14);
         if (!atr || atr === 0) continue;
 
-        // ── SL/TP с ограничением максимума 1.5% ─────────────────
-        // ATR даёт динамический SL, но cap 1.5% гарантирует
-        // что бэктест соответствует реальным параметрам стратегии
-        const MAX_BT_SL_PCT = 1.5; // максимум как в STRATEGY_SL
-        const atrSL = atr * 1.5;
-        const maxSL = price * MAX_BT_SL_PCT / 100;
-        const slDist = Math.min(atrSL, maxSL); // берём меньшее — строже ограничение
-
+        // SL строго ≤ 1.5% от цены — как в STRATEGY_SL
+        const MAX_BT_SL_PCT = 1.5;
+        const atrSL  = atr * 1.5;
+        const maxSL  = price * MAX_BT_SL_PCT / 100;
+        const slDist = Math.min(atrSL, maxSL);
         const sl  = direction === 'long' ? price - slDist : price + slDist;
-        // TP масштабируем к фактическому SL (RR 1:3 и 1:4.5)
         const tp1 = direction === 'long' ? price + slDist * 2.5 : price - slDist * 2.5;
         const tp2 = direction === 'long' ? price + slDist * 4.0 : price - slDist * 4.0;
 
@@ -3567,7 +3563,7 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
         // Новые стратегии — порог ниже чтобы накопить данные
-        if (s.strategy.includes('4H Range'))       return s.confidence >= 70;
+        if (s.strategy.includes('4H Range'))       return s.confidence >= 75; // поднят с 70
         if (s.strategy.includes('Pullback'))       return s.confidence >= 72;
         // Проверенные стратегии — стандартный порог
         if (s.strategy.includes('RSI Диверг'))    return s.confidence >= 80;

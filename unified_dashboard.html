@@ -311,6 +311,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   <button class="nav-btn" onclick="showPage('news',this)" data-ru="📰 НОВОСТИ" data-en="📰 NEWS">📰 NEWS</button>
   <button class="nav-btn" onclick="showPage('twitter',this)" data-ru="𝕏 TWITTER" data-en="𝕏 MEDIA">𝕏 MEDIA</button>
   <button class="nav-btn" onclick="showPage('backtest',this)" data-ru="🔬 БЭКТЕСТ" data-en="🔬 BACKTEST">🔬 BACKTEST</button>
+  <button class="nav-btn" onclick="showPage('calc',this)" data-ru="🧮 КАЛЬКУЛЯТОР" data-en="🧮 CALC">🧮 CALC</button>
 </div>
 
 <!-- ═══════════════════ PAGE 1: RADAR ═══════════════════ -->
@@ -513,6 +514,230 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 </div>
 
 
+
+<!-- ═══════════════════ PAGE 6: CALCULATOR ═══════════════════ -->
+<div id="page-calc" class="page">
+  <style>
+    .calc-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+    @media(max-width:900px) { .calc-wrap { grid-template-columns: 1fr; } }
+    .calc-panel { background: var(--panel); border: 1px solid var(--border); padding: 20px; border-radius: 4px; }
+    .calc-title { font-size: 0.6rem; color: var(--dim); letter-spacing: 3px; text-transform: uppercase; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .calc-group { margin-bottom: 14px; }
+    .calc-label { font-size: 0.55rem; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; display: block; }
+    .calc-input { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; font-family: 'Space Mono', monospace; font-size: 0.75rem; outline: none; transition: border-color .2s; border-radius: 4px; }
+    .calc-input:focus { border-color: var(--accent); }
+    .calc-row { display: flex; gap: 8px; }
+    .calc-row .calc-input { flex: 1; }
+    .type-btns { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .type-btn { flex: 1; padding: 9px; font-family: 'Space Mono', monospace; font-size: 0.65rem; cursor: pointer; border: none; background: transparent; color: var(--dim); transition: all .2s; text-align: center; }
+    .type-btn.active-long { background: rgba(74,222,128,0.15); color: var(--green); }
+    .type-btn.active-short { background: rgba(248,113,113,0.15); color: var(--red); }
+    .leverage-row { display: flex; align-items: center; gap: 12px; }
+    .leverage-slider { flex: 1; -webkit-appearance: none; height: 3px; background: var(--border); border-radius: 2px; outline: none; }
+    .leverage-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--accent); border-radius: 50%; cursor: pointer; }
+    .leverage-val { font-size: 0.9rem; color: var(--accent); min-width: 28px; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; }
+    .calc-result-card { background: var(--panel2); border: 1px solid var(--border); padding: 14px 16px; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .calc-result-label { font-size: 0.55rem; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+    .calc-result-val { font-family: 'Bebas Neue', sans-serif; font-size: 1.3rem; letter-spacing: 1px; }
+    .calc-result-val.pos { color: var(--green); }
+    .calc-result-val.neg { color: var(--red); }
+    .calc-result-val.accent { color: var(--accent); }
+    .calc-result-val.yellow { color: var(--yellow); }
+    .exchange-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+    .exchange-card { background: var(--panel2); border: 1px solid var(--border); padding: 16px; border-radius: 4px; text-align: center; }
+    .exchange-name { font-size: 0.6rem; font-weight: 700; color: var(--text); letter-spacing: 2px; margin-bottom: 12px; }
+    .exchange-row { display: flex; justify-content: space-between; font-size: 0.58rem; margin-bottom: 6px; }
+    .exchange-row-label { color: var(--dim); }
+    .exchange-sl { color: var(--red); font-weight: 700; }
+    .exchange-tp { color: var(--green); font-weight: 700; }
+    .calc-rr-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: 8px 0; }
+    .calc-rr-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+    .section-label { font-size: 0.5rem; color: var(--dim); letter-spacing: 2px; text-transform: uppercase; margin: 16px 0 8px; }
+  </style>
+
+  <div style="margin-bottom:16px;">
+    <div style="font-size:0.75rem;color:var(--text);font-weight:bold;margin-bottom:4px;">🧮 Position Calculator</div>
+    <div style="font-size:0.55rem;color:var(--dim);">Risk management calculator with exchange fees</div>
+  </div>
+
+  <div class="calc-wrap">
+    <!-- LEFT: INPUTS -->
+    <div class="calc-panel">
+      <div class="calc-title">Parameters</div>
+
+      <div class="calc-group">
+        <label class="calc-label">Account Balance ($)</label>
+        <input class="calc-input" id="c-balance" type="number" value="5000" step="100" oninput="calcUpdate()">
+      </div>
+
+      <div class="calc-group">
+        <label class="calc-label">Risk (%)</label>
+        <div class="calc-row">
+          <input class="calc-input" id="c-risk" type="number" value="1" step="0.1" min="0.1" max="5" oninput="calcUpdate()">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <button onclick="document.getElementById('c-risk').value=0.5;calcUpdate()" style="font-size:0.5rem;padding:3px 6px;background:var(--panel2);border:1px solid var(--border);color:var(--dim);cursor:pointer;border-radius:3px;">0.5%</button>
+            <button onclick="document.getElementById('c-risk').value=1;calcUpdate()" style="font-size:0.5rem;padding:3px 6px;background:var(--panel2);border:1px solid var(--border);color:var(--accent);cursor:pointer;border-radius:3px;">1%</button>
+            <button onclick="document.getElementById('c-risk').value=2;calcUpdate()" style="font-size:0.5rem;padding:3px 6px;background:var(--panel2);border:1px solid var(--border);color:var(--dim);cursor:pointer;border-radius:3px;">2%</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="calc-group">
+        <label class="calc-label">Direction</label>
+        <div class="type-btns">
+          <button class="type-btn active-long" id="btn-long" onclick="setCalcDir('long')">▲ LONG</button>
+          <button class="type-btn" id="btn-short" onclick="setCalcDir('short')">▼ SHORT</button>
+        </div>
+      </div>
+
+      <div class="calc-group">
+        <label class="calc-label">Leverage</label>
+        <div class="leverage-row">
+          <input class="leverage-slider" id="c-leverage" type="range" min="1" max="50" value="1" oninput="document.getElementById('c-lev-val').textContent=this.value+'x';calcUpdate()">
+          <span class="leverage-val" id="c-lev-val">1x</span>
+        </div>
+      </div>
+
+      <div class="calc-group">
+        <label class="calc-label">Entry Price ($)</label>
+        <input class="calc-input" id="c-entry" type="number" value="2400" step="0.01" oninput="calcUpdate()">
+      </div>
+
+      <div class="calc-group">
+        <label class="calc-label">Stop Loss Price ($)</label>
+        <input class="calc-input" id="c-stop" type="number" value="2360" step="0.01" oninput="calcUpdate()">
+        <div style="font-size:0.5rem;color:var(--dim);margin-top:4px;" id="c-sl-pct">—</div>
+      </div>
+
+      <div class="calc-group">
+        <label class="calc-label">Take Profit Price ($)</label>
+        <input class="calc-input" id="c-tp" type="number" value="2480" step="0.01" oninput="calcUpdate()">
+        <div style="font-size:0.5rem;color:var(--dim);margin-top:4px;" id="c-tp-pct">—</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: RESULTS -->
+    <div>
+      <div class="calc-panel" style="margin-bottom:16px;">
+        <div class="calc-title">Position Summary</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="calc-result-card">
+            <div>
+              <div class="calc-result-label">Risk Capital</div>
+              <div class="calc-result-val neg" id="r-risk">$0</div>
+            </div>
+          </div>
+          <div class="calc-result-card">
+            <div>
+              <div class="calc-result-label">Margin Required</div>
+              <div class="calc-result-val accent" id="r-margin">$0</div>
+            </div>
+          </div>
+          <div class="calc-result-card">
+            <div>
+              <div class="calc-result-label">Position Size ($)</div>
+              <div class="calc-result-val accent" id="r-size">$0</div>
+            </div>
+          </div>
+          <div class="calc-result-card">
+            <div>
+              <div class="calc-result-label">Qty (contracts)</div>
+              <div class="calc-result-val yellow" id="r-qty">0</div>
+            </div>
+          </div>
+          <div class="calc-result-card">
+            <div>
+              <div class="calc-result-label">Est. PnL (TP)</div>
+              <div class="calc-result-val pos" id="r-pnl">$0</div>
+            </div>
+          </div>
+          <div class="calc-result-card">
+            <div>
+              <div class="calc-result-label">ROE</div>
+              <div class="calc-result-val pos" id="r-roe">0%</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:0.55rem;margin-bottom:4px;">
+            <span style="color:var(--dim);">Risk/Reward</span>
+            <span style="color:var(--text);" id="r-rr">—</span>
+          </div>
+          <div class="calc-rr-bar">
+            <div class="calc-rr-fill" id="r-rr-fill" style="width:40%;background:var(--accent);"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:0.5rem;color:var(--dim);">
+            <span>Risk</span><span>Reward</span>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;padding:10px;background:var(--panel2);border-radius:4px;border:1px solid var(--border);">
+          <div style="font-size:0.5rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Liquidation</div>
+          <div style="font-size:0.9rem;color:var(--red);font-family:'Bebas Neue',sans-serif;" id="r-liq">$0</div>
+          <div style="font-size:0.5rem;color:var(--dim);margin-top:2px;" id="r-liq-dist">—</div>
+        </div>
+      </div>
+
+      <!-- EXCHANGE FEES -->
+      <div class="calc-panel">
+        <div class="calc-title">P&L Including Exchange Fees</div>
+        <div class="exchange-grid">
+          <div class="exchange-card" style="border-top:3px solid #f7a600;">
+            <div class="exchange-name" style="color:#f7a600;">BYBIT</div>
+            <div style="font-size:0.45rem;color:var(--dim);margin-bottom:10px;">Taker 0.055%</div>
+            <div class="exchange-row">
+              <span class="exchange-row-label">Stop Loss</span>
+              <span class="exchange-sl" id="bybit-sl">—</span>
+            </div>
+            <div class="exchange-row">
+              <span class="exchange-row-label">Take Profit</span>
+              <span class="exchange-tp" id="bybit-tp">—</span>
+            </div>
+            <div class="exchange-row" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+              <span class="exchange-row-label">Fees</span>
+              <span style="color:var(--dim);" id="bybit-fee">—</span>
+            </div>
+          </div>
+          <div class="exchange-card" style="border-top:3px solid #f3a729;">
+            <div class="exchange-name" style="color:#f3a729;">BINANCE</div>
+            <div style="font-size:0.45rem;color:var(--dim);margin-bottom:10px;">Taker 0.05%</div>
+            <div class="exchange-row">
+              <span class="exchange-row-label">Stop Loss</span>
+              <span class="exchange-sl" id="bnb-sl">—</span>
+            </div>
+            <div class="exchange-row">
+              <span class="exchange-row-label">Take Profit</span>
+              <span class="exchange-tp" id="bnb-tp">—</span>
+            </div>
+            <div class="exchange-row" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+              <span class="exchange-row-label">Fees</span>
+              <span style="color:var(--dim);" id="bnb-fee">—</span>
+            </div>
+          </div>
+          <div class="exchange-card" style="border-top:3px solid var(--accent);">
+            <div class="exchange-name" style="color:var(--accent);">OKX</div>
+            <div style="font-size:0.45rem;color:var(--dim);margin-bottom:10px;">Taker 0.05%</div>
+            <div class="exchange-row">
+              <span class="exchange-row-label">Stop Loss</span>
+              <span class="exchange-sl" id="okx-sl">—</span>
+            </div>
+            <div class="exchange-row">
+              <span class="exchange-row-label">Take Profit</span>
+              <span class="exchange-tp" id="okx-tp">—</span>
+            </div>
+            <div class="exchange-row" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+              <span class="exchange-row-label">Fees</span>
+              <span style="color:var(--dim);" id="okx-fee">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 </div><!-- /wrap -->
 <div class="toast" id="toast">СКОПИРОВАНО ✓</div>
 
@@ -537,6 +762,7 @@ function showPage(id, btn) {
   if (id === 'news' && !allNews.length) loadNews();
   if (id === 'twitter' && !allTweets.length) {} // загружается по кнопке
   if (id === 'backtest') { const el = document.getElementById('btStatus'); if(el){el.textContent = 'Enter coins and click ▶ RUN to start'; el.style.display='block';} }
+  if (id === 'calc') { calcUpdate(); }
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -1112,7 +1338,7 @@ async function runBacktest() {
     // Prop mode filter
     if (btPropModeActive) {
       filteredData = filteredData.filter(s =>
-        s.name.includes('RSI Д') || s.name.includes('4H Range')
+        s.name.includes('RSI Д') || s.name.includes('4H Range') || s.name.includes('Поглощение')
       );
     }
     status.textContent = `✅ Done — coins: ${coins} | candles: ${limit}`;
@@ -1270,6 +1496,8 @@ const TRANSLATIONS = {
   filterAll:   { ru: 'Все',   en: 'All' },
   filterLong:  { ru: 'Лонг',  en: 'Long' },
   filterShort: { ru: 'Шорт',  en: 'Short' },
+  filterTP:    { ru: 'TP',    en: 'TP' },
+  filterSL:    { ru: 'SL',   en: 'SL' },
 
   // Section titles
   titleTrades:   { ru: 'История сделок',     en: 'Trade History' },
@@ -1398,7 +1626,7 @@ function applyLang() {
 
   // Filter tabs
   const tabBtns = document.querySelectorAll('#page-stats .tab-btn');
-  const tabKeys = ['filterAll','filterLong','filterShort','filterLong','filterShort'];
+  const tabKeys = ['filterAll','filterLong','filterShort','filterTP','filterSL'];
   tabBtns.forEach((btn, i) => { if (tabKeys[i]) btn.textContent = t(tabKeys[i]); });
 
   // Radar filter buttons
@@ -1473,6 +1701,110 @@ function btToggle(id, btn, showLabel, hideLabel) {
   const isHidden = el.style.display === 'none';
   el.style.display = isHidden ? 'block' : 'none';
   if (btn) btn.textContent = isHidden ? (hideLabel || 'Hide') : (showLabel || 'Show');
+}
+
+
+// ══════════════════════════════════════════════════════════════
+//  POSITION CALCULATOR
+// ══════════════════════════════════════════════════════════════
+let calcDir = 'long';
+
+function setCalcDir(dir) {
+  calcDir = dir;
+  document.getElementById('btn-long').className  = 'type-btn' + (dir==='long' ? ' active-long' : '');
+  document.getElementById('btn-short').className = 'type-btn' + (dir==='short' ? ' active-short' : '');
+  calcUpdate();
+}
+
+function calcUpdate() {
+  const balance  = parseFloat(document.getElementById('c-balance')?.value) || 0;
+  const riskPct  = parseFloat(document.getElementById('c-risk')?.value) || 1;
+  const entry    = parseFloat(document.getElementById('c-entry')?.value) || 0;
+  const stop     = parseFloat(document.getElementById('c-stop')?.value) || 0;
+  const tp       = parseFloat(document.getElementById('c-tp')?.value) || 0;
+  const leverage = parseInt(document.getElementById('c-leverage')?.value) || 1;
+
+  if (!balance || !entry || !stop || !tp) return;
+
+  // Core calculations
+  const riskCapital = balance * riskPct / 100;
+  const slDist      = Math.abs(entry - stop);
+  const tpDist      = Math.abs(tp - entry);
+  const slPct       = slDist / entry * 100;
+  const tpPct       = tpDist / entry * 100;
+  const rr          = tpDist / slDist;
+
+  // Position sizing: riskCapital = positionSize × slPct/100
+  const positionSize = riskCapital / (slPct / 100);
+  const margin       = positionSize / leverage;
+  const qty          = positionSize / entry;
+
+  // PnL
+  const pnlGross = positionSize * tpPct / 100;
+  const lossGross= positionSize * slPct / 100;
+  const roe      = pnlGross / margin * 100;
+
+  // Liquidation (simplified: entry × (1 - 1/leverage × safety))
+  const liqPct   = 100 / leverage * 0.9;
+  const liqPrice = calcDir === 'long'
+    ? entry * (1 - liqPct/100)
+    : entry * (1 + liqPct/100);
+  const liqDist  = Math.abs(entry - liqPrice);
+
+  // Update UI
+  const fmt = (n, decimals=2) => n >= 1000 ? '$'+n.toLocaleString('en',{maximumFractionDigits:0})
+    : '$'+n.toFixed(decimals);
+
+  document.getElementById('r-risk').textContent    = fmt(riskCapital);
+  document.getElementById('r-margin').textContent  = fmt(margin);
+  document.getElementById('r-size').textContent    = fmt(positionSize);
+  document.getElementById('r-qty').textContent     = qty.toFixed(4);
+  document.getElementById('r-pnl').textContent     = '+' + fmt(pnlGross);
+  document.getElementById('r-roe').textContent     = '+' + roe.toFixed(2) + '%';
+  document.getElementById('r-rr').textContent      = '1 : ' + rr.toFixed(2);
+  document.getElementById('r-liq').textContent     = fmt(liqPrice, 4);
+  document.getElementById('r-liq-dist').textContent= `${(liqDist/entry*100).toFixed(1)}% from entry`;
+
+  // Fix liq dist display
+
+  // SL/TP pct labels
+  document.getElementById('c-sl-pct').textContent = `SL: ${slPct.toFixed(2)}% from entry`;
+  document.getElementById('c-tp-pct').textContent = `TP: ${tpPct.toFixed(2)}% | R:R = 1:${rr.toFixed(2)}`;
+
+  // RR bar
+  const rrFill = Math.min(rr / (rr + 1) * 100, 90);
+  const fillEl = document.getElementById('r-rr-fill');
+  if (fillEl) {
+    fillEl.style.width = rrFill + '%';
+    fillEl.style.background = rr >= 2 ? 'var(--green)' : rr >= 1 ? 'var(--yellow)' : 'var(--red)';
+  }
+
+  // Exchange fees (taker entry + taker exit = 2× fee)
+  const exchanges = [
+    { id: 'bybit', fee: 0.00055 }, // 0.055% taker
+    { id: 'bnb',   fee: 0.0005  }, // 0.05% taker
+    { id: 'okx',   fee: 0.0005  }, // 0.05% taker
+  ];
+
+  for (const ex of exchanges) {
+    const entryFee = positionSize * ex.fee;
+    const slFee    = positionSize * ex.fee;
+    const tpFee    = positionSize * ex.fee;
+    const totalFee = entryFee + slFee; // entry + exit fees
+    const totalFeeTp = entryFee + tpFee;
+
+    const slNet = -(lossGross + totalFee);
+    const tpNet = pnlGross - totalFeeTp;
+
+    document.getElementById(ex.id + '-sl').textContent = (slNet >= 0 ? '+' : '') + '$' + Math.abs(slNet).toFixed(2);
+    document.getElementById(ex.id + '-sl').style.color = slNet >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById(ex.id + '-tp').textContent = '+$' + tpNet.toFixed(2);
+    document.getElementById(ex.id + '-fee').textContent = '$' + totalFeeTp.toFixed(2);
+  }
+
+  // ROE color
+  document.getElementById('r-roe').style.color = roe >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('r-pnl').style.color = pnlGross >= 0 ? 'var(--green)' : 'var(--red)';
 }
 
 // ── INIT ─────────────────────────────────────────────────────

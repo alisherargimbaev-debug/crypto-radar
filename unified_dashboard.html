@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Crypto Radar v4</title>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700&family=Space+Mono:wght@400;700&family=Bebas+Neue&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,400;1,700;1,900&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Bebas+Neue&family=Cinzel+Decorative:wght@400;700&display=swap" rel="stylesheet">
 <style>
 /* ── DRAGON DARK THEME ── */
 :root, [data-theme="dark"] {
@@ -29,24 +29,24 @@
 }
 /* ── LIGHT THEME ── */
 [data-theme="light"] {
-  --bg:     #f0f4ff;
-  --panel:  #ffffff;
-  --panel2: #e8eeff;
-  --border: #c5d4f0;
-  --border2:#a8beea;
-  --accent: #0077bb;
-  --accent2:#0066aa;
-  --red:    #dc2626;
-  --yellow: #d97706;
-  --blue:   #2563eb;
-  --purple: #7c3aed;
-  --green:  #059669;
-  --text:   #0f1f3d;
-  --dim:    #6b80a8;
-  --dim2:   #8899bb;
-  --glow:   0 0 16px rgba(0,119,187,0.15);
-  --glow-r: 0 0 16px rgba(220,38,38,0.15);
-  --dragon: #ffffff;
+  --bg:     #f0e9d8;
+  --panel:  #e8dfc9;
+  --panel2: #dfd5bc;
+  --border: #c4b49a;
+  --border2:#a89878;
+  --accent: #c0392b;
+  --accent2:#922b21;
+  --red:    #c0392b;
+  --yellow: #b7770d;
+  --blue:   #1a3a5c;
+  --purple: #5d2d7a;
+  --green:  #1e5c2e;
+  --text:   #0d0d0d;
+  --dim:    #5c5040;
+  --dim2:   #7a6a55;
+  --glow:   none;
+  --glow-r: none;
+  --dragon: #e8dfc9;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;min-height:100vh;overflow-x:hidden;transition:background .3s,color .3s;}
@@ -275,6 +275,63 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 .tw-sentiment{font-size:0.52rem;padding:2px 8px;letter-spacing:1px;}
 .tw-sentiment.bull{color:var(--accent);border:1px solid rgba(0,255,136,0.3);}
 .tw-sentiment.bear{color:var(--red);border:1px solid rgba(255,51,102,0.3);}
+
+/* ═══ EDITORIAL LIGHT MODE ═══════════════════════════
+   Newspaper aesthetic — Playfair Display + cream paper
+   ════════════════════════════════════════════════════ */
+[data-theme="light"] body { font-family: 'Playfair Display', serif; }
+[data-theme="light"] .nav-btn,[data-theme="light"] .filter-btn,
+[data-theme="light"] .tab-btn,[data-theme="light"] .period-btn,
+[data-theme="light"] .badge,[data-theme="light"] .strat-tag,
+[data-theme="light"] .stat-label,[data-theme="light"] .sec-title,
+[data-theme="light"] .side-title,[data-theme="light"] .tbl-head,
+[data-theme="light"] .stbl-head,[data-theme="light"] .time-c,
+[data-theme="light"] .coin-full-name { font-family:'Space Mono',monospace !important; }
+[data-theme="light"] .stat-value,[data-theme="light"] .daily-item-val {
+  font-family:'Playfair Display',serif !important;
+  font-weight:900; letter-spacing:-1px; font-size:1.8rem;
+}
+[data-theme="light"] h1 {
+  font-family:'Playfair Display',serif !important;
+  font-style:italic; font-weight:900;
+  color:var(--text) !important; text-shadow:none !important;
+  letter-spacing:-1px; font-size:1.8rem;
+}
+[data-theme="light"] .wrap::before {
+  content:'· CRYPTO RADAR / EST. 2025 ·   SIGNALS · ANALYTICS · REAL-TIME';
+  display:block; font-family:'Space Mono',monospace;
+  font-size:0.46rem; letter-spacing:4px; color:var(--dim);
+  text-align:center; padding:5px 0;
+  border-bottom:1px solid var(--border);
+  border-top:1px solid var(--border);
+  margin-bottom:12px; text-transform:uppercase;
+}
+[data-theme="light"] body::before {
+  background-image:repeating-linear-gradient(0deg,transparent,transparent 27px,rgba(0,0,0,0.055) 27px,rgba(0,0,0,0.055) 28px) !important;
+}
+[data-theme="light"] header { border-top:4px solid var(--text); border-bottom:2px solid var(--text); padding-top:10px; padding-bottom:10px; }
+[data-theme="light"] .nav-btn { font-size:0.56rem; letter-spacing:3px; font-weight:700; }
+[data-theme="light"] .nav-btn.active { color:var(--text); border-bottom:3px solid var(--accent); }
+[data-theme="light"] .stat-card { border:2px solid var(--text) !important; box-shadow:3px 3px 0 rgba(0,0,0,0.18); border-radius:0 !important; }
+[data-theme="light"] .stat-card.green { border-left:4px solid var(--accent) !important; }
+[data-theme="light"] .stat-card.red   { border-left:4px solid var(--red) !important; }
+[data-theme="light"] .stat-card.blue  { border-left:4px solid var(--blue) !important; }
+[data-theme="light"] .tbl-wrap,[data-theme="light"] .side-card,[data-theme="light"] .calc-panel {
+  border:2px solid var(--text) !important; border-radius:0 !important;
+}
+[data-theme="light"] .grade.A { background:var(--green); color:#fff; border-color:var(--green); }
+[data-theme="light"] .grade.B { background:var(--yellow); color:#fff; border-color:var(--yellow); }
+[data-theme="light"] .grade.C { background:var(--blue); color:#fff; border-color:var(--blue); }
+[data-theme="light"] .grade.D { background:var(--dim); color:#fff; border-color:var(--dim); }
+[data-theme="light"] .refresh-btn { border:2px solid var(--accent); border-radius:0; font-weight:700; }
+[data-theme="light"] .filter-btn,[data-theme="light"] .tab-btn,[data-theme="light"] .period-btn { border-radius:0; }
+[data-theme="light"] .filter-btn.active,[data-theme="light"] .tab-btn.active,
+[data-theme="light"] .period-btn.active { background:var(--text); color:var(--bg); border-color:var(--text); }
+[data-theme="light"] .pnl-pos { color:var(--green); }
+[data-theme="light"] .pnl-neg { color:var(--red); }
+[data-theme="light"] .dir-long  { background:rgba(30,92,46,0.12); color:var(--green); border-color:rgba(30,92,46,0.3); }
+[data-theme="light"] .dir-short { background:rgba(192,57,43,0.12); color:var(--red); border-color:rgba(192,57,43,0.3); }
+[data-theme="light"] .sec-title,[data-theme="light"] .side-title { letter-spacing:3px; border-bottom:1px solid var(--border); padding-bottom:6px; }
 </style>
 </head>
 <body>
@@ -284,11 +341,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <header>
   <div class="logo">
     <svg class="logo-svg" viewBox="0 0 40 40" fill="none">
-      <circle cx="20" cy="20" r="18" stroke="#7dd3fc" stroke-width="1.2" stroke-opacity=".35"/>
-      <circle cx="20" cy="20" r="11" stroke="#7dd3fc" stroke-width="1" stroke-opacity=".5"/>
-      <circle cx="20" cy="20" r="5"  stroke="#7dd3fc" stroke-width="1"/>
-      <line x1="20" y1="20" x2="31" y2="9" stroke="#7dd3fc" stroke-width="1.5" stroke-linecap="round"/>
-      <circle cx="20" cy="20" r="2" fill="#7dd3fc"/>
+      <circle cx="20" cy="20" r="18" stroke="var(--accent)" stroke-width="1.2" stroke-opacity=".5"/>
+      <circle cx="20" cy="20" r="11" stroke="var(--accent)" stroke-width="1" stroke-opacity=".6"/>
+      <circle cx="20" cy="20" r="5"  stroke="var(--accent)" stroke-width="1"/>
+      <line x1="20" y1="20" x2="31" y2="9" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="20" cy="20" r="2" fill="var(--accent)"/>
     </svg>
     <div>
       <h1>crypto<span style="font-style:normal;color:var(--text);">-radar</span></h1>
@@ -299,7 +356,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
     <div class="status-line"><div class="live-dot"></div><span id="statusTxt">INITIALIZING...</span></div>
     <div class="hdr-time" id="hdrTime">—</div>
     <div class="hdr-fng" id="hdrFng">F&G: —</div>
-    <button id="themeBtn" onclick="toggleTheme()" style="background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:1px;transition:all .2s;border-radius:4px;" title="Toggle light/dark mode">☾</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Toggle theme" style="background:transparent;color:var(--dim);border:1px solid var(--border);padding:6px 14px;font-family:'Space Mono',monospace;font-size:0.52rem;cursor:pointer;letter-spacing:2px;text-transform:uppercase;font-weight:700;border-radius:2px;transition:all .25s;">· ☾ NIGHT</button>
   <button id="langBtn" onclick="toggleLang()" style="background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:1px;transition:all .2s;border-radius:4px;">RU</button>
   </div>
 </header>
@@ -1687,11 +1744,20 @@ function safeText(selector, text) {
 
 // ── THEME TOGGLE ────────────────────────────────────────────
 function toggleTheme() {
-  const html = document.documentElement;
-  const isDark = html.getAttribute('data-theme') === 'dark';
-  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  const root = document.documentElement;
+  const isDark = root.getAttribute('data-theme') === 'dark';
+  const next = isDark ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
   const btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = isDark ? '☀' : '☾';
+  if (btn) {
+    if (next === 'light') {
+      btn.textContent = '· ☀ DAY';
+      btn.style.cssText = "background:#0d0d0d;color:#f0e9d8;border:none;padding:6px 14px;font-family:'Space Mono',monospace;font-size:0.52rem;cursor:pointer;letter-spacing:2px;text-transform:uppercase;font-weight:700;border-radius:2px;transition:all .25s;";
+    } else {
+      btn.textContent = '· ☾ NIGHT';
+      btn.style.cssText = "background:transparent;color:var(--dim);border:1px solid var(--border);padding:6px 14px;font-family:'Space Mono',monospace;font-size:0.52rem;cursor:pointer;letter-spacing:2px;text-transform:uppercase;font-weight:700;border-radius:2px;transition:all .25s;";
+    }
+  }
 }
 
 // ── BACKTEST EXPAND ──────────────────────────────────────────

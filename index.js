@@ -8,6 +8,9 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
+// ── Copy Trading Tracker — подпроект (отдельный модуль) ────
+const copytrader = require('./copytrader');
+
 // ── Настройки ──────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const CHAT_ID        = process.env.CHAT_ID;
@@ -401,12 +404,17 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/whales') {
+    await copytrader.handleWhalesCommand(chatId);
+  }
+
   else if (cmd === '/help') {
     await sendTelegramTo(chatId,
       `🤖 КРИПТО РАДАР\n━━━━━━━━━━━━━━━━━━━━━━\n` +
       `/status     — открытые сделки\n` +
       `/trades     — последние 10 сделок\n` +
       `/stats      — статистика за день\n` +
+      `/whales     — 🐋 топ-5 трейдеров\n` +
       `/guide      — инструкция по сигналам\n` +
       `/prop       — 🏆 вкл/выкл проп-режим\n` +
       `/propstatus — статус проп-режима\n` +
@@ -2863,6 +2871,15 @@ app.get('/api/news', async (req, res) => {
     } else {
       res.json({ ok: false, error: 'No data' });
     }
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── WHALES API (Copy Trading Tracker) ─────────────────────────
+app.get('/api/whales', (req, res) => {
+  try {
+    res.json({ ok: true, ...copytrader.getTrackedWhalesSnapshot() });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }

@@ -385,6 +385,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
 <div class="nav">
   <button class="nav-btn active" onclick="showPage('radar',this)" data-ru="📡 РАДАР" data-en="📡 RADAR">📡 RADAR</button>
   <button class="nav-btn" onclick="showPage('stats',this)" data-ru="📊 СТАТИСТИКА" data-en="📊 STATISTICS">📊 STATISTICS</button>
+  <button class="nav-btn" onclick="showPage('whales',this)" data-ru="🐋 КИТЫ" data-en="🐋 WHALES">🐋 WHALES</button>
   <button class="nav-btn" onclick="showPage('news',this)" data-ru="📰 НОВОСТИ" data-en="📰 NEWS">📰 NEWS</button>
   <button class="nav-btn" onclick="showPage('twitter',this)" data-ru="𝕏 TWITTER" data-en="𝕏 MEDIA">𝕏 MEDIA</button>
   <button class="nav-btn" onclick="showPage('backtest',this)" data-ru="🔬 БЭКТЕСТ" data-en="🔬 BACKTEST">🔬 BACKTEST</button>
@@ -815,6 +816,75 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
   </div>
 </div>
 
+<!-- ═══════════════════ PAGE 7: WHALES (Copy Trading) ═══════════════════ -->
+<div id="page-whales" class="page">
+  <style>
+    .wh-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px; }
+    .wh-stat-card { background:var(--panel); border:1px solid var(--border); padding:12px 14px; border-radius:4px; }
+    .wh-stat-label { font-size:0.5rem; color:var(--dim); letter-spacing:2px; text-transform:uppercase; margin-bottom:4px; }
+    .wh-stat-value { font-family:'Bebas Neue',sans-serif; font-size:1.5rem; line-height:1; letter-spacing:1px; }
+    .wh-controls { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    .wh-tbl-head { display:grid; grid-template-columns:30px 1.4fr 90px 90px 100px 110px 1.6fr; gap:8px; padding:8px 12px; border-bottom:1px solid var(--border); font-size:0.5rem; color:var(--dim); letter-spacing:2px; text-transform:uppercase; }
+    .wh-row { display:grid; grid-template-columns:30px 1.4fr 90px 90px 100px 110px 1.6fr; gap:8px; padding:10px 12px; border-bottom:1px solid var(--border); font-size:0.65rem; align-items:center; transition:background .15s; }
+    .wh-row:hover { background:var(--panel2); }
+    .wh-row .rank { color:var(--dim); font-family:'Bebas Neue',sans-serif; font-size:0.85rem; }
+    .wh-trader { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .wh-trader-name { color:var(--text); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .wh-trader-sub { color:var(--dim); font-size:0.5rem; letter-spacing:1px; text-transform:uppercase; }
+    .wh-src-hl { color:#9945ff; }
+    .wh-src-bn { color:#f3a729; }
+    .wh-pnl { color:var(--green); font-weight:700; font-family:'Space Mono',monospace; }
+    .wh-wr  { color:var(--text); font-family:'Space Mono',monospace; }
+    .wh-wr.none { color:var(--dim); }
+    .wh-acc { color:var(--text); font-family:'Space Mono',monospace; font-size:0.6rem; }
+    .wh-poscount { color:var(--accent); font-family:'Bebas Neue',sans-serif; font-size:1rem; }
+    .wh-pos-chips { display:flex; gap:4px; flex-wrap:wrap; }
+    .wh-chip { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:3px; font-size:0.52rem; font-family:'Space Mono',monospace; border:1px solid transparent; }
+    .wh-chip.long  { background:rgba(74,222,128,0.1); color:var(--green); border-color:rgba(74,222,128,0.25); }
+    .wh-chip.short { background:rgba(248,113,113,0.1); color:var(--red); border-color:rgba(248,113,113,0.25); }
+    .wh-chip-size { color:var(--dim); font-size:0.48rem; }
+    .wh-empty { padding:40px; text-align:center; color:var(--dim); font-size:0.7rem; }
+    .wh-warn { padding:10px 14px; background:rgba(243,167,41,0.08); border:1px solid rgba(243,167,41,0.3); border-radius:4px; color:#f3a729; font-size:0.55rem; line-height:1.5; margin-bottom:12px; }
+    @media(max-width:900px) {
+      .wh-stats { grid-template-columns:repeat(2,1fr); }
+      .wh-tbl-head, .wh-row { grid-template-columns:24px 1fr 70px 80px 1.4fr; }
+      .wh-tbl-head > :nth-child(5), .wh-tbl-head > :nth-child(6),
+      .wh-row > :nth-child(5), .wh-row > :nth-child(6) { display:none; }
+    }
+  </style>
+
+  <div style="margin-bottom:16px;">
+    <div style="font-size:0.75rem;color:var(--text);font-weight:bold;margin-bottom:4px;">🐋 Copy Trading Tracker</div>
+    <div style="font-size:0.55rem;color:var(--dim);">Top-20 traders from Hyperliquid &amp; Binance Futures (public leaderboards, no keys)</div>
+  </div>
+
+  <div class="wh-stats">
+    <div class="wh-stat-card"><div class="wh-stat-label">Tracked</div><div class="wh-stat-value" id="whTracked">—</div></div>
+    <div class="wh-stat-card"><div class="wh-stat-label">Opens alerts</div><div class="wh-stat-value" style="color:var(--green);" id="whOpens">—</div></div>
+    <div class="wh-stat-card"><div class="wh-stat-label">Close alerts</div><div class="wh-stat-value" style="color:var(--red);" id="whCloses">—</div></div>
+    <div class="wh-stat-card"><div class="wh-stat-label">Last update</div><div class="wh-stat-value" style="font-size:0.75rem;" id="whLastUpd">—</div></div>
+  </div>
+
+  <div class="wh-controls">
+    <button class="filter-btn active" onclick="setWhFilter('all',this)">ВСЕ</button>
+    <button class="filter-btn" onclick="setWhFilter('hyperliquid',this)" style="color:#9945ff;border-color:rgba(153,69,255,0.4);">HYPERLIQUID</button>
+    <button class="filter-btn" onclick="setWhFilter('binance',this)" style="color:#f3a729;border-color:rgba(243,167,41,0.4);">BINANCE</button>
+    <button class="filter-btn" onclick="setWhFilter('withPos',this)">С ПОЗИЦИЯМИ</button>
+    <button class="refresh-btn" onclick="loadWhales()">↻ ОБНОВИТЬ</button>
+  </div>
+
+  <div class="wh-tbl-head">
+    <div>#</div>
+    <div>TRADER</div>
+    <div style="text-align:right">WR</div>
+    <div style="text-align:right">PNL / MO</div>
+    <div style="text-align:right">ACCOUNT</div>
+    <div style="text-align:center">POS</div>
+    <div>OPEN POSITIONS</div>
+  </div>
+  <div id="whalesBody"><div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div></div>
+</div>
+
 </div><!-- /wrap -->
 <div class="toast" id="toast">СКОПИРОВАНО ✓</div>
 
@@ -828,6 +898,7 @@ let allCoins   = [], radarFilter = 'all', sortCol = 'change1h', sortAsc = false;
 let threshold  = 5, soundEnabled = false, prevIds = new Set();
 let allTrades  = [], allSignals = [], openTrades = [];
 let statPeriod = 'day', statFilter = 'all';
+let allWhales  = [], whFilter = 'all', whalesAutoTimer = null;
 
 // ── NAVIGATION ───────────────────────────────────────────────
 function showPage(id, btn) {
@@ -840,6 +911,13 @@ function showPage(id, btn) {
   if (id === 'twitter' && !allTweets.length) {} // загружается по кнопке
   if (id === 'backtest') { const el = document.getElementById('btStatus'); if(el){el.textContent = 'Enter coins and click ▶ RUN to start'; el.style.display='block';} }
   if (id === 'calc') { calcUpdate(); }
+  if (id === 'whales') {
+    loadWhales();
+    if (whalesAutoTimer) clearInterval(whalesAutoTimer);
+    whalesAutoTimer = setInterval(() => { if (document.getElementById('page-whales').classList.contains('active')) loadWhales(); }, 30000);
+  } else {
+    if (whalesAutoTimer) { clearInterval(whalesAutoTimer); whalesAutoTimer = null; }
+  }
 }
 
 // ── TIME ─────────────────────────────────────────────────────
@@ -1218,6 +1296,93 @@ function setNewsFilter(f, btn) {
   document.querySelectorAll('.news-filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderNews();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  WHALES PAGE (Copy Trading Tracker)
+// ══════════════════════════════════════════════════════════════
+function fmtWhUsd(v) {
+  if (v == null || !isFinite(v)) return '—';
+  if (v >= 1e9) return '$' + (v/1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return '$' + (v/1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
+  return '$' + v.toFixed(0);
+}
+function fmtWhTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts + 5*60*60*1000);
+  return d.toISOString().substr(11, 5) + ' ALM';
+}
+async function loadWhales() {
+  const body = document.getElementById('whalesBody');
+  if (!allWhales.length) {
+    body.innerHTML = '<div class="loading-anim">ЗАГРУЗКА<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>';
+  }
+  try {
+    const r = await fetch('/api/whales', { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'API error');
+    allWhales = j.whales || [];
+    document.getElementById('whTracked').textContent = j.stats?.tracked ?? allWhales.length;
+    document.getElementById('whOpens').textContent   = '+' + (j.stats?.opens || 0);
+    document.getElementById('whCloses').textContent  = '-' + (j.stats?.closes || 0);
+    document.getElementById('whLastUpd').textContent = fmtWhTime(j.lastLeaderboardUpdate);
+    renderWhales();
+  } catch(e) {
+    body.innerHTML = `<div class="wh-empty">⚠️ ${e.message}<br><span style="font-size:0.55rem;">Если только что задеплоил — подожди 1–2 минуты, копитрейдер ещё подтягивает leaderboard.</span></div>`;
+  }
+}
+function setWhFilter(f, btn) {
+  whFilter = f;
+  document.querySelectorAll('#page-whales .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderWhales();
+}
+function renderWhales() {
+  const body = document.getElementById('whalesBody');
+  let list = allWhales;
+  if (whFilter === 'hyperliquid') list = list.filter(w => w.source === 'hyperliquid');
+  else if (whFilter === 'binance') list = list.filter(w => w.source === 'binance');
+  else if (whFilter === 'withPos') list = list.filter(w => (w.positions || []).length > 0);
+
+  if (!list.length) {
+    body.innerHTML = '<div class="wh-empty">Нет трейдеров для отображения с этим фильтром.</div>';
+    return;
+  }
+
+  body.innerHTML = list.map((w, i) => {
+    const srcCls = w.source === 'hyperliquid' ? 'wh-src-hl' : 'wh-src-bn';
+    const srcTxt = w.source === 'hyperliquid' ? 'HL' : 'BN';
+    const wrCell = w.wr != null
+      ? `<div class="wh-wr" style="text-align:right;">${w.wr}%</div>`
+      : `<div class="wh-wr none" style="text-align:right;">—</div>`;
+    const positions = w.positions || [];
+    const chips = positions.map(p =>
+      `<span class="wh-chip ${p.side === 'LONG' ? 'long' : 'short'}" title="${p.side} @ $${p.entryPx} · ${p.leverage}x">` +
+        `${p.side === 'LONG' ? '▲' : '▼'} ${p.coin} ` +
+        `<span class="wh-chip-size">${fmtWhUsd(p.sizeUsd)}</span>` +
+      `</span>`
+    ).join('') || '<span style="color:var(--dim);font-size:0.55rem;">нет открытых</span>';
+    const addrShort = w.address && w.address.startsWith('0x')
+      ? w.address.slice(0, 6) + '…' + w.address.slice(-4)
+      : (w.address || '').slice(0, 12);
+    return `
+      <div class="wh-row">
+        <div class="rank">${i+1}</div>
+        <div class="wh-trader">
+          <div class="wh-trader-name">${escapeHtml(w.name)}</div>
+          <div class="wh-trader-sub"><span class="${srcCls}">${srcTxt}</span> · ${addrShort}</div>
+        </div>
+        ${wrCell}
+        <div class="wh-pnl" style="text-align:right;">+${w.pnlMonth}%</div>
+        <div class="wh-acc" style="text-align:right;">${fmtWhUsd(w.accountValue)}</div>
+        <div class="wh-poscount" style="text-align:center;">${positions.length}</div>
+        <div class="wh-pos-chips">${chips}</div>
+      </div>`;
+  }).join('');
+}
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 async function loadNews() {

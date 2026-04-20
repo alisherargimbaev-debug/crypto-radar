@@ -2752,45 +2752,28 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S9 error:', e.message); }
 
-    // S10 PRO: 4H Range Breakout — Institutional Grade
-    // ✅ Сессионный фильтр 02:00-10:00 UTC (07:00-15:00 Алматы)
-    // ✅ Объём пробоя > avg × 1.3 (настоящий stop hunt)
-    // ✅ Multi-TF: RSI 1H подтверждает направление
-    // ✅ MA200 на 1H вместо 15m
-    // ✅ SL hard cap 1.5% (исправление ENJ инцидента)
+    // S10: 4H Range Breakout (5m) — оригинальная версия
     try {
-      // ── 1. СЕССИОННЫЙ ФИЛЬТР ──────────────────────────────────
-      // 02:00-10:00 UTC = 07:00-15:00 Алматы (UTC+5)
-      const nowHourUTC = new Date().getUTCHours();
-      if (nowHourUTC < 2 || nowHourUTC >= 10) {
-        console.log(`[S10PRO SKIP] ${instId} — вне сессии (${nowHourUTC}:xx UTC, нужно 02-10)`);
-      } else {
-
       const k4h_s10 = await getOKXKlinesCached(instId, '4H', 8);
       const k5m_s10 = await getOKXKlinesCached(instId, '5m', 96);
-      const k1h_s10 = await getOKXKlinesCached(instId, '1H', 24);
 
-      if (k4h_s10.length >= 2 && k5m_s10.length >= 20 && k1h_s10.length >= 14) {
+      if (k4h_s10.length >= 2 && k5m_s10.length >= 20) {
         const nowUTC   = Date.now();
         const dayStart = nowUTC - (nowUTC % (24 * 60 * 60 * 1000));
 
         const todayCandles = k4h_s10.filter(c => c.ts >= dayStart && c.ts < nowUTC - 4*60*60*1000);
-        if (!todayCandles.length) throw new Error('[S10PRO] Нет 4H свечи за сегодня');
+        if (!todayCandles.length) throw new Error('[S10] Нет 4H свечи за сегодня');
 
         const rangeCandle = todayCandles[0];
         const rangeHigh   = rangeCandle.high;
         const rangeLow    = rangeCandle.low;
         const rangeSize   = rangeHigh - rangeLow;
 
-        if (rangeSize < atr15m * 0.5) {
-          console.log(`[S10PRO SKIP] ${instId} — диапазон слишком мал`);
-        } else {
-          // ── 2. RSI 1H (Multi-TF) ─────────────────────────────
-          const rsi1h    = calcRSI(k1h_s10, 14);
-          // ── 3. MA200 на 1H ────────────────────────────────────
-          const ma200_1h = calcSMA(k1h_s10, Math.min(200, k1h_s10.length));
-          const uptrend  = price > ma200_1h;
-          // ── 4. Средний объём 5m ───────────────────────────────
+        if (rangeSize >= atr15m * 0.5) {
+          // MA200 по 5m для определения тренда
+          const ma200_5m = calcSMA(k5m_s10, Math.min(200, k5m_s10.length));
+          const uptrend  = price > ma200_5m;
+          // Средний объём 5m
           const avgVol5m = k5m_s10.slice(-20).reduce((a,c) => a + (c.quoteVolume||1), 0) / 20;
 
           const recentK5m = k5m_s10.slice(-30);
@@ -2799,65 +2782,48 @@ if (k1h.length >= 55) {
             const prev = recentK5m[j - 1];
             const curr = recentK5m[j];
 
-            // ── LONG: пробой вниз + возврат ──────────────────────
+            // LONG: пробой вниз + возврат (только выше MA200)
             if (prev.close < rangeLow && curr.close >= rangeLow && uptrend) {
-              // Объём пробойной свечи > avg × 1.3
-              if ((prev.quoteVolume||1) < avgVol5m * 1.3) { continue; }
-              // RSI 1H не перекуплен
-              if (rsi1h > 65) { continue; }
+              const slDist = Math.max(curr.close - prev.low * 0.999, atr15m * 0.8);
+              const sl      = (curr.close - slDist).toFixed(4);
+              const tp1     = (curr.close + slDist * 2.5).toFixed(4);
+              const tp2     = (curr.close + slDist * 4.0).toFixed(4);
 
-              // SL cap 1.5%
-              const MAX_SL_L = curr.close * 0.015;
-              const rawSL_L  = curr.close - (prev.low * 0.999);
-              const slDist_L = Math.min(rawSL_L, MAX_SL_L);
-              const slPrice  = (curr.close - slDist_L).toFixed(4);
-              const tp1Price = (curr.close + slDist_L * 2.5).toFixed(4);
-              const tp2Price = (curr.close + slDist_L * 4.0).toFixed(4);
-
-              let conf = 72;
+              let conf = 68;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
-              if (rsi1h < 45)  conf += 6;
-              if (price > ma200_1h * 1.01) conf += 4;
+              if (price > ma200_5m * 1.01) conf += 4;
 
               signals.push({
                 strategy: '🔟 4H Range Breakout (5m)', instId, direction: 'long',
                 signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
-                metrics: `PRO | 4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h.toFixed(0)} | ${nowHourUTC}:xx UTC`,
-                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
+                metrics: `4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x`,
+                sl, tp1, tp2,
               });
               break;
             }
 
-            // ── SHORT: пробой вверх + возврат ────────────────────
+            // SHORT: пробой вверх + возврат (только ниже MA200)
             if (prev.close > rangeHigh && curr.close <= rangeHigh && !uptrend) {
-              if ((prev.quoteVolume||1) < avgVol5m * 1.3) { continue; }
-              if (rsi1h < 35) { continue; }
+              const slDist = Math.max(prev.high * 1.001 - curr.close, atr15m * 0.8);
+              const sl      = (curr.close + slDist).toFixed(4);
+              const tp1     = (curr.close - slDist * 2.5).toFixed(4);
+              const tp2     = (curr.close - slDist * 4.0).toFixed(4);
 
-              const MAX_SL_S = curr.close * 0.015;
-              const rawSL_S  = (prev.high * 1.001) - curr.close;
-              const slDist_S = Math.min(rawSL_S, MAX_SL_S);
-              const slPrice  = (curr.close + slDist_S).toFixed(4);
-              const tp1Price = (curr.close - slDist_S * 2.5).toFixed(4);
-              const tp2Price = (curr.close - slDist_S * 4.0).toFixed(4);
-
-              let conf = 72;
+              let conf = 68;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
-              if (rsi1h > 55)  conf += 6;
-              if (price < ma200_1h * 0.99) conf += 4;
+              if (price < ma200_5m * 0.99) conf += 4;
 
               signals.push({
                 strategy: '🔟 4H Range Breakout (5m)', instId, direction: 'short',
                 signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
-                metrics: `PRO | 4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h.toFixed(0)} | ${nowHourUTC}:xx UTC`,
-                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
+                metrics: `4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x`,
+                sl, tp1, tp2,
               });
               break;
             }
           }
         }
       }
-      } // конец сессионного фильтра
-
     } catch(e) { console.error('S10 error:', e.message); }
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }

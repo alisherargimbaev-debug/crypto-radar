@@ -108,7 +108,7 @@ const COIN_SECTORS = {
 
 // Дневной PnL трекер
 if (!global.dailyPnlTracker) {
-  global.dailyPnlTracker = { date: '', losses: 0, wins: 0 };
+  global.dailyPnlTracker = { date: '', losses: 0, wins: 0, slCount: 0 };
 }
 
 function checkPortfolioRisk(sig) {
@@ -168,13 +168,14 @@ function checkPortfolioRisk(sig) {
   return { allowed: true };
 }
 
-function updateDailyPnl(pnl) {
+function updateDailyPnl(pnl, outcome) {
   const today = new Date().toISOString().split('T')[0];
   if (global.dailyPnlTracker.date !== today) {
-    global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
+    global.dailyPnlTracker = { date: today, losses: 0, wins: 0, slCount: 0 };
   }
   if (pnl < 0) global.dailyPnlTracker.losses += Math.abs(pnl);
   else global.dailyPnlTracker.wins += pnl;
+  if (outcome === 'sl') global.dailyPnlTracker.slCount += 1;
 }
 
 // Рейтинг стратегий по win rate
@@ -439,6 +440,9 @@ async function handleTelegramCommand(text, chatId) {
     const dayLoss = global.dailyPnlTracker?.date === today
       ? global.dailyPnlTracker.losses.toFixed(2)
       : '0.00';
+    const daySlCount = global.dailyPnlTracker?.date === today
+      ? (global.dailyPnlTracker.slCount || 0)
+      : 0;
     const propLimit = store.propMode ? 3.0 : 5.0;
     const remaining = Math.max(0, propLimit - parseFloat(dayLoss)).toFixed(2);
 
@@ -450,8 +454,10 @@ async function handleTelegramCommand(text, chatId) {
       `  Потери сегодня: -${dayLoss}%\n` +
       `  Лимит: ${propLimit}%\n` +
       `  Осталось до лимита: ${remaining}%\n\n` +
+      `❌ SL за сегодня: ${daySlCount}/3\n` +
+      `  (Дневной стоп при 3 SL до 00:00 UTC)\n\n` +
       `🔴 SL подряд сейчас: ${slStreak}\n` +
-      `  (Авто-стоп при 3)\n\n` +
+      `  (Авто-стоп при 3 подряд → пауза 4ч)\n\n` +
       `📈 Открытых сделок: ${store.openTrades.length}\n` +
       `  Макс: ${store.propMode ? 2 : 3}`
     );
@@ -2706,7 +2712,8 @@ if (k1h.length >= 55) {
             if (pullbackUp >= 5)   conf += 5;  // сильный откат = хорошая точка
             if (lowerLow4h && lowerHigh4h) conf += 5; // чёткая структура
 
-            const slDist  = Math.max(Math.abs(lastHigh15m - price), atr15m_s9 * 1.5);
+            const MAX_SL_S9 = price * 0.015; // cap 1.5%
+            const slDist  = Math.min(Math.max(Math.abs(lastHigh15m - price), atr15m_s9 * 1.5), MAX_SL_S9);
             const sl      = (price + slDist).toFixed(4);
             const tp1     = (price - slDist * 2).toFixed(4);
             const tp2     = (price - slDist * 3).toFixed(4);
@@ -2734,7 +2741,8 @@ if (k1h.length >= 55) {
             if (pullbackDown >= 5) conf += 5;
             if (higherLow4h && higherHigh4h) conf += 5;
 
-            const slDist  = Math.max(Math.abs(price - lastLow15m), atr15m_s9 * 1.5);
+            const MAX_SL_S9L = price * 0.015; // cap 1.5%
+            const slDist  = Math.min(Math.max(Math.abs(price - lastLow15m), atr15m_s9 * 1.5), MAX_SL_S9L);
             const sl      = (price - slDist).toFixed(4);
             const tp1     = (price + slDist * 2).toFixed(4);
             const tp2     = (price + slDist * 3).toFixed(4);
@@ -2784,7 +2792,8 @@ if (k1h.length >= 55) {
 
             // LONG: пробой вниз + возврат (только выше MA200)
             if (prev.close < rangeLow && curr.close >= rangeLow && uptrend) {
-              const slDist = Math.max(curr.close - prev.low * 0.999, atr15m * 0.8);
+              const MAX_SL_S10L = curr.close * 0.015; // cap 1.5%
+              const slDist = Math.min(Math.max(curr.close - prev.low * 0.999, atr15m * 0.8), MAX_SL_S10L);
               const sl      = (curr.close - slDist).toFixed(4);
               const tp1     = (curr.close + slDist * 2.5).toFixed(4);
               const tp2     = (curr.close + slDist * 4.0).toFixed(4);
@@ -2804,7 +2813,8 @@ if (k1h.length >= 55) {
 
             // SHORT: пробой вверх + возврат (только ниже MA200)
             if (prev.close > rangeHigh && curr.close <= rangeHigh && !uptrend) {
-              const slDist = Math.max(prev.high * 1.001 - curr.close, atr15m * 0.8);
+              const MAX_SL_S10S = curr.close * 0.015; // cap 1.5%
+              const slDist = Math.min(Math.max(prev.high * 1.001 - curr.close, atr15m * 0.8), MAX_SL_S10S);
               const sl      = (curr.close + slDist).toFixed(4);
               const tp1     = (curr.close - slDist * 2.5).toFixed(4);
               const tp2     = (curr.close - slDist * 4.0).toFixed(4);
@@ -3558,6 +3568,13 @@ async function checkSignals() {
 
   // ── ПРОП-ЗАЩИТА: автостоп при 3 SL подряд ──────────────────
   if (store.propMode) {
+    // Дневной SL-стоп: 3 SL за день → стоп до 00:00 UTC
+    const today = new Date().toISOString().split('T')[0];
+    if (global.dailyPnlTracker?.date === today && (global.dailyPnlTracker.slCount || 0) >= 3) {
+      console.log(`[PROP DAY-STOP] ${global.dailyPnlTracker.slCount} SL за сегодня — стоп до 00:00 UTC`);
+      return;
+    }
+
     const recentTrades = store.tradeHistory.slice(-3);
     if (recentTrades.length >= 3 && recentTrades.every(t => t.outcome === 'sl')) {
       const lastSL = recentTrades[recentTrades.length-1].closedAt || 0;
@@ -4055,7 +4072,7 @@ async function checkOutcomes() {
         ? (exitPrice - entryPrice) / entryPrice * 100
         : (entryPrice - exitPrice) / entryPrice * 100;
       trade.pnl = parseFloat(trade.pnl.toFixed(2));
-      updateDailyPnl(trade.pnl || 0);
+      updateDailyPnl(trade.pnl || 0, outcome);
       closed.push(trade);
       await sendTelegram(buildOutcomeAlert(trade));
     } else { stillOpen.push(trade); }

@@ -2786,10 +2786,13 @@ if (k1h.length >= 55) {
 
             // Пробой ВНИЗ + возврат → LONG
             if (prev.close < rangeLow && curr.close >= rangeLow) {
-              const slPrice  = (prev.low * 0.999).toFixed(4);  // ниже минимума пробоя
-              const slDist   = Math.abs(curr.close - parseFloat(slPrice));
-              const tp1Price = (curr.close + slDist * 2).toFixed(4);
-              const tp2Price = (curr.close + slDist * 3).toFixed(4);
+              // SL: ниже минимума пробойной свечи, но не больше 1.5% от входа
+              const MAX_SL = curr.close * 0.015; // жёсткий cap 1.5%
+              const rawSL  = curr.close - (prev.low * 0.999);
+              const slDist = Math.min(rawSL, MAX_SL);
+              const slPrice  = (curr.close - slDist).toFixed(4);
+              const tp1Price = (curr.close + slDist * 2.5).toFixed(4); // RR 1:2.5
+              const tp2Price = (curr.close + slDist * 4.0).toFixed(4); // RR 1:4
               const conf     = 68;
 
               signals.push({
@@ -2805,10 +2808,13 @@ if (k1h.length >= 55) {
 
             // Пробой ВВЕРХ + возврат → SHORT
             if (prev.close > rangeHigh && curr.close <= rangeHigh) {
-              const slPrice  = (prev.high * 1.001).toFixed(4); // выше максимума пробоя
-              const slDist   = Math.abs(parseFloat(slPrice) - curr.close);
-              const tp1Price = (curr.close - slDist * 2).toFixed(4);
-              const tp2Price = (curr.close - slDist * 3).toFixed(4);
+              // SL: выше максимума пробойной свечи, но не больше 1.5% от входа
+              const MAX_SL_S = curr.close * 0.015; // жёсткий cap 1.5%
+              const rawSL_S  = (prev.high * 1.001) - curr.close;
+              const slDist   = Math.min(rawSL_S, MAX_SL_S);
+              const slPrice  = (curr.close + slDist).toFixed(4);
+              const tp1Price = (curr.close - slDist * 2.5).toFixed(4); // RR 1:2.5
+              const tp2Price = (curr.close - slDist * 4.0).toFixed(4); // RR 1:4
               const conf     = 68;
 
               signals.push({

@@ -10,6 +10,57 @@ const supabase = createClient(
 
 // ── Copy Trading Tracker — подпроект (отдельный модуль) ────
 const copytrader = require('./copytrader');
+// Подменяем sender в copytrader — он будет использовать нашу sendTelegram с учётом подписок
+copytrader.setSender((text) => sendTelegram(text, 'whales'));
+
+// ── Персональные подписки на информационные модули ──
+// Таблица user_subscriptions в Supabase: chat_id(PK), anomalies, news, whales, updated_at
+// Каждый user сам решает что получать. Сигналы сделок (checkSignals) шлются ВСЕГДА — это ядро бота.
+const subsCache = new Map();  // chatId (string) → {anomalies, news, whales}
+const SUB_MODULES = ['anomalies', 'news', 'whales'];
+
+async function loadSubscriptions() {
+  try {
+    const { data, error } = await supabase.from('user_subscriptions').select('*');
+    if (error) { console.error('[SUBS] load error:', error.message); return; }
+    subsCache.clear();
+    for (const r of (data || [])) {
+      subsCache.set(String(r.chat_id), { anomalies: r.anomalies, news: r.news, whales: r.whales });
+    }
+    console.log(`[SUBS] загружено подписок: ${subsCache.size}`);
+  } catch(e) { console.error('[SUBS] load exception:', e.message); }
+}
+
+function getSubs(chatId) {
+  const key = String(chatId);
+  // Дефолт для новых users — подписан на всё
+  return subsCache.get(key) || { anomalies: true, news: true, whales: true };
+}
+
+async function setSub(chatId, module, on) {
+  const key = String(chatId);
+  const cur = getSubs(key);
+  cur[module] = !!on;
+  subsCache.set(key, cur);
+  try {
+    const { error } = await supabase.from('user_subscriptions').upsert({
+      chat_id: key,
+      anomalies: cur.anomalies,
+      news: cur.news,
+      whales: cur.whales,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'chat_id' });
+    if (error) console.error('[SUBS] save error:', error.message);
+  } catch(e) { console.error('[SUBS] save exception:', e.message); }
+}
+
+// Проверка: кто-нибудь вообще подписан на модуль? Если нет — можно пропустить сам cron
+function anyoneSubscribed(module) {
+  for (const id of CHAT_IDS) {
+    if (getSubs(id)[module]) return true;
+  }
+  return false;
+}
 
 // ── Настройки ──────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
@@ -194,12 +245,14 @@ async function httpPost(url, data, headers = {}) {
 // ============================================================
 //  TELEGRAM
 // ============================================================
-async function sendTelegram(text) {
+async function sendTelegram(text, module = null) {
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   for (const id of CHAT_IDS) {
+    // Если module указан — шлём только подписанным на него. Иначе (module=null) — всем (сигналы сделок).
+    if (module && SUB_MODULES.includes(module) && !getSubs(id)[module]) continue;
     await httpPost(url, { chat_id: id, text });
   }
-  console.log(`[TG] Отправлено: ${text.substring(0, 60)}...`);
+  console.log(`[TG${module ? '/' + module : ''}] ${text.substring(0, 60)}...`);
 }
 // ============================================================
 //  TELEGRAM КОМАНДЫ
@@ -408,17 +461,39 @@ async function handleTelegramCommand(text, chatId) {
     await copytrader.handleWhalesCommand(chatId);
   }
 
+  // ── ПЕРСОНАЛЬНЫЕ ПОДПИСКИ ──
+  // Каждый user сам управляет тем, что ему приходит. Не влияет на других.
+  else if (cmd === '/modules') {
+    await sendModulesPanel(chatId);
+  }
+  else if (/^\/(anomalies|news|whales)_(on|off)$/.test(cmd)) {
+    const [, key, action] = cmd.match(/^\/(anomalies|news|whales)_(on|off)$/);
+    const on = action === 'on';
+    await setSub(chatId, key, on);
+    const labels = { anomalies: 'Аномалии', news: 'Новости', whales: 'Киты' };
+    await sendTelegramTo(chatId,
+      `${on ? '🟢' : '🔴'} ${labels[key]} → ${on ? 'ВКЛЮЧЕНЫ для тебя' : 'ВЫКЛЮЧЕНЫ для тебя'}\n` +
+      `(на других пользователей не влияет)`
+    );
+    console.log(`[SUBS] ${chatId}: ${key}=${on ? 'on' : 'off'}`);
+  }
+
   else if (cmd === '/help') {
     await sendTelegramTo(chatId,
       `🤖 КРИПТО РАДАР\n━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `/status     — открытые сделки\n` +
-      `/trades     — последние 10 сделок\n` +
-      `/stats      — статистика за день\n` +
-      `/whales     — 🐋 топ-5 трейдеров\n` +
-      `/guide      — инструкция по сигналам\n` +
-      `/prop       — 🏆 вкл/выкл проп-режим\n` +
-      `/propstatus — статус проп-режима\n` +
-      `/help       — это сообщение`
+      `/status       — открытые сделки\n` +
+      `/trades       — последние 10 сделок\n` +
+      `/stats        — статистика за день\n` +
+      `/whales       — 🐋 топ-5 трейдеров\n` +
+      `/modules      — ⚙️ твои подписки\n` +
+      `/guide        — инструкция по сигналам\n` +
+      `/prop         — 🏆 вкл/выкл проп-режим\n` +
+      `/propstatus   — статус проп-режима\n` +
+      `/help         — это сообщение\n\n` +
+      `🔧 ТВОИ ПОДПИСКИ:\n` +
+      `/anomalies_on  /anomalies_off\n` +
+      `/news_on       /news_off\n` +
+      `/whales_on     /whales_off`
     );
   }
 
@@ -457,6 +532,50 @@ async function sendTelegramTo(chatId, text) {
   await httpPost(url, { chat_id: chatId, text });
 }
 
+// ── Inline-клавиатура для /modules ──────────────────────────
+function buildModulesKeyboard(chatId) {
+  const s = getSubs(chatId);
+  const btn = (label, on, key) => ({
+    text: `${on ? '🟢' : '🔴'} ${label}`,
+    callback_data: `sub:${key}:${on ? 'off' : 'on'}`,
+  });
+  return {
+    inline_keyboard: [
+      [btn('Аномалии', s.anomalies, 'anomalies'), btn('Новости', s.news, 'news')],
+      [btn('Киты', s.whales, 'whales')],
+    ],
+  };
+}
+function buildModulesText(chatId) {
+  const s = getSubs(chatId);
+  const ico = (b) => b ? '🟢 ON ' : '🔴 OFF';
+  return (
+    `⚙️ ТВОИ ПОДПИСКИ\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${ico(s.anomalies)} Аномалии (OKX 24h ≥3%)\n` +
+    `${ico(s.news)} Новости (RSS + AI)\n` +
+    `${ico(s.whales)} Киты (OKX + copytrader HL/BN)\n\n` +
+    `👆 Нажми кнопку чтобы вкл/выкл.\n` +
+    `ℹ️ Сигналы сделок приходят всегда.`
+  );
+}
+async function sendModulesPanel(chatId) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+  await httpPost(url, {
+    chat_id: chatId,
+    text: buildModulesText(chatId),
+    reply_markup: JSON.stringify(buildModulesKeyboard(chatId)),
+  });
+}
+async function editModulesPanel(chatId, messageId) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/editMessageText`;
+  await httpPost(url, {
+    chat_id: chatId,
+    message_id: messageId,
+    text: buildModulesText(chatId),
+    reply_markup: JSON.stringify(buildModulesKeyboard(chatId)),
+  });
+}
+
 async function pollTelegramUpdates() {
   let offset = 0;
   const poll = async () => {
@@ -469,10 +588,32 @@ async function pollTelegramUpdates() {
       if (data?.result?.length) {
         for (const update of data.result) {
           offset = update.update_id + 1;
+
+          // Обычные команды
           const msg = update.message;
           if (msg?.text?.startsWith('/')) {
             console.log(`[TG CMD] ${msg.text} от ${msg.chat.id}`);
             await handleTelegramCommand(msg.text, msg.chat.id);
+          }
+
+          // Inline-кнопки (callback_query) — переключение подписок
+          const cb = update.callback_query;
+          if (cb?.data?.startsWith('sub:')) {
+            const chatId   = cb.message?.chat?.id;
+            const msgId    = cb.message?.message_id;
+            const [, key, action] = cb.data.split(':');  // sub:anomalies:on
+            if (chatId && SUB_MODULES.includes(key)) {
+              const on = action === 'on';
+              await setSub(chatId, key, on);
+              console.log(`[SUBS] ${chatId}: ${key}=${on ? 'on' : 'off'} (inline)`);
+              // Обновляем панель на месте (без нового сообщения)
+              await editModulesPanel(chatId, msgId);
+              // Ответ на callback чтобы убрать «часики» на кнопке
+              await httpPost(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
+                callback_query_id: cb.id,
+                text: `${on ? '🟢' : '🔴'} ${key === 'anomalies' ? 'Аномалии' : key === 'news' ? 'Новости' : 'Киты'} ${on ? 'ON' : 'OFF'}`,
+              });
+            }
           }
         }
       }
@@ -3942,22 +4083,24 @@ for (const trade of closed) {
 
 // Каждый час — аномалии
 async function checkAnomalies() {
+  if (!anyoneSubscribed('anomalies')) { console.log('[ANOMALIES] никто не подписан — пропуск'); return; }
   const candidates = await getOKXCandidates();
   const anomalies  = candidates.filter(c => Math.abs(c.change24h) >= 3.0);
-  if (!anomalies.length) { await sendTelegram('✅ КРИПТО РАДАР\nАномалий нет (<3% за 24h)'); return; }
+  if (!anomalies.length) { await sendTelegram('✅ КРИПТО РАДАР\nАномалий нет (<3% за 24h)', 'anomalies'); return; }
 
   const fng   = await getFearAndGreed();
   const top5  = anomalies.slice(0, 5);
   const coins = top5.map(c => `${c.change24h > 0 ? '🚀' : '📉'} ${c.symbol} $${c.price}  ${c.change24h.toFixed(2)}%  $${(c.volume24h/1e6).toFixed(0)}M`).join('\n');
   const prompt = `Крипто аналитик. OKX аномалии:\n\n${top5.map(c => `${c.symbol}: $${c.price}, ${c.change24h.toFixed(2)}%`).join('\n')}\n\nF&G: ${fng.value} (${fng.label}). Grade A-D, LONG/SHORT/ЖДАТЬ, 1-2 предложения. На русском.`;
 
-  await sendTelegram(`🔔 КРИПТО РАДАР v4.0\n🕐 ${getAlmatyTime()}\n😐 F&G: ${fng.value} (${fng.label})\n\n${coins}\n\n🤖 AI:\n${await callGroq(prompt)}`);
+  await sendTelegram(`🔔 КРИПТО РАДАР v4.0\n🕐 ${getAlmatyTime()}\n😐 F&G: ${fng.value} (${fng.label})\n\n${coins}\n\n🤖 AI:\n${await callGroq(prompt)}`, 'anomalies');
 }
 
 // ============================================================
 //  WHALE REPORT — рассылка активности китов (каждый час)
 // ============================================================
 async function checkWhales() {
+  if (!anyoneSubscribed('whales')) { console.log('[WHALES OKX] никто не подписан — пропуск'); return; }
   const candidates = await getOKXCandidates();
   if (!candidates.length) return;
 
@@ -4001,13 +4144,15 @@ async function checkWhales() {
     `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
     lines + '\n\n' +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `⚠️ Не является финансовым советом.`
+    `⚠️ Не является финансовым советом.`,
+    'whales'
   );
 }
 // ============================================================
 //  RSS НОВОСТИ
 // ============================================================
 async function checkRSSNews() {
+  if (!anyoneSubscribed('news')) { console.log('[NEWS] никто не подписан — пропуск'); return; }
   const RSS_FEEDS = [
     'https://cointelegraph.com/rss',
     'https://coindesk.com/arc/outboundfeeds/rss/',
@@ -4073,7 +4218,8 @@ async function checkRSSNews() {
           `⏰ ${getAlmatyTime()} Алматы\n` +
           (link ? `🔗 ${link}\n` : '') +
           `━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `⚠️ Не является финансовым советом.`
+          `⚠️ Не является финансовым советом.`,
+          'news'
         );
 
         console.log(`[RSS] ${action}: ${title.slice(0,60)} | ${coins}`);
@@ -4191,6 +4337,11 @@ setTimeout(() => {
 }, 10000);
 // Запускаем опрос команд Telegram
 pollTelegramUpdates();
+
+// Загружаем подписки пользователей из Supabase (персональные on/off модулей)
+loadSubscriptions().catch(e => console.error('[SUBS] initial load error:', e.message));
+// Периодически обновляем кэш подписок (на случай если кто-то изменит напрямую в БД)
+setInterval(() => loadSubscriptions().catch(e => console.error('[SUBS] refresh error:', e.message)), 5 * 60 * 1000);
 
 process.on('uncaughtException', e => {
   console.error('[CRASH PREVENTED]', e.message);

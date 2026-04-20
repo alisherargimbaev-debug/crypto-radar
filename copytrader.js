@@ -20,19 +20,20 @@ const axios = require('axios');
 // ── ENV ─────────────────────────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const CHAT_IDS       = [process.env.CHAT_ID, process.env.CHAT_ID_2].filter(Boolean);
+const GROQ_KEY       = process.env.GROQ_KEY;
 
 if (!TELEGRAM_TOKEN || !CHAT_IDS.length) {
   console.warn('[COPYTRADER] ⚠️  TELEGRAM_TOKEN или CHAT_ID не заданы — алерты работать не будут.');
 }
 
 // ── НАСТРОЙКИ ───────────────────────────────────────────────────────────
-const MIN_PNL_MONTH_PCT = 50;                   // PnL за месяц, %
-const MIN_ACCOUNT_USD   = 100_000;              // минимальный размер аккаунта трейдера
-const MIN_POSITION_USD  = 500_000;              // фильтр размера позиции для алерта
-const MAX_TRACKED       = 20;                   // сколько трейдеров держим одновременно
-const CHECK_INTERVAL_MS      = 2 * 60 * 1000;   // каждые 2 минуты — опрос позиций
+const MIN_PNL_MONTH_PCT = 100;                  // PnL за месяц, % (было 50 — слишком много трейдеров)
+const MIN_ACCOUNT_USD   = 250_000;              // минимальный размер аккаунта трейдера
+const MIN_POSITION_USD  = 1_000_000;            // фильтр размера позиции (было 500k — много шума)
+const MAX_TRACKED       = 15;                   // сколько трейдеров держим одновременно
+const CHECK_INTERVAL_MS      = 5 * 60 * 1000;   // каждые 5 минут (было 2 — слишком часто)
 const LEADERBOARD_REFRESH_MS = 60 * 60 * 1000;  // раз в час — обновляем список трейдеров
-const ALERT_COOLDOWN_MS      = 4 * 60 * 60 * 1000; // не чаще 1 алерта на трейдера в 4ч
+const ALERT_COOLDOWN_MS      = 8 * 60 * 60 * 1000; // не чаще 1 алерта на трейдера в 8ч (было 4)
 const MAX_REQS_PER_MIN       = 30;              // rate-limit (общий на модуль)
 
 // Whitelist из топ-50 монет по объёму (обновлять вручную при сдвигах рынка)
@@ -49,12 +50,13 @@ const ENABLE_BINANCE = true;
 
 // ── STATE ───────────────────────────────────────────────────────────────
 const state = {
+  enabled: true,                    // 🔌 если false — cycle ничего не делает
   // id = `${source}:${address}` → { source, address, name, wr, pnlMonth, accountValue, positions: Map }
   whales: new Map(),
   lastAlert: new Map(),             // id → timestamp
   reqLog: [],                       // timestamps for rate-limit
   lastLeaderboardUpdate: 0,
-  stats: { opens: 0, closes: 0, errors: 0, cycles: 0 },
+  stats: { opens: 0, closes: 0, errors: 0, cycles: 0, aiCalls: 0 },
 };
 
 // ── RATE LIMITER (sliding window) ───────────────────────────────────────
@@ -100,8 +102,20 @@ async function httpPost(url, body, extraHeaders = {}) {
   }
 }
 
+// Функция отправки, которую index.js может подменить через setSender()
+// чтобы уважать персональные подписки пользователей на модуль "whales"
+let externalSender = null;
+function setSender(fn) { externalSender = fn; }
+
 // ── TELEGRAM ────────────────────────────────────────────────────────────
 async function sendTelegram(text) {
+  // Если index.js передал внешний sender — используем его (учитывает подписки)
+  if (externalSender) {
+    try { await externalSender(text, 'whales'); } catch(e) { console.error('[CT extSender]', e.message); }
+    console.log(`[COPYTRADER TG] ${text.split('\n')[0]}`);
+    return;
+  }
+  // Fallback: отправляем всем (используется если index.js не подменил sender)
   if (!TELEGRAM_TOKEN || !CHAT_IDS.length) return;
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   for (const id of CHAT_IDS) {
@@ -112,6 +126,36 @@ async function sendTelegram(text) {
     }
   }
   console.log(`[COPYTRADER TG] ${text.split('\n')[0]}`);
+}
+
+// ── GROQ AI (для анализа сделок кита) ───────────────────────────────────
+async function callGroq(prompt) {
+  if (!GROQ_KEY) return null;
+  try {
+    const r = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      { model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }], max_tokens: 250, temperature: 0.4 },
+      { headers: { Authorization: `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' }, timeout: 12000 }
+    );
+    state.stats.aiCalls++;
+    return r.data?.choices?.[0]?.message?.content?.trim() || null;
+  } catch(e) {
+    console.error('[CT GROQ]', e.message);
+    return null;
+  }
+}
+
+async function analyzeWhalePosition(whale, pos) {
+  const prompt =
+    `Ты опытный крипто-трейдер деривативов. Топ-трейдер с PnL +${whale.pnlMonth}%/мес ` +
+    `только что открыл ${pos.side} ${pos.coin} по цене $${pos.entryPx} ` +
+    `с плечом ${pos.leverage}x на сумму $${Math.round(pos.sizeUsd/1000)}K.\n\n` +
+    `Дай КОРОТКИЙ анализ (3-4 строки, без воды, на русском):\n` +
+    `1. Стоит ли заходить следом? (ДА/НЕТ + одна причина)\n` +
+    `2. На каком уровне фиксировать прибыль (TP)? (укажи ОДНУ конкретную цену)\n` +
+    `3. На каком уровне ставить стоп-лосс (SL)? (укажи ОДНУ конкретную цену, не более 2% от входа)\n` +
+    `Без длинных объяснений, только цифры и краткий вывод.`;
+  return await callGroq(prompt);
 }
 
 // ── FORMAT HELPERS ──────────────────────────────────────────────────────
@@ -304,13 +348,14 @@ function canAlert(whaleId) {
   return Date.now() - last >= ALERT_COOLDOWN_MS;
 }
 
-function buildOpenAlert(whale, pos) {
+async function buildOpenAlert(whale, pos) {
   const arrow = pos.side === 'LONG' ? '📈' : '📉';
   const wrLine = whale.wr != null ? `WR: ${whale.wr}%` : 'WR: —';
   // "Вход для тебя" = чуть хуже цены кита (он уже зашёл, цена уже сдвинулась)
   const slippage = pos.side === 'LONG' ? 1.0005 : 0.9995;
   const entryYou = pos.entryPx * slippage;
-  return (
+
+  const base =
     `🐋 КИТ ОТКРЫЛ ПОЗИЦИЮ\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `👤 Трейдер: ${whale.name}\n` +
@@ -319,8 +364,17 @@ function buildOpenAlert(whale, pos) {
     `📍 Размер: ${fmtUsd(pos.sizeUsd)} | Плечо: ${pos.leverage}x\n` +
     `🎯 Вход для тебя: ~${fmtPx(entryYou)}\n` +
     `🔗 Источник: ${whale.source}\n` +
-    `⏰ ${timeAgo(Date.now())}`
-  );
+    `⏰ ${timeAgo(Date.now())}`;
+
+  // AI-анализ — необязательная часть (если Groq лёг — алерт уйдёт без него)
+  const ai = await analyzeWhalePosition(whale, pos);
+  if (!ai) return base + `\n\n⚠️ AI-анализ недоступен. Не финансовый совет.`;
+
+  return base +
+    `\n\n━━━━━━━━━━━━━━━━━━━━\n` +
+    `🤖 AI-АНАЛИЗ:\n${ai}\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n` +
+    `⚠️ Не финансовый совет — управляй риском сам.`;
 }
 
 function buildCloseAlert(whale, oldPos) {
@@ -387,7 +441,7 @@ async function pollPositions() {
         const oldPos = old.get(coin);
         const isNew  = !oldPos || oldPos.side !== pos.side;
         if (isNew && canAlert(id)) {
-          await sendTelegram(buildOpenAlert(whale, pos));
+          await sendTelegram(await buildOpenAlert(whale, pos));
           state.lastAlert.set(id, Date.now());
           opens++;
         }
@@ -416,6 +470,7 @@ async function pollPositions() {
 //  MAIN CYCLE
 // ══════════════════════════════════════════════════════════════════════
 async function cycle() {
+  if (!state.enabled) return;     // 🔌 модуль выключен — пропускаем
   try {
     if (Date.now() - state.lastLeaderboardUpdate >= LEADERBOARD_REFRESH_MS) {
       await refreshLeaderboards();
@@ -453,10 +508,12 @@ async function handleWhalesCommand(chatId) {
     return `${i+1}. ${w.name}  [${w.source}]\n   📊 ${wr} | +${w.pnlMonth}% / мес\n   💼 ${posCount} поз: ${posList}`;
   }).join('\n\n');
 
+  const statusBadge = state.enabled ? '🟢 ON' : '🔴 OFF';
   await send(
-    `🐋 ТОП-5 ТРЕЙДЕРОВ\n━━━━━━━━━━━━━━━━━━━\n${lines}\n\n` +
+    `🐋 ТОП-5 ТРЕЙДЕРОВ ${statusBadge}\n━━━━━━━━━━━━━━━━━━━\n${lines}\n\n` +
     `👀 Всего отслеживаю: ${state.whales.size}\n` +
-    `📊 Алертов за сессию: +${state.stats.opens} / -${state.stats.closes}`
+    `📊 Алертов за сессию: +${state.stats.opens} / -${state.stats.closes}` +
+    (state.stats.aiCalls ? ` | 🤖 AI: ${state.stats.aiCalls}` : '')
   );
 }
 
@@ -464,6 +521,7 @@ async function handleWhalesCommand(chatId) {
 function getTrackedWhalesSnapshot() {
   return {
     updatedAt: Date.now(),
+    enabled: state.enabled,
     lastLeaderboardUpdate: state.lastLeaderboardUpdate,
     stats: { ...state.stats, tracked: state.whales.size },
     whales: [...state.whales.values()].map(w => ({
@@ -484,6 +542,13 @@ function getTrackedWhalesSnapshot() {
   };
 }
 
+/** Включить/выключить модуль (управляется из index.js админ-командой). */
+function setEnabled(on) {
+  state.enabled = !!on;
+  console.log(`[COPYTRADER] ${state.enabled ? '🟢 ВКЛЮЧЕН' : '🔴 ВЫКЛЮЧЕН'}`);
+}
+function isEnabled() { return state.enabled; }
+
 // ══════════════════════════════════════════════════════════════════════
 //  START
 // ══════════════════════════════════════════════════════════════════════
@@ -501,4 +566,7 @@ start();
 module.exports = {
   handleWhalesCommand,
   getTrackedWhalesSnapshot,
+  setEnabled,
+  isEnabled,
+  setSender,
 };

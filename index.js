@@ -108,7 +108,7 @@ const COIN_SECTORS = {
 
 // Дневной PnL трекер
 if (!global.dailyPnlTracker) {
-  global.dailyPnlTracker = { date: '', losses: 0, wins: 0, slCount: 0 };
+  global.dailyPnlTracker = { date: '', losses: 0, wins: 0 };
 }
 
 function checkPortfolioRisk(sig) {
@@ -168,14 +168,13 @@ function checkPortfolioRisk(sig) {
   return { allowed: true };
 }
 
-function updateDailyPnl(pnl, outcome) {
+function updateDailyPnl(pnl) {
   const today = new Date().toISOString().split('T')[0];
   if (global.dailyPnlTracker.date !== today) {
-    global.dailyPnlTracker = { date: today, losses: 0, wins: 0, slCount: 0 };
+    global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
   }
   if (pnl < 0) global.dailyPnlTracker.losses += Math.abs(pnl);
   else global.dailyPnlTracker.wins += pnl;
-  if (outcome === 'sl') global.dailyPnlTracker.slCount += 1;
 }
 
 // Рейтинг стратегий по win rate
@@ -440,9 +439,6 @@ async function handleTelegramCommand(text, chatId) {
     const dayLoss = global.dailyPnlTracker?.date === today
       ? global.dailyPnlTracker.losses.toFixed(2)
       : '0.00';
-    const daySlCount = global.dailyPnlTracker?.date === today
-      ? (global.dailyPnlTracker.slCount || 0)
-      : 0;
     const propLimit = store.propMode ? 3.0 : 5.0;
     const remaining = Math.max(0, propLimit - parseFloat(dayLoss)).toFixed(2);
 
@@ -454,10 +450,8 @@ async function handleTelegramCommand(text, chatId) {
       `  Потери сегодня: -${dayLoss}%\n` +
       `  Лимит: ${propLimit}%\n` +
       `  Осталось до лимита: ${remaining}%\n\n` +
-      `❌ SL за сегодня: ${daySlCount}/3\n` +
-      `  (Дневной стоп при 3 SL до 00:00 UTC)\n\n` +
       `🔴 SL подряд сейчас: ${slStreak}\n` +
-      `  (Авто-стоп при 3 подряд → пауза 4ч)\n\n` +
+      `  (Авто-стоп при 3)\n\n` +
       `📈 Открытых сделок: ${store.openTrades.length}\n` +
       `  Макс: ${store.propMode ? 2 : 3}`
     );
@@ -1637,11 +1631,53 @@ function calcBollinger(klines, period = 20, mult = 2) {
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
 function calcSLTP(price, direction, strategy, atr = null) {
-  // Фиксированный SL 1.5% от цены входа — всегда предсказуемо
-  // RR 1:2.5 (TP1) и 1:4 (TP2)
-  const slDist  = price * 1.5 / 100;
-  const tp1Dist = slDist * 2.5;
-  const tp2Dist = slDist * 4.0;
+  // ── Динамический SL на основе ATR (рекомендация аудита) ────
+  // ATR отражает реальную волатильность текущего рынка
+  // Фиксированный % SL игнорирует рыночные условия
+
+  const MIN_SL_PCT  = 0.8; // снижен с 1.0 — ATR может быть узким
+  const MAX_SL_PCT  = 1.5; // ≤ 1.5% — синхронизировано с STRATEGY_SL
+  const MIN_TP1_PCT = 2.4; // минимум TP1
+  const MIN_TP2_PCT = 4.8; // минимум TP2
+
+  let slDist, tp1Dist, tp2Dist;
+  const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 4.5, tp2: 7.5 };
+
+  if (atr && atr > 0) {
+    // Динамический SL через ATR с проверкой на соответствие STRATEGY_SL
+    // Если ATR даёт SL за пределами ±30% от STRATEGY_SL — используем STRATEGY_SL
+    // Это устраняет конфликт между двумя системами и делает SL предсказуемым
+    const isS10 = strategy.includes('4H Range');
+    const isS5  = strategy.includes('RSI Диверг');
+    const atrMult = isS10 ? 1.2 : isS5 ? 1.4 : 1.5;
+
+    const atrSL   = atr * atrMult;
+    const paramSL = price * params.sl / 100;
+    const deviation = Math.abs(atrSL - paramSL) / paramSL;
+
+    // Если ATR SL отклоняется от STRATEGY_SL более чем на 30% → используем STRATEGY_SL
+    slDist = deviation < 0.30 ? atrSL : paramSL;
+    tp1Dist = slDist * (params.tp1 / params.sl);
+    tp2Dist = slDist * (params.tp2 / params.sl);
+  } else {
+    slDist  = price * params.sl  / 100;
+    tp1Dist = price * params.tp1 / 100;
+    tp2Dist = price * params.tp2 / 100;
+  }
+
+  // Применяем ограничения
+  const minSL  = price * MIN_SL_PCT  / 100;
+  const maxSL  = price * MAX_SL_PCT  / 100;
+  const minTP1 = price * MIN_TP1_PCT / 100;
+  const minTP2 = price * MIN_TP2_PCT / 100;
+
+  slDist  = Math.min(Math.max(slDist,  minSL),  maxSL);
+  tp1Dist = Math.max(tp1Dist, minTP1);
+  tp2Dist = Math.max(tp2Dist, minTP2);
+
+  // Гарантируем RR минимум 1:2 и 1:3
+  if (tp1Dist < slDist * 2)   tp1Dist = slDist * 2;
+  if (tp2Dist < slDist * 3)   tp2Dist = slDist * 3;
 
   return direction === 'long'
     ? {
@@ -2670,10 +2706,10 @@ if (k1h.length >= 55) {
             if (pullbackUp >= 5)   conf += 5;  // сильный откат = хорошая точка
             if (lowerLow4h && lowerHigh4h) conf += 5; // чёткая структура
 
-            const slDist  = price * 0.015; // фиксированный SL 1.5%
+            const slDist  = Math.max(Math.abs(lastHigh15m - price), atr15m_s9 * 1.5);
             const sl      = (price + slDist).toFixed(4);
-            const tp1     = (price - slDist * 2.5).toFixed(4);
-            const tp2     = (price - slDist * 4.0).toFixed(4);
+            const tp1     = (price - slDist * 2).toFixed(4);
+            const tp2     = (price - slDist * 3).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2698,10 +2734,10 @@ if (k1h.length >= 55) {
             if (pullbackDown >= 5) conf += 5;
             if (higherLow4h && higherHigh4h) conf += 5;
 
-            const slDist  = price * 0.015; // фиксированный SL 1.5%
+            const slDist  = Math.max(Math.abs(price - lastLow15m), atr15m_s9 * 1.5);
             const sl      = (price - slDist).toFixed(4);
-            const tp1     = (price + slDist * 2.5).toFixed(4);
-            const tp2     = (price + slDist * 4.0).toFixed(4);
+            const tp1     = (price + slDist * 2).toFixed(4);
+            const tp2     = (price + slDist * 3).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2716,28 +2752,45 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S9 error:', e.message); }
 
-    // S10: 4H Range Breakout (5m) — оригинальная версия
+    // S10 PRO: 4H Range Breakout — Institutional Grade
+    // ✅ Сессионный фильтр 02:00-10:00 UTC (07:00-15:00 Алматы)
+    // ✅ Объём пробоя > avg × 1.3 (настоящий stop hunt)
+    // ✅ Multi-TF: RSI 1H подтверждает направление
+    // ✅ MA200 на 1H вместо 15m
+    // ✅ SL hard cap 1.5% (исправление ENJ инцидента)
     try {
+      // ── 1. СЕССИОННЫЙ ФИЛЬТР ──────────────────────────────────
+      // 02:00-10:00 UTC = 07:00-15:00 Алматы (UTC+5)
+      const nowHourUTC = new Date().getUTCHours();
+      if (nowHourUTC < 2 || nowHourUTC >= 10) {
+        console.log(`[S10PRO SKIP] ${instId} — вне сессии (${nowHourUTC}:xx UTC, нужно 02-10)`);
+      } else {
+
       const k4h_s10 = await getOKXKlinesCached(instId, '4H', 8);
       const k5m_s10 = await getOKXKlinesCached(instId, '5m', 96);
+      const k1h_s10 = await getOKXKlinesCached(instId, '1H', 24);
 
-      if (k4h_s10.length >= 2 && k5m_s10.length >= 20) {
+      if (k4h_s10.length >= 2 && k5m_s10.length >= 20 && k1h_s10.length >= 14) {
         const nowUTC   = Date.now();
         const dayStart = nowUTC - (nowUTC % (24 * 60 * 60 * 1000));
 
         const todayCandles = k4h_s10.filter(c => c.ts >= dayStart && c.ts < nowUTC - 4*60*60*1000);
-        if (!todayCandles.length) throw new Error('[S10] Нет 4H свечи за сегодня');
+        if (!todayCandles.length) throw new Error('[S10PRO] Нет 4H свечи за сегодня');
 
         const rangeCandle = todayCandles[0];
         const rangeHigh   = rangeCandle.high;
         const rangeLow    = rangeCandle.low;
         const rangeSize   = rangeHigh - rangeLow;
 
-        if (rangeSize >= atr15m * 0.5) {
-          // MA200 по 5m для определения тренда
-          const ma200_5m = calcSMA(k5m_s10, Math.min(200, k5m_s10.length));
-          const uptrend  = price > ma200_5m;
-          // Средний объём 5m
+        if (rangeSize < atr15m * 0.5) {
+          console.log(`[S10PRO SKIP] ${instId} — диапазон слишком мал`);
+        } else {
+          // ── 2. RSI 1H (Multi-TF) ─────────────────────────────
+          const rsi1h    = calcRSI(k1h_s10, 14);
+          // ── 3. MA200 на 1H ────────────────────────────────────
+          const ma200_1h = calcSMA(k1h_s10, Math.min(200, k1h_s10.length));
+          const uptrend  = price > ma200_1h;
+          // ── 4. Средний объём 5m ───────────────────────────────
           const avgVol5m = k5m_s10.slice(-20).reduce((a,c) => a + (c.quoteVolume||1), 0) / 20;
 
           const recentK5m = k5m_s10.slice(-30);
@@ -2746,48 +2799,65 @@ if (k1h.length >= 55) {
             const prev = recentK5m[j - 1];
             const curr = recentK5m[j];
 
-            // LONG: пробой вниз + возврат (только выше MA200)
+            // ── LONG: пробой вниз + возврат ──────────────────────
             if (prev.close < rangeLow && curr.close >= rangeLow && uptrend) {
-              const slDist = curr.close * 0.015; // фиксированный SL 1.5%
-              const sl      = (curr.close - slDist).toFixed(4);
-              const tp1     = (curr.close + slDist * 2.5).toFixed(4);
-              const tp2     = (curr.close + slDist * 4.0).toFixed(4);
+              // Объём пробойной свечи > avg × 1.3
+              if ((prev.quoteVolume||1) < avgVol5m * 1.3) { continue; }
+              // RSI 1H не перекуплен
+              if (rsi1h > 65) { continue; }
 
-              let conf = 68;
+              // SL cap 1.5%
+              const MAX_SL_L = curr.close * 0.015;
+              const rawSL_L  = curr.close - (prev.low * 0.999);
+              const slDist_L = Math.min(rawSL_L, MAX_SL_L);
+              const slPrice  = (curr.close - slDist_L).toFixed(4);
+              const tp1Price = (curr.close + slDist_L * 2.5).toFixed(4);
+              const tp2Price = (curr.close + slDist_L * 4.0).toFixed(4);
+
+              let conf = 72;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
-              if (price > ma200_5m * 1.01) conf += 4;
+              if (rsi1h < 45)  conf += 6;
+              if (price > ma200_1h * 1.01) conf += 4;
 
               signals.push({
                 strategy: '🔟 4H Range Breakout (5m)', instId, direction: 'long',
                 signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
-                metrics: `4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x`,
-                sl, tp1, tp2,
+                metrics: `PRO | 4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h.toFixed(0)} | ${nowHourUTC}:xx UTC`,
+                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
               });
               break;
             }
 
-            // SHORT: пробой вверх + возврат (только ниже MA200)
+            // ── SHORT: пробой вверх + возврат ────────────────────
             if (prev.close > rangeHigh && curr.close <= rangeHigh && !uptrend) {
-              const slDist = curr.close * 0.015; // фиксированный SL 1.5%
-              const sl      = (curr.close + slDist).toFixed(4);
-              const tp1     = (curr.close - slDist * 2.5).toFixed(4);
-              const tp2     = (curr.close - slDist * 4.0).toFixed(4);
+              if ((prev.quoteVolume||1) < avgVol5m * 1.3) { continue; }
+              if (rsi1h < 35) { continue; }
 
-              let conf = 68;
+              const MAX_SL_S = curr.close * 0.015;
+              const rawSL_S  = (prev.high * 1.001) - curr.close;
+              const slDist_S = Math.min(rawSL_S, MAX_SL_S);
+              const slPrice  = (curr.close + slDist_S).toFixed(4);
+              const tp1Price = (curr.close - slDist_S * 2.5).toFixed(4);
+              const tp2Price = (curr.close - slDist_S * 4.0).toFixed(4);
+
+              let conf = 72;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
-              if (price < ma200_5m * 0.99) conf += 4;
+              if (rsi1h > 55)  conf += 6;
+              if (price < ma200_1h * 0.99) conf += 4;
 
               signals.push({
                 strategy: '🔟 4H Range Breakout (5m)', instId, direction: 'short',
                 signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
-                metrics: `4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x`,
-                sl, tp1, tp2,
+                metrics: `PRO | 4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h.toFixed(0)} | ${nowHourUTC}:xx UTC`,
+                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
               });
               break;
             }
           }
         }
       }
+      } // конец сессионного фильтра
+
     } catch(e) { console.error('S10 error:', e.message); }
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
@@ -3159,8 +3229,11 @@ if (klines1h.length < 60) continue;
         const atr   = calcATR(klines.slice(0, i+1), 14);
         if (!atr || atr === 0) continue;
 
-        // Фиксированный SL 1.5% — как в live боте
-        const slDist = price * 0.015;
+        // SL строго ≤ 1.5% от цены — как в STRATEGY_SL
+        const MAX_BT_SL_PCT = 1.5;
+        const atrSL  = atr * 1.5;
+        const maxSL  = price * MAX_BT_SL_PCT / 100;
+        const slDist = Math.min(atrSL, maxSL);
         const sl  = direction === 'long' ? price - slDist : price + slDist;
         const tp1 = direction === 'long' ? price + slDist * 2.5 : price - slDist * 2.5;
         const tp2 = direction === 'long' ? price + slDist * 4.0 : price - slDist * 4.0;
@@ -3519,13 +3592,6 @@ async function checkSignals() {
 
   // ── ПРОП-ЗАЩИТА: автостоп при 3 SL подряд ──────────────────
   if (store.propMode) {
-    // Дневной SL-стоп: 3 SL за день → стоп до 00:00 UTC
-    const today = new Date().toISOString().split('T')[0];
-    if (global.dailyPnlTracker?.date === today && (global.dailyPnlTracker.slCount || 0) >= 3) {
-      console.log(`[PROP DAY-STOP] ${global.dailyPnlTracker.slCount} SL за сегодня — стоп до 00:00 UTC`);
-      return;
-    }
-
     const recentTrades = store.tradeHistory.slice(-3);
     if (recentTrades.length >= 3 && recentTrades.every(t => t.outcome === 'sl')) {
       const lastSL = recentTrades[recentTrades.length-1].closedAt || 0;
@@ -4023,7 +4089,7 @@ async function checkOutcomes() {
         ? (exitPrice - entryPrice) / entryPrice * 100
         : (entryPrice - exitPrice) / entryPrice * 100;
       trade.pnl = parseFloat(trade.pnl.toFixed(2));
-      updateDailyPnl(trade.pnl || 0, outcome);
+      updateDailyPnl(trade.pnl || 0);
       closed.push(trade);
       await sendTelegram(buildOutcomeAlert(trade));
     } else { stillOpen.push(trade); }

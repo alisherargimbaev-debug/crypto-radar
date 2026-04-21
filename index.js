@@ -1637,53 +1637,11 @@ function calcBollinger(klines, period = 20, mult = 2) {
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
 function calcSLTP(price, direction, strategy, atr = null) {
-  // ── Динамический SL на основе ATR (рекомендация аудита) ────
-  // ATR отражает реальную волатильность текущего рынка
-  // Фиксированный % SL игнорирует рыночные условия
-
-  const MIN_SL_PCT  = 0.8; // снижен с 1.0 — ATR может быть узким
-  const MAX_SL_PCT  = 1.5; // ≤ 1.5% — синхронизировано с STRATEGY_SL
-  const MIN_TP1_PCT = 2.4; // минимум TP1
-  const MIN_TP2_PCT = 4.8; // минимум TP2
-
-  let slDist, tp1Dist, tp2Dist;
-  const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 4.5, tp2: 7.5 };
-
-  if (atr && atr > 0) {
-    // Динамический SL через ATR с проверкой на соответствие STRATEGY_SL
-    // Если ATR даёт SL за пределами ±30% от STRATEGY_SL — используем STRATEGY_SL
-    // Это устраняет конфликт между двумя системами и делает SL предсказуемым
-    const isS10 = strategy.includes('4H Range');
-    const isS5  = strategy.includes('RSI Диверг');
-    const atrMult = isS10 ? 1.2 : isS5 ? 1.4 : 1.5;
-
-    const atrSL   = atr * atrMult;
-    const paramSL = price * params.sl / 100;
-    const deviation = Math.abs(atrSL - paramSL) / paramSL;
-
-    // Если ATR SL отклоняется от STRATEGY_SL более чем на 30% → используем STRATEGY_SL
-    slDist = deviation < 0.30 ? atrSL : paramSL;
-    tp1Dist = slDist * (params.tp1 / params.sl);
-    tp2Dist = slDist * (params.tp2 / params.sl);
-  } else {
-    slDist  = price * params.sl  / 100;
-    tp1Dist = price * params.tp1 / 100;
-    tp2Dist = price * params.tp2 / 100;
-  }
-
-  // Применяем ограничения
-  const minSL  = price * MIN_SL_PCT  / 100;
-  const maxSL  = price * MAX_SL_PCT  / 100;
-  const minTP1 = price * MIN_TP1_PCT / 100;
-  const minTP2 = price * MIN_TP2_PCT / 100;
-
-  slDist  = Math.min(Math.max(slDist,  minSL),  maxSL);
-  tp1Dist = Math.max(tp1Dist, minTP1);
-  tp2Dist = Math.max(tp2Dist, minTP2);
-
-  // Гарантируем RR минимум 1:2 и 1:3
-  if (tp1Dist < slDist * 2)   tp1Dist = slDist * 2;
-  if (tp2Dist < slDist * 3)   tp2Dist = slDist * 3;
+  // Фиксированный SL 1.5% от цены входа — всегда предсказуемо
+  // RR 1:2.5 (TP1) и 1:4 (TP2)
+  const slDist  = price * 1.5 / 100;
+  const tp1Dist = slDist * 2.5;
+  const tp2Dist = slDist * 4.0;
 
   return direction === 'long'
     ? {
@@ -2712,11 +2670,10 @@ if (k1h.length >= 55) {
             if (pullbackUp >= 5)   conf += 5;  // сильный откат = хорошая точка
             if (lowerLow4h && lowerHigh4h) conf += 5; // чёткая структура
 
-            const MAX_SL_S9 = price * 0.015; // cap 1.5%
-            const slDist  = Math.min(Math.max(Math.abs(lastHigh15m - price), atr15m_s9 * 1.5), MAX_SL_S9);
+            const slDist  = price * 0.015; // фиксированный SL 1.5%
             const sl      = (price + slDist).toFixed(4);
-            const tp1     = (price - slDist * 2).toFixed(4);
-            const tp2     = (price - slDist * 3).toFixed(4);
+            const tp1     = (price - slDist * 2.5).toFixed(4);
+            const tp2     = (price - slDist * 4.0).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2741,11 +2698,10 @@ if (k1h.length >= 55) {
             if (pullbackDown >= 5) conf += 5;
             if (higherLow4h && higherHigh4h) conf += 5;
 
-            const MAX_SL_S9L = price * 0.015; // cap 1.5%
-            const slDist  = Math.min(Math.max(Math.abs(price - lastLow15m), atr15m_s9 * 1.5), MAX_SL_S9L);
+            const slDist  = price * 0.015; // фиксированный SL 1.5%
             const sl      = (price - slDist).toFixed(4);
-            const tp1     = (price + slDist * 2).toFixed(4);
-            const tp2     = (price + slDist * 3).toFixed(4);
+            const tp1     = (price + slDist * 2.5).toFixed(4);
+            const tp2     = (price + slDist * 4.0).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2792,8 +2748,7 @@ if (k1h.length >= 55) {
 
             // LONG: пробой вниз + возврат (только выше MA200)
             if (prev.close < rangeLow && curr.close >= rangeLow && uptrend) {
-              const MAX_SL_S10L = curr.close * 0.015; // cap 1.5%
-              const slDist = Math.min(Math.max(curr.close - prev.low * 0.999, atr15m * 0.8), MAX_SL_S10L);
+              const slDist = curr.close * 0.015; // фиксированный SL 1.5%
               const sl      = (curr.close - slDist).toFixed(4);
               const tp1     = (curr.close + slDist * 2.5).toFixed(4);
               const tp2     = (curr.close + slDist * 4.0).toFixed(4);
@@ -2813,8 +2768,7 @@ if (k1h.length >= 55) {
 
             // SHORT: пробой вверх + возврат (только ниже MA200)
             if (prev.close > rangeHigh && curr.close <= rangeHigh && !uptrend) {
-              const MAX_SL_S10S = curr.close * 0.015; // cap 1.5%
-              const slDist = Math.min(Math.max(prev.high * 1.001 - curr.close, atr15m * 0.8), MAX_SL_S10S);
+              const slDist = curr.close * 0.015; // фиксированный SL 1.5%
               const sl      = (curr.close + slDist).toFixed(4);
               const tp1     = (curr.close - slDist * 2.5).toFixed(4);
               const tp2     = (curr.close - slDist * 4.0).toFixed(4);
@@ -3205,11 +3159,8 @@ if (klines1h.length < 60) continue;
         const atr   = calcATR(klines.slice(0, i+1), 14);
         if (!atr || atr === 0) continue;
 
-        // SL строго ≤ 1.5% от цены — как в STRATEGY_SL
-        const MAX_BT_SL_PCT = 1.5;
-        const atrSL  = atr * 1.5;
-        const maxSL  = price * MAX_BT_SL_PCT / 100;
-        const slDist = Math.min(atrSL, maxSL);
+        // Фиксированный SL 1.5% — как в live боте
+        const slDist = price * 0.015;
         const sl  = direction === 'long' ? price - slDist : price + slDist;
         const tp1 = direction === 'long' ? price + slDist * 2.5 : price - slDist * 2.5;
         const tp2 = direction === 'long' ? price + slDist * 4.0 : price - slDist * 4.0;

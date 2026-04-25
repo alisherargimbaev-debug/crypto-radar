@@ -81,6 +81,7 @@ const STRATEGY_SL = {
   '9️⃣ Pullback в тренде (15m)':     { sl: 1.2, tp1: 3.6, tp2: 5.4  }, // RR 1:3/1:4.5
   '🔟 4H Range Breakout (5m)':       { sl: 1.2, tp1: 3.6, tp2: 5.4  }, // RR 1:3/1:4.5
   '1️⃣1️⃣ Elliott+Fib+SMA':           { sl: 1.5, tp1: 4.5, tp2: 7.5  }, // RR 1:3/1:5
+  '1️⃣2️⃣ Liquidity Sweep (15m)':    { sl: 1.5, tp1: 3.75, tp2: 6.0 }, // RR 1:2.5/1:4
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -108,22 +109,28 @@ const COIN_SECTORS = {
 
 // Дневной PnL трекер
 if (!global.dailyPnlTracker) {
-  global.dailyPnlTracker = { date: '', losses: 0, wins: 0 };
+  global.dailyPnlTracker = { date: '', losses: 0, wins: 0, slCount: 0 };
 }
 
 function checkPortfolioRisk(sig) {
   const open = store.openTrades;
   const symbol = sig.instId.replace('-USDT-SWAP', '');
 
-  // Проп-режим: только S5 и S10
+  // ── ПРОП-РЕЖИМ: строгий whitelist по emoji-номеру ──────────
   if (store.propMode) {
-    // Prop mode: только S5 + S10
-    // S7 исключена: MAX SL STREAK=5 → риск пробить daily limit 3%
-    const allowed = sig.strategy.includes('RSI Диверг') ||
-                    sig.strategy.includes('4H Range');
-    if (!allowed) {
-      console.log(`[PROP] ${sig.instId} — стратегия не в проп-режиме: ${sig.strategy.split(' ')[0]}`);
-      return { allowed: false, reason: 'Проп-режим: только S5+S10' };
+    // Разрешены S5, S10 и S12. Проверка по emoji в начале названия.
+    const PROP_WHITELIST = ['5️⃣', '🔟', '1️⃣2️⃣'];
+    const isAllowed = PROP_WHITELIST.some(prefix => sig.strategy.startsWith(prefix));
+    if (!isAllowed) {
+      console.log(`[PROP BLOCK] ${sig.instId} — "${sig.strategy}" не в whitelist`);
+      return { allowed: false, reason: 'Проп-режим: только S5+S10+S12' };
+    }
+    const propMinConf = sig.strategy.startsWith('🔟') ? 80
+                      : sig.strategy.startsWith('1️⃣2️⃣') ? 82
+                      : 82;
+    if (sig.confidence < propMinConf) {
+      console.log(`[PROP CONF] ${sig.instId} — confidence ${sig.confidence}% < ${propMinConf}%`);
+      return { allowed: false, reason: `Низкая уверенность для проп: ${sig.confidence}% < ${propMinConf}%` };
     }
   }
 
@@ -157,7 +164,7 @@ function checkPortfolioRisk(sig) {
   // 4. Дневной лимит убытка
   const today = new Date().toISOString().split('T')[0];
   if (global.dailyPnlTracker.date !== today) {
-    global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
+    global.dailyPnlTracker = { date: today, losses: 0, wins: 0, slCount: 0 };
   }
   const dailyLimit = store.propMode ? 3.0 : MAX_DAILY_LOSS_PCT;
   if (global.dailyPnlTracker.losses >= dailyLimit) {
@@ -168,13 +175,14 @@ function checkPortfolioRisk(sig) {
   return { allowed: true };
 }
 
-function updateDailyPnl(pnl) {
+function updateDailyPnl(pnl, outcome) {
   const today = new Date().toISOString().split('T')[0];
   if (global.dailyPnlTracker.date !== today) {
-    global.dailyPnlTracker = { date: today, losses: 0, wins: 0 };
+    global.dailyPnlTracker = { date: today, losses: 0, wins: 0, slCount: 0 };
   }
   if (pnl < 0) global.dailyPnlTracker.losses += Math.abs(pnl);
   else global.dailyPnlTracker.wins += pnl;
+  if (outcome === 'sl') global.dailyPnlTracker.slCount += 1;
 }
 
 // Рейтинг стратегий по win rate
@@ -188,19 +196,23 @@ const STRATEGY_META = {
   '8️⃣ Basis Farming (1h)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '9️⃣ Pullback в тренде (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '🔟 4H Range Breakout (5m)':  { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '1️⃣2️⃣ Liquidity Sweep (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
 const store = {
-  cooldowns:    {},
-  openTrades:   [],
-  tradeHistory: [], // ограничен 500 записями (защита от memory leak)
-  signalLog:    [], // ограничен 300 записями
-  fngCache:     null,
-  fngTs:        0,
-  oiCache:      {},
-  klinesCache:  {},  // кэш свечей на 60 секунд
-  propMode:     false, // режим проп-фирмы
+  cooldowns:      {},
+  openTrades:     [],
+  tradeHistory:   [], // ограничен 500 записями (защита от memory leak)
+  signalLog:      [], // ограничен 300 записями
+  fngCache:       null,
+  fngTs:          0,
+  oiCache:        {},
+  klinesCache:    {},  // кэш свечей на 60 секунд
+  propMode:       false, // режим проп-фирмы
+  accountBalance: 5000,  // баланс аккаунта в USDT (менять через /setbalance)
+  leverage:       10,    // кредитное плечо (менять через /setleverage)
+  riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
 };
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
@@ -439,6 +451,9 @@ async function handleTelegramCommand(text, chatId) {
     const dayLoss = global.dailyPnlTracker?.date === today
       ? global.dailyPnlTracker.losses.toFixed(2)
       : '0.00';
+    const daySlCount = global.dailyPnlTracker?.date === today
+      ? (global.dailyPnlTracker.slCount || 0)
+      : 0;
     const propLimit = store.propMode ? 3.0 : 5.0;
     const remaining = Math.max(0, propLimit - parseFloat(dayLoss)).toFixed(2);
 
@@ -450,8 +465,10 @@ async function handleTelegramCommand(text, chatId) {
       `  Потери сегодня: -${dayLoss}%\n` +
       `  Лимит: ${propLimit}%\n` +
       `  Осталось до лимита: ${remaining}%\n\n` +
+      `❌ SL за сегодня: ${daySlCount}/3\n` +
+      `  (Дневной стоп при 3 SL до 00:00 UTC)\n\n` +
       `🔴 SL подряд сейчас: ${slStreak}\n` +
-      `  (Авто-стоп при 3)\n\n` +
+      `  (Авто-стоп при 3 подряд → пауза 4ч)\n\n` +
       `📈 Открытых сделок: ${store.openTrades.length}\n` +
       `  Макс: ${store.propMode ? 2 : 3}`
     );
@@ -478,6 +495,54 @@ async function handleTelegramCommand(text, chatId) {
     console.log(`[SUBS] ${chatId}: ${key}=${on ? 'on' : 'off'}`);
   }
 
+  else if (cmd === '/setbalance') {
+    const val = parseFloat(text.split(/\s+/)[1]);
+    if (!val || val < 100) {
+      await sendTelegramTo(chatId, `❌ Используй: /setbalance 10000`);
+    } else {
+      store.accountBalance = val;
+      await sendTelegramTo(chatId, `✅ Баланс: $${val.toLocaleString()}\nРиск/сделку: $${(val * store.riskPct / 100).toFixed(0)} (${store.riskPct}%)`);
+    }
+  }
+
+  else if (cmd === '/setrisk') {
+    const val = parseFloat(text.split(/\s+/)[1]);
+    if (!val || val < 0.1 || val > 5) {
+      await sendTelegramTo(chatId, `❌ Используй: /setrisk 1 (0.1 — 5%)`);
+    } else {
+      store.riskPct = val;
+      await sendTelegramTo(chatId, `✅ Риск: ${val}% = $${(store.accountBalance * val / 100).toFixed(0)} на сделку`);
+    }
+  }
+
+  else if (cmd === '/setleverage') {
+    const val = parseInt(text.split(/\s+/)[1]);
+    if (!val || val < 1 || val > 50) {
+      await sendTelegramTo(chatId, `❌ Используй: /setleverage 10 (1 — 50x)`);
+    } else {
+      store.leverage = val;
+      await sendTelegramTo(chatId, `✅ Плечо: ${val}x`);
+    }
+  }
+
+  else if (cmd === '/account') {
+    const risk = store.accountBalance * store.riskPct / 100;
+    await sendTelegramTo(chatId,
+      `💼 НАСТРОЙКИ АККАУНТА\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `Баланс:   $${store.accountBalance.toLocaleString()}\n` +
+      `Риск:     ${store.riskPct}% = $${risk.toFixed(0)}\n` +
+      `Плечо:    ${store.leverage}x\n\n` +
+      `📊 При SL 1.5%:\n` +
+      `Position Size: $${(risk / 0.015).toFixed(0)}\n` +
+      `Маржа: $${(risk / 0.015 / store.leverage).toFixed(0)}\n\n` +
+      `Команды:\n` +
+      `/setbalance 10000\n` +
+      `/setrisk 1\n` +
+      `/setleverage 10`
+    );
+  }
+
   else if (cmd === '/help') {
     await sendTelegramTo(chatId,
       `🤖 КРИПТО РАДАР\n━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -489,6 +554,10 @@ async function handleTelegramCommand(text, chatId) {
       `/guide        — инструкция по сигналам\n` +
       `/prop         — 🏆 вкл/выкл проп-режим\n` +
       `/propstatus   — статус проп-режима\n` +
+      `/account      — 💼 настройки аккаунта\n` +
+      `/setbalance   — установить баланс\n` +
+      `/setrisk      — установить риск %\n` +
+      `/setleverage  — установить плечо\n` +
       `/help         — это сообщение\n\n` +
       `🔧 ТВОИ ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
@@ -1631,53 +1700,11 @@ function calcBollinger(klines, period = 20, mult = 2) {
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
 function calcSLTP(price, direction, strategy, atr = null) {
-  // ── Динамический SL на основе ATR (рекомендация аудита) ────
-  // ATR отражает реальную волатильность текущего рынка
-  // Фиксированный % SL игнорирует рыночные условия
-
-  const MIN_SL_PCT  = 0.8; // снижен с 1.0 — ATR может быть узким
-  const MAX_SL_PCT  = 1.5; // ≤ 1.5% — синхронизировано с STRATEGY_SL
-  const MIN_TP1_PCT = 2.4; // минимум TP1
-  const MIN_TP2_PCT = 4.8; // минимум TP2
-
-  let slDist, tp1Dist, tp2Dist;
-  const params = STRATEGY_SL[strategy] || { sl: 1.5, tp1: 4.5, tp2: 7.5 };
-
-  if (atr && atr > 0) {
-    // Динамический SL через ATR с проверкой на соответствие STRATEGY_SL
-    // Если ATR даёт SL за пределами ±30% от STRATEGY_SL — используем STRATEGY_SL
-    // Это устраняет конфликт между двумя системами и делает SL предсказуемым
-    const isS10 = strategy.includes('4H Range');
-    const isS5  = strategy.includes('RSI Диверг');
-    const atrMult = isS10 ? 1.2 : isS5 ? 1.4 : 1.5;
-
-    const atrSL   = atr * atrMult;
-    const paramSL = price * params.sl / 100;
-    const deviation = Math.abs(atrSL - paramSL) / paramSL;
-
-    // Если ATR SL отклоняется от STRATEGY_SL более чем на 30% → используем STRATEGY_SL
-    slDist = deviation < 0.30 ? atrSL : paramSL;
-    tp1Dist = slDist * (params.tp1 / params.sl);
-    tp2Dist = slDist * (params.tp2 / params.sl);
-  } else {
-    slDist  = price * params.sl  / 100;
-    tp1Dist = price * params.tp1 / 100;
-    tp2Dist = price * params.tp2 / 100;
-  }
-
-  // Применяем ограничения
-  const minSL  = price * MIN_SL_PCT  / 100;
-  const maxSL  = price * MAX_SL_PCT  / 100;
-  const minTP1 = price * MIN_TP1_PCT / 100;
-  const minTP2 = price * MIN_TP2_PCT / 100;
-
-  slDist  = Math.min(Math.max(slDist,  minSL),  maxSL);
-  tp1Dist = Math.max(tp1Dist, minTP1);
-  tp2Dist = Math.max(tp2Dist, minTP2);
-
-  // Гарантируем RR минимум 1:2 и 1:3
-  if (tp1Dist < slDist * 2)   tp1Dist = slDist * 2;
-  if (tp2Dist < slDist * 3)   tp2Dist = slDist * 3;
+  // Фиксированный SL 1.5% от цены входа — всегда предсказуемо
+  // RR 1:2.5 (TP1) и 1:4 (TP2)
+  const slDist  = price * 1.5 / 100;
+  const tp1Dist = slDist * 2.5;
+  const tp2Dist = slDist * 4.0;
 
   return direction === 'long'
     ? {
@@ -2706,10 +2733,10 @@ if (k1h.length >= 55) {
             if (pullbackUp >= 5)   conf += 5;  // сильный откат = хорошая точка
             if (lowerLow4h && lowerHigh4h) conf += 5; // чёткая структура
 
-            const slDist  = Math.max(Math.abs(lastHigh15m - price), atr15m_s9 * 1.5);
+            const slDist  = price * 0.015; // фиксированный SL 1.5%
             const sl      = (price + slDist).toFixed(4);
-            const tp1     = (price - slDist * 2).toFixed(4);
-            const tp2     = (price - slDist * 3).toFixed(4);
+            const tp1     = (price - slDist * 2.5).toFixed(4);
+            const tp2     = (price - slDist * 4.0).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2734,10 +2761,10 @@ if (k1h.length >= 55) {
             if (pullbackDown >= 5) conf += 5;
             if (higherLow4h && higherHigh4h) conf += 5;
 
-            const slDist  = Math.max(Math.abs(price - lastLow15m), atr15m_s9 * 1.5);
+            const slDist  = price * 0.015; // фиксированный SL 1.5%
             const sl      = (price - slDist).toFixed(4);
-            const tp1     = (price + slDist * 2).toFixed(4);
-            const tp2     = (price + slDist * 3).toFixed(4);
+            const tp1     = (price + slDist * 2.5).toFixed(4);
+            const tp2     = (price + slDist * 4.0).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2752,46 +2779,32 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S9 error:', e.message); }
 
-    // S10 PRO: 4H Range Breakout — Institutional Grade
-    // ✅ Сессионный фильтр 02:00-10:00 UTC (07:00-15:00 Алматы)
-    // ✅ Объём пробоя > avg × 1.3 (настоящий stop hunt)
-    // ✅ Multi-TF: RSI 1H подтверждает направление
-    // ✅ MA200 на 1H вместо 15m
-    // ✅ SL hard cap 1.5% (исправление ENJ инцидента)
+    // S10: 4H Range Breakout (5m) — усиленная версия
     try {
-      // ── 1. СЕССИОННЫЙ ФИЛЬТР ──────────────────────────────────
-      // 02:00-10:00 UTC = 07:00-15:00 Алматы (UTC+5)
-      const nowHourUTC = new Date().getUTCHours();
-      if (nowHourUTC < 2 || nowHourUTC >= 10) {
-        console.log(`[S10PRO SKIP] ${instId} — вне сессии (${nowHourUTC}:xx UTC, нужно 02-10)`);
-      } else {
-
       const k4h_s10 = await getOKXKlinesCached(instId, '4H', 8);
       const k5m_s10 = await getOKXKlinesCached(instId, '5m', 96);
       const k1h_s10 = await getOKXKlinesCached(instId, '1H', 24);
 
-      if (k4h_s10.length >= 2 && k5m_s10.length >= 20 && k1h_s10.length >= 14) {
+      if (k4h_s10.length >= 2 && k5m_s10.length >= 50 && k1h_s10.length >= 14) {
         const nowUTC   = Date.now();
         const dayStart = nowUTC - (nowUTC % (24 * 60 * 60 * 1000));
 
         const todayCandles = k4h_s10.filter(c => c.ts >= dayStart && c.ts < nowUTC - 4*60*60*1000);
-        if (!todayCandles.length) throw new Error('[S10PRO] Нет 4H свечи за сегодня');
+        if (!todayCandles.length) throw new Error('[S10] Нет 4H свечи за сегодня');
 
         const rangeCandle = todayCandles[0];
         const rangeHigh   = rangeCandle.high;
         const rangeLow    = rangeCandle.low;
         const rangeSize   = rangeHigh - rangeLow;
 
-        if (rangeSize < atr15m * 0.5) {
-          console.log(`[S10PRO SKIP] ${instId} — диапазон слишком мал`);
-        } else {
-          // ── 2. RSI 1H (Multi-TF) ─────────────────────────────
-          const rsi1h    = calcRSI(k1h_s10, 14);
-          // ── 3. MA200 на 1H ────────────────────────────────────
-          const ma200_1h = calcSMA(k1h_s10, Math.min(200, k1h_s10.length));
-          const uptrend  = price > ma200_1h;
-          // ── 4. Средний объём 5m ───────────────────────────────
-          const avgVol5m = k5m_s10.slice(-20).reduce((a,c) => a + (c.quoteVolume||1), 0) / 20;
+        // ── Фильтр 1: диапазон должен быть значимым (не флэт) ──
+        const rangePct = rangeSize / price;
+        if (rangeSize >= atr15m * 0.5 && rangePct >= 0.005 && rangePct <= 0.04) {
+          // MA200 5m + RSI 1H + средний объём
+          const ma200_5m  = calcSMA(k5m_s10, Math.min(200, k5m_s10.length));
+          const uptrend   = price > ma200_5m;
+          const rsi1h_s10 = calcRSI(k1h_s10, 14);
+          const avgVol5m  = k5m_s10.slice(-20).reduce((a,c) => a + (c.quoteVolume||1), 0) / 20;
 
           const recentK5m = k5m_s10.slice(-30);
 
@@ -2799,66 +2812,148 @@ if (k1h.length >= 55) {
             const prev = recentK5m[j - 1];
             const curr = recentK5m[j];
 
-            // ── LONG: пробой вниз + возврат ──────────────────────
+            // ── LONG: пробой вниз + возврат ────────────────────
             if (prev.close < rangeLow && curr.close >= rangeLow && uptrend) {
-              // Объём пробойной свечи > avg × 1.3
-              if ((prev.quoteVolume||1) < avgVol5m * 1.3) { continue; }
-              // RSI 1H не перекуплен
-              if (rsi1h > 65) { continue; }
+              // ── Фильтр 2: объём пробоя должен быть выше среднего ──
+              if ((prev.quoteVolume||1) < avgVol5m * 1.2) { continue; }
+              // ── Фильтр 3: RSI 1H не перекуплен ──
+              if (rsi1h_s10 > 65) { continue; }
+              // ── Фильтр 4: возвратная свеча должна быть бычьей ──
+              if (curr.close <= curr.open) { continue; }
 
-              // SL cap 1.5%
-              const MAX_SL_L = curr.close * 0.015;
-              const rawSL_L  = curr.close - (prev.low * 0.999);
-              const slDist_L = Math.min(rawSL_L, MAX_SL_L);
-              const slPrice  = (curr.close - slDist_L).toFixed(4);
-              const tp1Price = (curr.close + slDist_L * 2.5).toFixed(4);
-              const tp2Price = (curr.close + slDist_L * 4.0).toFixed(4);
+              const slDist  = curr.close * 0.015;
+              const sl      = (curr.close - slDist).toFixed(4);
+              const tp1     = (curr.close + slDist * 2.5).toFixed(4);
+              const tp2     = (curr.close + slDist * 4.0).toFixed(4);
 
-              let conf = 72;
+              let conf = 70;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
-              if (rsi1h < 45)  conf += 6;
-              if (price > ma200_1h * 1.01) conf += 4;
+              if (rsi1h_s10 < 45) conf += 6;
+              if (price > ma200_5m * 1.01) conf += 4;
+              if ((curr.close - curr.open) / curr.open > 0.003) conf += 4; // сильная зелёная
 
               signals.push({
                 strategy: '🔟 4H Range Breakout (5m)', instId, direction: 'long',
                 signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
-                metrics: `PRO | 4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h.toFixed(0)} | ${nowHourUTC}:xx UTC`,
-                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
+                metrics: `4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h_s10.toFixed(0)}`,
+                sl, tp1, tp2,
               });
               break;
             }
 
-            // ── SHORT: пробой вверх + возврат ────────────────────
+            // ── SHORT: пробой вверх + возврат ──────────────────
             if (prev.close > rangeHigh && curr.close <= rangeHigh && !uptrend) {
-              if ((prev.quoteVolume||1) < avgVol5m * 1.3) { continue; }
-              if (rsi1h < 35) { continue; }
+              if ((prev.quoteVolume||1) < avgVol5m * 1.2) { continue; }
+              if (rsi1h_s10 < 35) { continue; }
+              if (curr.close >= curr.open) { continue; } // должна быть красная
 
-              const MAX_SL_S = curr.close * 0.015;
-              const rawSL_S  = (prev.high * 1.001) - curr.close;
-              const slDist_S = Math.min(rawSL_S, MAX_SL_S);
-              const slPrice  = (curr.close + slDist_S).toFixed(4);
-              const tp1Price = (curr.close - slDist_S * 2.5).toFixed(4);
-              const tp2Price = (curr.close - slDist_S * 4.0).toFixed(4);
+              const slDist  = curr.close * 0.015;
+              const sl      = (curr.close + slDist).toFixed(4);
+              const tp1     = (curr.close - slDist * 2.5).toFixed(4);
+              const tp2     = (curr.close - slDist * 4.0).toFixed(4);
 
-              let conf = 72;
+              let conf = 70;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
-              if (rsi1h > 55)  conf += 6;
-              if (price < ma200_1h * 0.99) conf += 4;
+              if (rsi1h_s10 > 55) conf += 6;
+              if (price < ma200_5m * 0.99) conf += 4;
+              if ((curr.open - curr.close) / curr.open > 0.003) conf += 4;
 
               signals.push({
                 strategy: '🔟 4H Range Breakout (5m)', instId, direction: 'short',
                 signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
-                metrics: `PRO | 4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h.toFixed(0)} | ${nowHourUTC}:xx UTC`,
-                sl: slPrice, tp1: tp1Price, tp2: tp2Price,
+                metrics: `4H:$${rangeLow.toFixed(4)}-$${rangeHigh.toFixed(4)} | Vol:${((prev.quoteVolume||1)/avgVol5m).toFixed(1)}x | RSI1H:${rsi1h_s10.toFixed(0)}`,
+                sl, tp1, tp2,
               });
               break;
             }
           }
         }
       }
-      } // конец сессионного фильтра
-
     } catch(e) { console.error('S10 error:', e.message); }
+
+    // ────────────────────────────────────────────────────────
+    // S12: Liquidity Sweep Reversal (15m)
+    // Smart money setup: цена пробивает локальный экстремум,
+    // забирает стопы ликвидности, и быстро разворачивается
+    // ────────────────────────────────────────────────────────
+    try {
+      const k15m_s12 = await getOKXKlinesCached(instId, '15m', 60);
+      const k1h_s12  = await getOKXKlinesCached(instId, '1H', 24);
+
+      if (k15m_s12.length >= 30 && k1h_s12.length >= 14) {
+        // Находим локальные high/low за последние ~10 часов (40 свечей 15m)
+        const lookback = k15m_s12.slice(-40, -3); // исключаем последние 3 свечи
+        if (lookback.length >= 20) {
+          const localHigh = Math.max(...lookback.map(c => c.high));
+          const localLow  = Math.min(...lookback.map(c => c.low));
+
+          const c1 = k15m_s12[k15m_s12.length - 3]; // sweep candle
+          const c2 = k15m_s12[k15m_s12.length - 2]; // reversal candle
+          const c3 = k15m_s12[k15m_s12.length - 1]; // confirmation
+
+          const avgVol = lookback.reduce((a,b) => a + (b.quoteVolume||1), 0) / lookback.length;
+          const rsi1h_s12 = calcRSI(k1h_s12, 14);
+          const ma200_s12 = calcSMA(k15m_s12, Math.min(200, k15m_s12.length));
+
+          // ── SHORT: пробой вверх + сильное отвержение ────────
+          // c1: high пробил localHigh
+          // c2: закрылась НИЖЕ localHigh (отвержение)
+          // c3: продолжение вниз (close < c2.close)
+          const sweepUp = c1.high > localHigh && c2.close < localHigh && c3.close < c2.close;
+          if (sweepUp) {
+            const wickRatio = (c1.high - Math.max(c1.open, c1.close)) / (c1.high - c1.low);
+            const volumeOk  = (c1.quoteVolume||1) >= avgVol * 1.5;
+            const rsiOk     = rsi1h_s12 > 55; // на стороне шорта
+            const trendOk   = price < ma200_s12 * 1.02; // не глубоко в аптренде
+
+            if (wickRatio > 0.5 && volumeOk && rsiOk && trendOk) {
+              const slDist = price * 0.015;
+              let conf = 75;
+              if (wickRatio > 0.7)             conf += 6;
+              if ((c1.quoteVolume||1) >= avgVol * 2.5) conf += 5;
+              if (rsi1h_s12 > 65)              conf += 4;
+              if (price < ma200_s12)           conf += 5;
+
+              signals.push({
+                strategy: '1️⃣2️⃣ Liquidity Sweep (15m)', instId, direction: 'short',
+                signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
+                metrics: `Sweep $${localHigh.toFixed(4)} | Wick:${(wickRatio*100).toFixed(0)}% | Vol:${((c1.quoteVolume||1)/avgVol).toFixed(1)}x | RSI1H:${rsi1h_s12.toFixed(0)}`,
+                sl:  (price + slDist).toFixed(4),
+                tp1: (price - slDist * 2.5).toFixed(4),
+                tp2: (price - slDist * 4.0).toFixed(4),
+              });
+            }
+          }
+
+          // ── LONG: пробой вниз + сильный отскок ──────────────
+          const sweepDn = c1.low < localLow && c2.close > localLow && c3.close > c2.close;
+          if (sweepDn) {
+            const wickRatio = (Math.min(c1.open, c1.close) - c1.low) / (c1.high - c1.low);
+            const volumeOk  = (c1.quoteVolume||1) >= avgVol * 1.5;
+            const rsiOk     = rsi1h_s12 < 45;
+            const trendOk   = price > ma200_s12 * 0.98;
+
+            if (wickRatio > 0.5 && volumeOk && rsiOk && trendOk) {
+              const slDist = price * 0.015;
+              let conf = 75;
+              if (wickRatio > 0.7)             conf += 6;
+              if ((c1.quoteVolume||1) >= avgVol * 2.5) conf += 5;
+              if (rsi1h_s12 < 35)              conf += 4;
+              if (price > ma200_s12)           conf += 5;
+
+              signals.push({
+                strategy: '1️⃣2️⃣ Liquidity Sweep (15m)', instId, direction: 'long',
+                signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
+                metrics: `Sweep $${localLow.toFixed(4)} | Wick:${(wickRatio*100).toFixed(0)}% | Vol:${((c1.quoteVolume||1)/avgVol).toFixed(1)}x | RSI1H:${rsi1h_s12.toFixed(0)}`,
+                sl:  (price - slDist).toFixed(4),
+                tp1: (price + slDist * 2.5).toFixed(4),
+                tp2: (price + slDist * 4.0).toFixed(4),
+              });
+            }
+          }
+        }
+      }
+    } catch(e) { console.error('S12 error:', e.message); }
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
@@ -2907,6 +3002,19 @@ function buildSignalAlert(sig) {
   const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
+
+  // ── Расчёт Position Size с учётом риска ──────────────────
+  const riskUSD   = store.accountBalance * store.riskPct / 100;
+  const slDistPct = sig.price && sig.sl
+    ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price)
+    : 0.015;
+  const positionSize = slDistPct > 0 ? (riskUSD / slDistPct) : 0;
+  const margin       = positionSize / store.leverage;
+  const maxPosition  = store.accountBalance * store.leverage;
+  const positionLine = positionSize > maxPosition
+    ? `\n💵 Position: $${positionSize.toFixed(0)} ⚠️ превышает баланс×плечо ($${maxPosition.toFixed(0)})\n   Маржа: $${margin.toFixed(0)} (${store.leverage}x)`
+    : `\n💵 Position: $${positionSize.toFixed(0)} | Маржа: $${margin.toFixed(0)} (${store.leverage}x)\n   Риск: $${riskUSD.toFixed(0)} (${store.riskPct}%)`;
+
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2918,7 +3026,8 @@ function buildSignalAlert(sig) {
     `\n💰 Вход: $${sig.price}\n` +
     `🛡 Стоп-лосс:    $${sig.sl}\n` +
     `🎯 Тейк-1 (1:2): $${sig.tp1}\n` +
-    `🎯 Тейк-2 (1:3): $${sig.tp2}\n\n` +
+    `🎯 Тейк-2 (1:3): $${sig.tp2}\n` +
+    positionLine + `\n\n` +
     `📊 Уверенность: ${sig.confidence}%\n` +
     `[${bar}]\n\n` +
     `🔍 ${sig.metrics}\n` +
@@ -3229,11 +3338,8 @@ if (klines1h.length < 60) continue;
         const atr   = calcATR(klines.slice(0, i+1), 14);
         if (!atr || atr === 0) continue;
 
-        // SL строго ≤ 1.5% от цены — как в STRATEGY_SL
-        const MAX_BT_SL_PCT = 1.5;
-        const atrSL  = atr * 1.5;
-        const maxSL  = price * MAX_BT_SL_PCT / 100;
-        const slDist = Math.min(atrSL, maxSL);
+        // Фиксированный SL 1.5% — как в live боте
+        const slDist = price * 0.015;
         const sl  = direction === 'long' ? price - slDist : price + slDist;
         const tp1 = direction === 'long' ? price + slDist * 2.5 : price - slDist * 2.5;
         const tp2 = direction === 'long' ? price + slDist * 4.0 : price - slDist * 4.0;
@@ -3592,6 +3698,13 @@ async function checkSignals() {
 
   // ── ПРОП-ЗАЩИТА: автостоп при 3 SL подряд ──────────────────
   if (store.propMode) {
+    // Дневной SL-стоп: 3 SL за день → стоп до 00:00 UTC
+    const today = new Date().toISOString().split('T')[0];
+    if (global.dailyPnlTracker?.date === today && (global.dailyPnlTracker.slCount || 0) >= 3) {
+      console.log(`[PROP DAY-STOP] ${global.dailyPnlTracker.slCount} SL за сегодня — стоп до 00:00 UTC`);
+      return;
+    }
+
     const recentTrades = store.tradeHistory.slice(-3);
     if (recentTrades.length >= 3 && recentTrades.every(t => t.outcome === 'sl')) {
       const lastSL = recentTrades[recentTrades.length-1].closedAt || 0;
@@ -3732,25 +3845,26 @@ if (alreadyOpen) {
         const sl    = parseFloat(sig.sl);
         const tp1   = parseFloat(sig.tp1);
         const tp2   = parseFloat(sig.tp2);
+        const slPctActual = Math.abs((sl - entry) / entry);
 
-        if (sig.direction === 'long') {
-          // Для лонга: SL < entry < TP1 < TP2
-          if (sl >= entry || tp1 <= entry || tp2 <= tp1) {
-            const atr = calcATR(await getOKXKlinesCached(coin.instId, '1H', 20), 14);
-            sig.sl  = (entry - atr * 1.5).toFixed(4);
-            sig.tp1 = (entry + atr * 3.0).toFixed(4);
-            sig.tp2 = (entry + atr * 4.5).toFixed(4);
-            sig.slNote = '📏 ATR стоп (fallback)';
+        // Защита: если SL некорректный или > 1.5% — пересчитываем фикс 1.5%
+        const needsFix =
+          (sig.direction === 'long'  && (sl >= entry || tp1 <= entry || tp2 <= tp1)) ||
+          (sig.direction === 'short' && (sl <= entry || tp1 >= entry || tp2 >= tp1)) ||
+          slPctActual > 0.0151; // допуск погрешности
+
+        if (needsFix) {
+          const slDist = entry * 0.015;
+          if (sig.direction === 'long') {
+            sig.sl  = (entry - slDist).toFixed(4);
+            sig.tp1 = (entry + slDist * 2.5).toFixed(4);
+            sig.tp2 = (entry + slDist * 4.0).toFixed(4);
+          } else {
+            sig.sl  = (entry + slDist).toFixed(4);
+            sig.tp1 = (entry - slDist * 2.5).toFixed(4);
+            sig.tp2 = (entry - slDist * 4.0).toFixed(4);
           }
-        } else {
-          // Для шорта: SL > entry > TP1 > TP2
-          if (sl <= entry || tp1 >= entry || tp2 >= tp1) {
-            const atr = calcATR(await getOKXKlinesCached(coin.instId, '1H', 20), 14);
-            sig.sl  = (entry + atr * 1.5).toFixed(4);
-            sig.tp1 = (entry - atr * 3.0).toFixed(4);
-            sig.tp2 = (entry - atr * 4.5).toFixed(4);
-            sig.slNote = '📏 ATR стоп (fallback)';
-          }
+          sig.slNote = '📏 SL зафиксирован 1.5%';
         }
 
         filtered.push(sig);
@@ -3758,18 +3872,38 @@ if (alreadyOpen) {
 
       const fngValue = fng?.value || 50;
 
+      // ── МАКРО-ФИЛЬТР: BTC 4H тренд + волатильность ──────────
+      // Блокируем сигналы против сильного движения BTC и в высокой волатильности
+      let btcTrend = null; // 'up' | 'down' | 'flat'
+      let btcVolatile = false;
+      try {
+        const btc4h = await getOKXKlinesCached('BTC-USDT-SWAP', '4H', 24);
+        if (btc4h.length >= 20) {
+          const closes  = btc4h.map(c => c.close);
+          const ma20    = closes.slice(-20).reduce((a,b) => a+b, 0) / 20;
+          const lastClose = closes[closes.length - 1];
+          const dev = (lastClose - ma20) / ma20;
+          if (dev > 0.015)       btcTrend = 'up';
+          else if (dev < -0.015) btcTrend = 'down';
+          else                   btcTrend = 'flat';
+          // Волатильность — стандартное отклонение последних 20 свечей
+          const stdev = Math.sqrt(closes.slice(-20).reduce((s,c) => s + (c-ma20)**2, 0) / 20) / ma20;
+          btcVolatile = stdev > 0.03; // > 3% колебания
+        }
+      } catch(e) { console.error('BTC macro error:', e.message); }
+
       const best = filtered
         .filter(s => {
-        // Новые стратегии — порог ниже чтобы накопить данные
-        if (s.strategy.includes('4H Range'))       return s.confidence >= 75; // поднят с 70
-        if (s.strategy.includes('Pullback'))       return s.confidence >= 72;
-        // Проверенные стратегии — стандартный порог
-        if (s.strategy.includes('RSI Диверг'))    return s.confidence >= 80;
-        if (s.strategy.includes('Funding'))       return s.confidence >= 78;
-        if (s.strategy.includes('Bounce'))        return s.confidence >= 80;
-        if (s.strategy.includes('MA20'))          return s.confidence >= 78;
-        if (s.strategy.includes('Поглощение'))    return s.confidence >= 78;
-        return s.confidence >= 80; // по умолчанию
+        // ── Повышенные пороги для качественных сигналов ──────
+        if (s.strategy.includes('4H Range'))       return s.confidence >= 80;
+        if (s.strategy.includes('Pullback'))       return s.confidence >= 78;
+        if (s.strategy.includes('Liquidity Sweep')) return s.confidence >= 82;
+        if (s.strategy.includes('RSI Диверг'))    return s.confidence >= 82;
+        if (s.strategy.includes('Funding'))       return s.confidence >= 80;
+        if (s.strategy.includes('Bounce'))        return s.confidence >= 82;
+        if (s.strategy.includes('MA20'))          return s.confidence >= 80;
+        if (s.strategy.includes('Поглощение'))    return s.confidence >= 80;
+        return s.confidence >= 82; // по умолчанию
         })
         .filter(s => {
           // Extreme Fear (< 25) — блокируем LONG кроме S2 и S7
@@ -3787,6 +3921,26 @@ if (alreadyOpen) {
               console.log(`[FNG BLOCK] ${s.instId} SHORT заблокирован F&G:${fngValue}`);
               return false;
             }
+          }
+          return true;
+        })
+        .filter(s => {
+          // ── BTC 4H тренд: альты не идут против BTC ──────────
+          const symbol = s.instId.replace('-USDT-SWAP', '');
+          if (symbol !== 'BTC' && btcTrend) {
+            if (btcTrend === 'down' && s.direction === 'long') {
+              console.log(`[BTC TREND BLOCK] ${s.instId} LONG vs BTC down`);
+              return false;
+            }
+            if (btcTrend === 'up' && s.direction === 'short') {
+              console.log(`[BTC TREND BLOCK] ${s.instId} SHORT vs BTC up`);
+              return false;
+            }
+          }
+          // ── Волатильность BTC > 3%: блокируем альты ──────────
+          if (btcVolatile && symbol !== 'BTC') {
+            console.log(`[BTC VOLATILITY BLOCK] ${s.instId} — BTC volatile`);
+            return false;
           }
           return true;
         })
@@ -4089,7 +4243,7 @@ async function checkOutcomes() {
         ? (exitPrice - entryPrice) / entryPrice * 100
         : (entryPrice - exitPrice) / entryPrice * 100;
       trade.pnl = parseFloat(trade.pnl.toFixed(2));
-      updateDailyPnl(trade.pnl || 0);
+      updateDailyPnl(trade.pnl || 0, outcome);
       closed.push(trade);
       await sendTelegram(buildOutcomeAlert(trade));
     } else { stillOpen.push(trade); }

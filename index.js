@@ -116,6 +116,21 @@ function checkPortfolioRisk(sig) {
   const open = store.openTrades;
   const symbol = sig.instId.replace('-USDT-SWAP', '');
 
+  // ── EMERGENCY STOP ────────────────────────────────────────
+  if (store.emergencyStop) {
+    console.log(`[EMERGENCY] ${sig.instId} — бот в аварийной остановке`);
+    return { allowed: false, reason: '🚨 Аварийная остановка (/resume для возобновления)' };
+  }
+
+  // ── БЛОКИРОВКА ВЫХОДНЫХ (проп-режим) ──────────────────────
+  if (store.propMode && store.blockWeekends) {
+    const day = new Date().getUTCDay(); // 0=вс, 6=сб
+    if (day === 0 || day === 6) {
+      console.log(`[WEEKEND BLOCK] ${sig.instId} — выходной (UTC день ${day})`);
+      return { allowed: false, reason: 'Выходной — проп не торгует в сб/вс' };
+    }
+  }
+
   // ── ПРОП-РЕЖИМ: строгий whitelist по emoji-номеру ──────────
   if (store.propMode) {
     // Разрешены S5, S10 и S12. Проверка по emoji в начале названия.
@@ -134,11 +149,11 @@ function checkPortfolioRisk(sig) {
     }
   }
 
-  // Лимит сделок (проп: 2, обычный: 3)
-  const maxTrades = store.propMode ? 2 : MAX_OPEN_TRADES;
+  // Лимит сделок (проп: 1, обычный: 3)
+  const maxTrades = store.propMode ? 1 : MAX_OPEN_TRADES;
   if (open.length >= maxTrades) {
     console.log(`[PORTFOLIO] Лимит сделок (${open.length}/${maxTrades})`);
-    return { allowed: false, reason: 'Лимит открытых сделок' };
+    return { allowed: false, reason: store.propMode ? 'Проп: уже 1 сделка открыта' : 'Лимит открытых сделок' };
   }
 
   // 2. Проверка корреляции по сектору
@@ -213,7 +228,43 @@ const store = {
   accountBalance: 5000,  // баланс аккаунта в USDT (менять через /setbalance)
   leverage:       10,    // кредитное плечо (менять через /setleverage)
   riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
+  emergencyStop:  false, // аварийная остановка (kill switch)
+  blockWeekends:  true,  // не торговать в субботу-воскресенье
 };
+
+// ── Persist настроек на диск ──────────────────────────────
+const fs = require('fs');
+const SETTINGS_FILE = './bot-settings.json';
+
+function loadSettings() {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+      if (typeof data.accountBalance === 'number') store.accountBalance = data.accountBalance;
+      if (typeof data.leverage === 'number')       store.leverage       = data.leverage;
+      if (typeof data.riskPct === 'number')        store.riskPct        = data.riskPct;
+      if (typeof data.propMode === 'boolean')      store.propMode       = data.propMode;
+      if (typeof data.emergencyStop === 'boolean') store.emergencyStop  = data.emergencyStop;
+      if (typeof data.blockWeekends === 'boolean') store.blockWeekends  = data.blockWeekends;
+      console.log(`[SETTINGS] Загружено: balance=$${store.accountBalance}, risk=${store.riskPct}%, prop=${store.propMode}, emergency=${store.emergencyStop}`);
+    }
+  } catch(e) { console.error('[SETTINGS] Ошибка загрузки:', e.message); }
+}
+
+function saveSettings() {
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
+      accountBalance: store.accountBalance,
+      leverage:       store.leverage,
+      riskPct:        store.riskPct,
+      propMode:       store.propMode,
+      emergencyStop:  store.emergencyStop,
+      blockWeekends:  store.blockWeekends,
+    }, null, 2));
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
+}
+
+loadSettings();
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {
@@ -410,6 +461,7 @@ async function handleTelegramCommand(text, chatId) {
   else if (cmd === '/prop') {
     // Переключаем проп-режим
     store.propMode = !store.propMode;
+    saveSettings();
 
     if (store.propMode) {
       await sendTelegramTo(chatId,
@@ -495,12 +547,45 @@ async function handleTelegramCommand(text, chatId) {
     console.log(`[SUBS] ${chatId}: ${key}=${on ? 'on' : 'off'}`);
   }
 
+  else if (cmd === '/emergency') {
+    store.emergencyStop = true;
+    saveSettings();
+    await sendTelegramTo(chatId,
+      `🚨 АВАРИЙНАЯ ОСТАНОВКА\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `❌ Новые сигналы НЕ отправляются\n` +
+      `✅ Открытые сделки продолжают работать (SL/TP на бирже)\n\n` +
+      `Для возобновления: /resume`
+    );
+  }
+
+  else if (cmd === '/resume') {
+    store.emergencyStop = false;
+    saveSettings();
+    await sendTelegramTo(chatId,
+      `✅ БОТ ВОЗОБНОВЛЁН\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `Сигналы снова отправляются.`
+    );
+  }
+
+  else if (cmd === '/weekends') {
+    store.blockWeekends = !store.blockWeekends;
+    saveSettings();
+    await sendTelegramTo(chatId,
+      store.blockWeekends
+        ? `✅ Блокировка выходных ВКЛЮЧЕНА\nСигналы не приходят в субботу-воскресенье.`
+        : `❌ Блокировка выходных ВЫКЛЮЧЕНА\nБот торгует все 7 дней.`
+    );
+  }
+
   else if (cmd === '/setbalance') {
     const val = parseFloat(text.split(/\s+/)[1]);
     if (!val || val < 100) {
       await sendTelegramTo(chatId, `❌ Используй: /setbalance 10000`);
     } else {
       store.accountBalance = val;
+      saveSettings();
       await sendTelegramTo(chatId, `✅ Баланс: $${val.toLocaleString()}\nРиск/сделку: $${(val * store.riskPct / 100).toFixed(0)} (${store.riskPct}%)`);
     }
   }
@@ -511,6 +596,7 @@ async function handleTelegramCommand(text, chatId) {
       await sendTelegramTo(chatId, `❌ Используй: /setrisk 1 (0.1 — 5%)`);
     } else {
       store.riskPct = val;
+      saveSettings();
       await sendTelegramTo(chatId, `✅ Риск: ${val}% = $${(store.accountBalance * val / 100).toFixed(0)} на сделку`);
     }
   }
@@ -521,6 +607,7 @@ async function handleTelegramCommand(text, chatId) {
       await sendTelegramTo(chatId, `❌ Используй: /setleverage 10 (1 — 50x)`);
     } else {
       store.leverage = val;
+      saveSettings();
       await sendTelegramTo(chatId, `✅ Плечо: ${val}x`);
     }
   }
@@ -532,14 +619,20 @@ async function handleTelegramCommand(text, chatId) {
       `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
       `Баланс:   $${store.accountBalance.toLocaleString()}\n` +
       `Риск:     ${store.riskPct}% = $${risk.toFixed(0)}\n` +
-      `Плечо:    ${store.leverage}x\n\n` +
+      `Плечо:    ${store.leverage}x\n` +
+      `Прoп:     ${store.propMode ? '🟢 ВКЛ' : '🔴 ВЫКЛ'}\n` +
+      `Авария:   ${store.emergencyStop ? '🚨 СТОП' : '✅ Работает'}\n` +
+      `Выходные: ${store.blockWeekends ? '🚫 Блок' : '✅ Торгуем'}\n\n` +
       `📊 При SL 1.5%:\n` +
       `Position Size: $${(risk / 0.015).toFixed(0)}\n` +
       `Маржа: $${(risk / 0.015 / store.leverage).toFixed(0)}\n\n` +
       `Команды:\n` +
       `/setbalance 10000\n` +
       `/setrisk 1\n` +
-      `/setleverage 10`
+      `/setleverage 10\n` +
+      `/emergency  — стоп\n` +
+      `/resume     — старт\n` +
+      `/weekends   — вкл/выкл выходные`
     );
   }
 
@@ -558,8 +651,11 @@ async function handleTelegramCommand(text, chatId) {
       `/setbalance   — установить баланс\n` +
       `/setrisk      — установить риск %\n` +
       `/setleverage  — установить плечо\n` +
-      `/help         — это сообщение\n\n` +
-      `🔧 ТВОИ ПОДПИСКИ:\n` +
+      `🚨 АВАРИЙНЫЕ:\n` +
+      `/emergency    — экстренный стоп\n` +
+      `/resume       — возобновить\n` +
+      `/weekends     — вкл/выкл выходные\n\n` +
+      `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
       `/whales_on     /whales_off`
@@ -3141,7 +3237,6 @@ function getAlmatyDate() { return new Date(Date.now() + 5*60*60*1000).toISOStrin
 const express = require('express');
 const app     = express();
 
-const fs = require('fs');
 const path = require('path');
 
 // ── NEWS API ──────────────────────────────────────────────────

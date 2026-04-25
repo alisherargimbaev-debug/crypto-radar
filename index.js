@@ -270,7 +270,7 @@ async function sendTelegram(text, module = null) {
 //  TELEGRAM КОМАНДЫ
 // ============================================================
 async function handleTelegramCommand(text, chatId) {
-  const cmd = text.trim().toLowerCase();
+  const cmd = text.trim().toLowerCase().split(/\s+/)[0];
 
   if (cmd === '/status' || cmd === '/start') {
     const open = store.openTrades;

@@ -87,7 +87,7 @@ const STRATEGY_SL = {
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
 
 const MIN_VOLUME_24H = 10000000;
-const TOP_N          = 30;
+const TOP_N          = 50;
 const COOLDOWN_MIN   = 60;  // 60 мин — защита от серий по одной монете
 
 // ── Портфельный риск-менеджмент ────────────────────────────
@@ -250,6 +250,7 @@ const STRATEGY_META = {
   '9️⃣ Pullback в тренде (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '🔟 4H Range Breakout (5m)':  { color: '#34d399', rating: 'A', wr: 'Новая' },
   '1️⃣2️⃣ Liquidity Sweep (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
+  '1️⃣1️⃣ Elliott+Fib+SMA':       { color: '#a78bfa', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -3295,6 +3296,39 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S12 error:', e.message); }
 
+    // ────────────────────────────────────────────────────────
+    // S11: Elliott Wave + Fibonacci + SMA200 (live версия)
+    // ────────────────────────────────────────────────────────
+    try {
+      const k1h_s11  = await getOKXKlinesCached(instId, '1H',  60);
+      const k30m_s11 = await getOKXKlinesCached(instId, '30m', 20);
+      const k4h_s11  = await getOKXKlinesCached(instId, '4H',  50);
+
+      if (k1h_s11.length >= 50) {
+        const dir = btS11(k1h_s11, k1h_s11.length - 1, k30m_s11, k4h_s11);
+        if (dir === 'long' || dir === 'short') {
+          const atr_s11 = calcATR(k1h_s11, 14);
+          const sltp    = calcSLTP(price, dir, '1️⃣1️⃣ Elliott+Fib+SMA', atr_s11);
+
+          // Fibonacci зона — доп. confidence бонус
+          const sma200_s11 = calcSMA(k1h_s11, Math.min(200, k1h_s11.length));
+          const trendStr   = Math.abs(price - sma200_s11) / sma200_s11;
+          let conf = 72;
+          if (trendStr > 0.03) conf += 6;  // далеко от MA200 — чёткий тренд
+          if (trendStr > 0.06) conf += 5;  // очень далеко — сильный тренд
+
+          signals.push({
+            strategy:  '1️⃣1️⃣ Elliott+Fib+SMA',
+            instId, direction: dir,
+            signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+            price, confidence: Math.min(conf, 95),
+            metrics:   `Elliott Wave + Fib 50-70% | SMA200: $${sma200_s11.toFixed(4)}`,
+            ...sltp,
+          });
+        }
+      }
+    } catch(e) { console.error('S11 error:', e.message); }
+
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
 }
@@ -4097,14 +4131,14 @@ if (alreadyOpen) {
 
       const allowedStrategies = (() => {
         if (adx > 25) {
-          // ТРЕНД: пробойные + трендовые
-          return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep'];
+          // ТРЕНД: пробойные + трендовые + Elliott (работает в трендах)
+          return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott'];
         } else if (adx < 18) {
           // БОКОВИК: дивергенции + funding + sweep
           return ['RSI Диверг', 'Funding', 'Liquidity Sweep'];
         } else {
           // НЕЙТРАЛЬНЫЙ: только лучшие
-          return ['RSI Диверг', 'Liquidity Sweep', 'Funding'];
+          return ['RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott'];
         }
       })();
 
@@ -4501,22 +4535,34 @@ async function checkOutcomes() {
 
   for (const trade of store.openTrades) {
     const ageMin = (Date.now() - trade.ts) / 60000;
+
+    // ── TIME-IN-TRADE ТАЙМАУТ ────────────────────────────────
+    // Если сделка не закрылась за 8 часов — рынок не подтвердил идею
+    // Закрываем: если в плюсе — как TP1, если в нуле/минусе — как expired
     if (ageMin > 480) {
-  trade.outcome = 'expired';
-  trade.closedAt = Date.now();
-  const expPrice = await getCurrentPrice(trade.instId);
-  if (expPrice) {
-    trade.closePrice = expPrice;
-    const entry = parseFloat(trade.price);
-    trade.pnl = trade.direction === 'long'
-      ? parseFloat(((expPrice - entry) / entry * 100).toFixed(2))
-      : parseFloat(((entry - expPrice) / entry * 100).toFixed(2));
-  } else {
-    trade.pnl = 0;
-  }
-  closed.push(trade);
-  continue;
-}
+      const expPrice = await getCurrentPrice(trade.instId);
+      const entry    = parseFloat(trade.price);
+      const pnlPct   = expPrice
+        ? trade.direction === 'long'
+          ? (expPrice - entry) / entry * 100
+          : (entry - expPrice) / entry * 100
+        : 0;
+
+      // Если в плюсе — засчитываем как TP1 (не waste)
+      trade.outcome    = pnlPct > 0.3 ? 'tp1' : 'expired';
+      trade.closedAt   = Date.now();
+      trade.closePrice = expPrice || entry;
+      trade.pnl        = parseFloat(pnlPct.toFixed(2));
+
+      const timeoutMsg = pnlPct > 0.3
+        ? `⏰ ${trade.instId.replace('-USDT-SWAP','')} — Таймаут 8ч, закрыто в плюсе +${pnlPct.toFixed(2)}% ✅`
+        : `⏰ ${trade.instId.replace('-USDT-SWAP','')} — Таймаут 8ч, идея не сработала (${pnlPct.toFixed(2)}%). Закрыто.`;
+      await sendTelegram(timeoutMsg);
+
+      updateDailyPnl(trade.pnl, trade.outcome);
+      closed.push(trade);
+      continue;
+    }
 
     const price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }

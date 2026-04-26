@@ -122,6 +122,12 @@ function checkPortfolioRisk(sig) {
     return { allowed: false, reason: '🚨 Аварийная остановка (/resume для возобновления)' };
   }
 
+  // ── РЕЖИМ НАБЛЮДЕНИЯ — пропускаем все ограничения ─────────
+  // В observe mode сигналы идут но сделки не открываются (см. checkSignals)
+  if (store.observeMode) {
+    return { allowed: true, reason: 'observe' };
+  }
+
   // ── БЛОКИРОВКА ВЫХОДНЫХ (проп-режим) ──────────────────────
   if (store.propMode && store.blockWeekends) {
     const day = new Date().getUTCDay(); // 0=вс, 6=сб
@@ -230,6 +236,7 @@ const store = {
   riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
   emergencyStop:  false, // аварийная остановка (kill switch)
   blockWeekends:  true,  // не торговать в субботу-воскресенье
+  observeMode:    false, // режим наблюдения — сигналы приходят но не открываются
 };
 
 // ── Persist настроек на диск ──────────────────────────────
@@ -246,6 +253,7 @@ function loadSettings() {
       if (typeof data.propMode === 'boolean')      store.propMode       = data.propMode;
       if (typeof data.emergencyStop === 'boolean') store.emergencyStop  = data.emergencyStop;
       if (typeof data.blockWeekends === 'boolean') store.blockWeekends  = data.blockWeekends;
+      if (typeof data.observeMode === 'boolean')  store.observeMode   = data.observeMode;
       console.log(`[SETTINGS] Загружено: balance=$${store.accountBalance}, risk=${store.riskPct}%, prop=${store.propMode}, emergency=${store.emergencyStop}`);
     }
   } catch(e) { console.error('[SETTINGS] Ошибка загрузки:', e.message); }
@@ -260,6 +268,7 @@ function saveSettings() {
       propMode:       store.propMode,
       emergencyStop:  store.emergencyStop,
       blockWeekends:  store.blockWeekends,
+      observeMode:    store.observeMode,
     }, null, 2));
   } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
 }
@@ -547,6 +556,68 @@ async function handleTelegramCommand(text, chatId) {
     console.log(`[SUBS] ${chatId}: ${key}=${on ? 'on' : 'off'}`);
   }
 
+  else if (cmd === '/diag') {
+    // Диагностика — показывает почему сигналы блокируются
+    const today = new Date().toISOString().split('T')[0];
+    const recent = store.tradeHistory.slice(-20);
+    const wins = recent.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = recent.filter(t => t.outcome === 'sl').length;
+    const expired = recent.filter(t => t.outcome === 'expired').length;
+    const wr = recent.length ? Math.round(wins / recent.length * 100) : 0;
+
+    // По стратегиям
+    const byStrat = {};
+    recent.forEach(t => {
+      const key = (t.strategy || '?').split(' ').slice(0,2).join(' ');
+      if (!byStrat[key]) byStrat[key] = { w: 0, l: 0, e: 0 };
+      if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrat[key].w++;
+      else if (t.outcome === 'sl') byStrat[key].l++;
+      else byStrat[key].e++;
+    });
+    const stratLines = Object.entries(byStrat)
+      .map(([k, v]) => `  ${k}: ${v.w}W ${v.l}L ${v.e}E`)
+      .join('\n') || '  нет данных';
+
+    await sendTelegramTo(chatId,
+      `🔬 ДИАГНОСТИКА БОТА\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `📊 Последние ${recent.length} сделок:\n` +
+      `  Wins: ${wins} | Losses: ${losses} | Expired: ${expired}\n` +
+      `  Win Rate: ${wr}%\n\n` +
+      `📈 По стратегиям:\n${stratLines}\n\n` +
+      `⚙️ Настройки:\n` +
+      `  Прoп: ${store.propMode ? '🟢' : '🔴'}\n` +
+      `  Авария: ${store.emergencyStop ? '🚨' : '✅'}\n` +
+      `  Выходные: ${store.blockWeekends ? '🚫' : '✅'}\n` +
+      `  Открытых сделок: ${store.openTrades.length}\n\n` +
+      `💡 Если все стратегии в минусе — рынок не подходит. Лучше выключить /emergency на 1-2 дня.`
+    );
+  }
+
+  else if (cmd === '/observe') {
+    store.observeMode = !store.observeMode;
+    saveSettings();
+    if (store.observeMode) {
+      await sendTelegramTo(chatId,
+        `👁 РЕЖИМ НАБЛЮДЕНИЯ ВКЛЮЧЁН\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `✅ Все стратегии шлют сигналы\n` +
+        `❌ Сделки НЕ открываются\n` +
+        `❌ Реальных денег НЕ тратится\n\n` +
+        `Что делать:\n` +
+        `→ Записывай сигналы в блокнот\n` +
+        `→ Следи что происходит с ценой\n` +
+        `→ Через 5-7 дней увидишь что работает\n\n` +
+        `Выключить: /observe`
+      );
+    } else {
+      await sendTelegramTo(chatId,
+        `👁 РЕЖИМ НАБЛЮДЕНИЯ ВЫКЛЮЧЕН\n` +
+        `Сигналы снова открывают сделки.`
+      );
+    }
+  }
+
   else if (cmd === '/emergency') {
     store.emergencyStop = true;
     saveSettings();
@@ -622,7 +693,8 @@ async function handleTelegramCommand(text, chatId) {
       `Плечо:    ${store.leverage}x\n` +
       `Прoп:     ${store.propMode ? '🟢 ВКЛ' : '🔴 ВЫКЛ'}\n` +
       `Авария:   ${store.emergencyStop ? '🚨 СТОП' : '✅ Работает'}\n` +
-      `Выходные: ${store.blockWeekends ? '🚫 Блок' : '✅ Торгуем'}\n\n` +
+      `Выходные: ${store.blockWeekends ? '🚫 Блок' : '✅ Торгуем'}\n` +
+      `Наблюд.:  ${store.observeMode ? '👁 ВКЛ (не торгуем)' : '🔴 ВЫКЛ'}\n\n` +
       `📊 При SL 1.5%:\n` +
       `Position Size: $${(risk / 0.015).toFixed(0)}\n` +
       `Маржа: $${(risk / 0.015 / store.leverage).toFixed(0)}\n\n` +
@@ -654,7 +726,8 @@ async function handleTelegramCommand(text, chatId) {
       `🚨 АВАРИЙНЫЕ:\n` +
       `/emergency    — экстренный стоп\n` +
       `/resume       — возобновить\n` +
-      `/weekends     — вкл/выкл выходные\n\n` +
+      `/weekends     — вкл/выкл выходные\n` +
+      `/observe      — 👁 режим наблюдения\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
@@ -1796,11 +1869,26 @@ function calcBollinger(klines, period = 20, mult = 2) {
            lower: parseFloat(lower.toFixed(4)), width: parseFloat(width.toFixed(2)) };
 }
 function calcSLTP(price, direction, strategy, atr = null) {
-  // Фиксированный SL 1.5% от цены входа — всегда предсказуемо
-  // RR 1:2.5 (TP1) и 1:4 (TP2)
-  const slDist  = price * 1.5 / 100;
-  const tp1Dist = slDist * 2.5;
-  const tp2Dist = slDist * 4.0;
+  // Адаптивный SL на основе ATR:
+  // - SL = max(0.8%, min(ATR × 1.2, 1.5%))
+  // - Узкий SL в спокойном рынке = меньшие потери
+  // - Широкий SL в волатильном рынке = меньше выбиваний шумом
+  // - Жёсткий cap 1.5% для защиты капитала
+  // RR консервативный 1:2 (TP1) и 1:3 (TP2) — реалистичнее на крипте
+  const MIN_SL_PCT = 0.8;
+  const MAX_SL_PCT = 1.5;
+
+  let slPct;
+  if (atr && atr > 0) {
+    const atrPct = (atr / price) * 100 * 1.2; // ATR × 1.2 в процентах
+    slPct = Math.max(MIN_SL_PCT, Math.min(atrPct, MAX_SL_PCT));
+  } else {
+    slPct = 1.2; // дефолт если нет ATR
+  }
+
+  const slDist  = price * slPct / 100;
+  const tp1Dist = slDist * 2.0; // RR 1:2 (раньше было 1:2.5)
+  const tp2Dist = slDist * 3.0; // RR 1:3 (раньше было 1:4)
 
   return direction === 'long'
     ? {
@@ -2829,10 +2917,12 @@ if (k1h.length >= 55) {
             if (pullbackUp >= 5)   conf += 5;  // сильный откат = хорошая точка
             if (lowerLow4h && lowerHigh4h) conf += 5; // чёткая структура
 
-            const slDist  = price * 0.015; // фиксированный SL 1.5%
+            const atrPctS9s = (atr15m_s9 / price) * 100 * 1.2;
+            const slPctS9s  = Math.max(0.8, Math.min(atrPctS9s, 1.5));
+            const slDist  = price * slPctS9s / 100; // адаптивный SL
             const sl      = (price + slDist).toFixed(4);
-            const tp1     = (price - slDist * 2.5).toFixed(4);
-            const tp2     = (price - slDist * 4.0).toFixed(4);
+            const tp1     = (price - slDist * 2.0).toFixed(4);
+            const tp2     = (price - slDist * 3.0).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2857,10 +2947,12 @@ if (k1h.length >= 55) {
             if (pullbackDown >= 5) conf += 5;
             if (higherLow4h && higherHigh4h) conf += 5;
 
-            const slDist  = price * 0.015; // фиксированный SL 1.5%
+            const atrPctS9l = (atr15m_s9 / price) * 100 * 1.2;
+            const slPctS9l  = Math.max(0.8, Math.min(atrPctS9l, 1.5));
+            const slDist  = price * slPctS9l / 100; // адаптивный SL
             const sl      = (price - slDist).toFixed(4);
-            const tp1     = (price + slDist * 2.5).toFixed(4);
-            const tp2     = (price + slDist * 4.0).toFixed(4);
+            const tp1     = (price + slDist * 2.0).toFixed(4);
+            const tp2     = (price + slDist * 3.0).toFixed(4);
 
             signals.push({
               strategy:  '9️⃣ Pullback в тренде (15m)',
@@ -2917,10 +3009,12 @@ if (k1h.length >= 55) {
               // ── Фильтр 4: возвратная свеча должна быть бычьей ──
               if (curr.close <= curr.open) { continue; }
 
-              const slDist  = curr.close * 0.015;
+              const atrPctS10l = (atr15m / curr.close) * 100 * 1.2;
+              const slPctS10l  = Math.max(0.8, Math.min(atrPctS10l, 1.5));
+              const slDist  = curr.close * slPctS10l / 100; // адаптивный SL
               const sl      = (curr.close - slDist).toFixed(4);
-              const tp1     = (curr.close + slDist * 2.5).toFixed(4);
-              const tp2     = (curr.close + slDist * 4.0).toFixed(4);
+              const tp1     = (curr.close + slDist * 2.0).toFixed(4);
+              const tp2     = (curr.close + slDist * 3.0).toFixed(4);
 
               let conf = 70;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
@@ -2943,10 +3037,12 @@ if (k1h.length >= 55) {
               if (rsi1h_s10 < 35) { continue; }
               if (curr.close >= curr.open) { continue; } // должна быть красная
 
-              const slDist  = curr.close * 0.015;
+              const atrPctS10s = (atr15m / curr.close) * 100 * 1.2;
+              const slPctS10s  = Math.max(0.8, Math.min(atrPctS10s, 1.5));
+              const slDist  = curr.close * slPctS10s / 100; // адаптивный SL
               const sl      = (curr.close + slDist).toFixed(4);
-              const tp1     = (curr.close - slDist * 2.5).toFixed(4);
-              const tp2     = (curr.close - slDist * 4.0).toFixed(4);
+              const tp1     = (curr.close - slDist * 2.0).toFixed(4);
+              const tp2     = (curr.close - slDist * 3.0).toFixed(4);
 
               let conf = 70;
               if ((prev.quoteVolume||1) >= avgVol5m * 2.0) conf += 8;
@@ -3003,7 +3099,9 @@ if (k1h.length >= 55) {
             const trendOk   = price < ma200_s12 * 1.02; // не глубоко в аптренде
 
             if (wickRatio > 0.5 && volumeOk && rsiOk && trendOk) {
-              const slDist = price * 0.015;
+              const atrPctS12s = (atr15m / price) * 100 * 1.2;
+              const slPctS12s  = Math.max(0.8, Math.min(atrPctS12s, 1.5));
+              const slDist     = price * slPctS12s / 100; // адаптивный SL
               let conf = 75;
               if (wickRatio > 0.7)             conf += 6;
               if ((c1.quoteVolume||1) >= avgVol * 2.5) conf += 5;
@@ -3015,8 +3113,8 @@ if (k1h.length >= 55) {
                 signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
                 metrics: `Sweep $${localHigh.toFixed(4)} | Wick:${(wickRatio*100).toFixed(0)}% | Vol:${((c1.quoteVolume||1)/avgVol).toFixed(1)}x | RSI1H:${rsi1h_s12.toFixed(0)}`,
                 sl:  (price + slDist).toFixed(4),
-                tp1: (price - slDist * 2.5).toFixed(4),
-                tp2: (price - slDist * 4.0).toFixed(4),
+                tp1: (price - slDist * 2.0).toFixed(4),
+                tp2: (price - slDist * 3.0).toFixed(4),
               });
             }
           }
@@ -3030,7 +3128,9 @@ if (k1h.length >= 55) {
             const trendOk   = price > ma200_s12 * 0.98;
 
             if (wickRatio > 0.5 && volumeOk && rsiOk && trendOk) {
-              const slDist = price * 0.015;
+              const atrPctS12l = (atr15m / price) * 100 * 1.2;
+              const slPctS12l  = Math.max(0.8, Math.min(atrPctS12l, 1.5));
+              const slDist     = price * slPctS12l / 100; // адаптивный SL
               let conf = 75;
               if (wickRatio > 0.7)             conf += 6;
               if ((c1.quoteVolume||1) >= avgVol * 2.5) conf += 5;
@@ -3042,8 +3142,8 @@ if (k1h.length >= 55) {
                 signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
                 metrics: `Sweep $${localLow.toFixed(4)} | Wick:${(wickRatio*100).toFixed(0)}% | Vol:${((c1.quoteVolume||1)/avgVol).toFixed(1)}x | RSI1H:${rsi1h_s12.toFixed(0)}`,
                 sl:  (price - slDist).toFixed(4),
-                tp1: (price + slDist * 2.5).toFixed(4),
-                tp2: (price + slDist * 4.0).toFixed(4),
+                tp1: (price + slDist * 2.0).toFixed(4),
+                tp2: (price + slDist * 3.0).toFixed(4),
               });
             }
           }
@@ -3114,6 +3214,7 @@ function buildSignalAlert(sig) {
   return (
     `${emoji} ${name}/USDT — ${sig.signal}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
+    (store.observeMode ? `👁 РЕЖИМ НАБЛЮДЕНИЯ — не торгуй\n` : '') +
     `📌 ${sig.strategy}\n` +
     `${ratingLine}\n` +
     `⏰ ${timeStr} Алматы\n` +
@@ -4072,10 +4173,45 @@ if (alreadyOpen) {
       best.confidence = aiResult.confidence;
       best.aiNote     = `🤖 AI: ${aiResult.reason}`;
 
+      // ── ФИНАЛЬНАЯ ПРОВЕРКА БЕЗОПАСНОСТИ ─────────────────────
+      // Защита от багов: проверяем что сигнал имеет смысл перед отправкой
+      const entry = best.price;
+      const sl    = parseFloat(best.sl);
+      const tp1   = parseFloat(best.tp1);
+      const slPct = Math.abs((sl - entry) / entry * 100);
+      const tp1Pct = Math.abs((tp1 - entry) / entry * 100);
+
+      // 1. SL не должен превышать 1.5%
+      if (slPct > 1.51) {
+        console.log(`[SAFETY] ${coin.instId} BLOCK — SL ${slPct.toFixed(2)}% > 1.5%`);
+        continue;
+      }
+      // 2. SL не должен быть слишком узким (защита от шума)
+      if (slPct < 0.4) {
+        console.log(`[SAFETY] ${coin.instId} BLOCK — SL ${slPct.toFixed(2)}% < 0.4% (слишком тугой)`);
+        continue;
+      }
+      // 3. Минимальный RR 1:1.8
+      if (tp1Pct / slPct < 1.8) {
+        console.log(`[SAFETY] ${coin.instId} BLOCK — RR ${(tp1Pct/slPct).toFixed(2)} < 1.8`);
+        continue;
+      }
+      // 4. Логика направления
+      if (best.direction === 'long' && (sl >= entry || tp1 <= entry)) {
+        console.log(`[SAFETY] ${coin.instId} BLOCK — LONG с битой логикой SL/TP`);
+        continue;
+      }
+      if (best.direction === 'short' && (sl <= entry || tp1 >= entry)) {
+        console.log(`[SAFETY] ${coin.instId} BLOCK — SHORT с битой логикой SL/TP`);
+        continue;
+      }
+
       await sendTelegram(buildSignalAlert(best));
       setCoinCooldown(coin.instId);
       logSignal(best);
-      saveOpenTrade(best);
+      if (!store.observeMode) {
+        saveOpenTrade(best); // в режиме наблюдения сделки не открываем
+      }
     }
   } finally {
     isRunning = false;
@@ -4311,6 +4447,30 @@ async function checkOutcomes() {
 
     const price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }
+
+    // ── Breakeven: при +1R передвигаем SL в безубыток ────────
+    if (!trade.trailingActive) {
+      const entry = parseFloat(trade.price);
+      const slOrig = parseFloat(trade.sl);
+      const slDist = Math.abs(entry - slOrig);
+      if (trade.direction === 'long') {
+        const oneR = entry + slDist; // +1R
+        if (price >= oneR) {
+          trade.sl = entry.toFixed(4); // SL → безубыток
+          trade.trailingActive = true;
+          console.log(`[BREAKEVEN] ${trade.instId} LONG → SL в безубыток ($${entry.toFixed(4)})`);
+          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
+        }
+      } else {
+        const oneR = entry - slDist; // -1R (для шорта)
+        if (price <= oneR) {
+          trade.sl = entry.toFixed(4);
+          trade.trailingActive = true;
+          console.log(`[BREAKEVEN] ${trade.instId} SHORT → SL в безубыток ($${entry.toFixed(4)})`);
+          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
+        }
+      }
+    }
 
     let outcome = null;
     if (trade.direction === 'long') {

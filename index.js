@@ -128,6 +128,38 @@ function checkPortfolioRisk(sig) {
     return { allowed: true, reason: 'observe' };
   }
 
+  // ── ANTI-TILT: 2 SL за 4 часа → пауза 4 часа ────────────
+  // Профи: после серии лоссов мозг "наклоняется" (tilt), решения ухудшаются
+  const fourHrAgo = Date.now() - 4 * 60 * 60 * 1000;
+  const recentSLs = store.tradeHistory.filter(t =>
+    t.outcome === 'sl' && t.closedAt > fourHrAgo
+  );
+  if (recentSLs.length >= 2) {
+    const lastSL = Math.max(...recentSLs.map(t => t.closedAt));
+    const pauseUntil = lastSL + 4 * 60 * 60 * 1000;
+    if (Date.now() < pauseUntil) {
+      const minLeft = Math.round((pauseUntil - Date.now()) / 60000);
+      console.log(`[ANTI-TILT] ${sig.instId} — пауза ${minLeft} мин (${recentSLs.length} SL за 4ч)`);
+      return { allowed: false, reason: `Anti-tilt: ${recentSLs.length} SL за 4ч → пауза ${minLeft} мин` };
+    }
+  }
+
+  // ── СТРАТЕГИЯ-СПЕЦИФИЧНЫЙ AUTO-DISABLE ─────────────────
+  // Если стратегия дала 3+ SL за последние 5 сделок — пауза 24ч
+  // Это защита от стратегии которая перестала работать
+  const stratTrades = store.tradeHistory
+    .filter(t => t.strategy === sig.strategy)
+    .slice(-5);
+  if (stratTrades.length >= 5) {
+    const stratSLs = stratTrades.filter(t => t.outcome === 'sl').length;
+    const lastTradeTs = stratTrades[stratTrades.length - 1].closedAt || 0;
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    if (stratSLs >= 3 && lastTradeTs > dayAgo) {
+      console.log(`[STRAT-OFF] ${sig.instId} — ${sig.strategy.split(' ')[0]} имеет ${stratSLs}/5 SL → пауза 24ч`);
+      return { allowed: false, reason: `Стратегия ${sig.strategy.split(' ')[0]} в просадке (${stratSLs}/5 SL) — пауза 24ч` };
+    }
+  }
+
   // ── БЛОКИРОВКА ВЫХОДНЫХ (проп-режим) ──────────────────────
   if (store.propMode && store.blockWeekends) {
     const day = new Date().getUTCDay(); // 0=вс, 6=сб
@@ -237,9 +269,69 @@ const store = {
   emergencyStop:  false, // аварийная остановка (kill switch)
   blockWeekends:  true,  // не торговать в субботу-воскресенье
   observeMode:    false, // режим наблюдения — сигналы приходят но не открываются
+  peakBalance:    0,     // макс баланс для расчёта drawdown
 };
 
-// ── Persist настроек на диск ──────────────────────────────
+// ── DRAWDOWN-AWARE RISK SIZING ────────────────────────────
+// Профи уменьшают размер позиции когда в просадке, не увеличивают
+function getEffectiveRiskPct() {
+  if (!store.peakBalance || store.peakBalance <= store.accountBalance) {
+    return store.riskPct; // нет просадки — обычный риск
+  }
+  const dd = (store.peakBalance - store.accountBalance) / store.peakBalance * 100;
+  if (dd >= 7) return store.riskPct * 0.25; // -7% → риск/4
+  if (dd >= 5) return store.riskPct * 0.4;  // -5% → риск × 0.4
+  if (dd >= 3) return store.riskPct * 0.6;  // -3% → риск × 0.6
+  if (dd >= 1.5) return store.riskPct * 0.8; // -1.5% → риск × 0.8
+  return store.riskPct;
+}
+
+function updatePeakBalance() {
+  if (store.accountBalance > store.peakBalance) {
+    store.peakBalance = store.accountBalance;
+    saveSettings();
+  }
+}
+
+// ── КАЛИБРОВКА CONFIDENCE ПО РЕАЛЬНОЙ СТАТИСТИКЕ ────────────
+// Каждый раз при старте и после каждой сделки пересчитываем WR
+// по живой истории — confidence перестаёт быть "числом с потолка"
+function calcRealWR() {
+  const history = store.tradeHistory;
+  if (history.length < 10) return null; // мало данных
+
+  const byStrategy = {};
+  for (const t of history) {
+    const key = (t.strategy || '?').substring(0, 20);
+    if (!byStrategy[key]) byStrategy[key] = { wins: 0, total: 0 };
+    byStrategy[key].total++;
+    if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrategy[key].wins++;
+  }
+
+  const result = {};
+  for (const [key, data] of Object.entries(byStrategy)) {
+    if (data.total >= 5) { // минимум 5 сделок чтобы считать
+      result[key] = Math.round(data.wins / data.total * 100);
+    }
+  }
+  return result;
+}
+
+// Применяем реальный WR к confidence (смешиваем 50/50 с техническим)
+function applyRealWRCalibration(sig) {
+  const wrMap = calcRealWR();
+  if (!wrMap) return sig; // нет данных — не меняем
+
+  const key = Object.keys(wrMap).find(k => sig.strategy.includes(k.substring(2)));
+  if (!key) return sig;
+
+  const realWR = wrMap[key];
+  // Смешиваем: 40% от реального WR + 60% от технического confidence
+  const calibrated = Math.round(realWR * 0.4 + sig.confidence * 0.6);
+  sig.confidence = Math.min(Math.max(calibrated, 0), 100);
+  sig.wrNote = `📊 Live WR ${realWR}% → скорр. confidence`;
+  return sig;
+}
 const fs = require('fs');
 const SETTINGS_FILE = './bot-settings.json';
 
@@ -254,6 +346,7 @@ function loadSettings() {
       if (typeof data.emergencyStop === 'boolean') store.emergencyStop  = data.emergencyStop;
       if (typeof data.blockWeekends === 'boolean') store.blockWeekends  = data.blockWeekends;
       if (typeof data.observeMode === 'boolean')  store.observeMode   = data.observeMode;
+      if (typeof data.peakBalance === 'number')   store.peakBalance    = data.peakBalance;
       console.log(`[SETTINGS] Загружено: balance=$${store.accountBalance}, risk=${store.riskPct}%, prop=${store.propMode}, emergency=${store.emergencyStop}`);
     }
   } catch(e) { console.error('[SETTINGS] Ошибка загрузки:', e.message); }
@@ -269,6 +362,7 @@ function saveSettings() {
       emergencyStop:  store.emergencyStop,
       blockWeekends:  store.blockWeekends,
       observeMode:    store.observeMode,
+      peakBalance:    store.peakBalance,
     }, null, 2));
   } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
 }
@@ -656,8 +750,11 @@ async function handleTelegramCommand(text, chatId) {
       await sendTelegramTo(chatId, `❌ Используй: /setbalance 10000`);
     } else {
       store.accountBalance = val;
+      updatePeakBalance();
       saveSettings();
-      await sendTelegramTo(chatId, `✅ Баланс: $${val.toLocaleString()}\nРиск/сделку: $${(val * store.riskPct / 100).toFixed(0)} (${store.riskPct}%)`);
+      const effRisk = getEffectiveRiskPct();
+      const dd = store.peakBalance > val ? ((store.peakBalance - val) / store.peakBalance * 100).toFixed(1) : '0';
+      await sendTelegramTo(chatId, `✅ Баланс: $${val.toLocaleString()}\nПик: $${store.peakBalance.toLocaleString()} (просадка ${dd}%)\nРиск: ${effRisk.toFixed(2)}% = $${(val * effRisk / 100).toFixed(0)}${effRisk < store.riskPct ? ' ⚠️ снижен' : ''}`);
     }
   }
 
@@ -3247,7 +3344,9 @@ function buildSignalAlert(sig) {
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
 
   // ── Расчёт Position Size с учётом риска ──────────────────
-  const riskUSD   = store.accountBalance * store.riskPct / 100;
+  const effectiveRisk = getEffectiveRiskPct();
+  const riskUSD   = store.accountBalance * effectiveRisk / 100;
+  const ddNote    = effectiveRisk < store.riskPct ? `⚠️ Риск снижен с ${store.riskPct}% до ${effectiveRisk.toFixed(2)}% (просадка)` : '';
   const slDistPct = sig.price && sig.sl
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price)
     : 0.015;
@@ -3269,8 +3368,8 @@ function buildSignalAlert(sig) {
     (fngLine ? fngLine + '\n' : '') +
     `\n💰 Вход: $${sig.price}\n` +
     `🛡 Стоп-лосс:    $${sig.sl}\n` +
-    `🎯 Тейк-1 (1:2): $${sig.tp1}\n` +
-    `🎯 Тейк-2 (1:3): $${sig.tp2}\n` +
+    `🎯 Тейк-1 (1:2) закрой 50%: $${sig.tp1}\n` +
+    `🎯 Тейк-2 (1:3) остаток: $${sig.tp2}\n` +
     positionLine + `\n\n` +
     `📊 Уверенность: ${sig.confidence}%\n` +
     `[${bar}]\n\n` +
@@ -3991,224 +4090,114 @@ if (alreadyOpen) {
       let signals = await runStrategies(coin.instId, coin, asianSession);
       if (!signals.length) continue;
 
-      // Вычисляем один раз ДО цикла — не повторяем для каждого сигнала
+      // ── АВТОРОТАЦИЯ СТРАТЕГИЙ ────────────────────────────────
+      // Включаем только стратегии подходящие текущему режиму рынка
       const regime = await getMarketRegime(coin.instId);
-      const lsr    = await getLongShortRatio(coin.symbol);
+      const adx    = regime?.adx || 0;
+
+      const allowedStrategies = (() => {
+        if (adx > 25) {
+          // ТРЕНД: пробойные + трендовые
+          return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep'];
+        } else if (adx < 18) {
+          // БОКОВИК: дивергенции + funding + sweep
+          return ['RSI Диверг', 'Funding', 'Liquidity Sweep'];
+        } else {
+          // НЕЙТРАЛЬНЫЙ: только лучшие
+          return ['RSI Диверг', 'Liquidity Sweep', 'Funding'];
+        }
+      })();
+
+      signals = signals.filter(s => {
+        const ok = allowedStrategies.some(name => s.strategy.includes(name));
+        if (!ok) console.log(`[ROTATION] ${coin.instId} ${s.strategy.split(' ').slice(0,2).join(' ')} — не подходит режиму ADX:${adx.toFixed(1)}`);
+        return ok;
+      });
+      if (!signals.length) continue;
+
+      // ── 8 ФИЛЬТРОВ (независимых, без дублирования) ─────────
+      const k1h_pipe = await getOKXKlinesCached(coin.instId, '1H', 50);
 
       const filtered = [];
       for (let sig of signals) {
-        sig = applyFearGreed(sig, fng);
-        sig = await applySupportResistance(sig, coin.instId);
-        sig = applySessionFilter(sig, session);
-        sig = await applyCandlePatterns(sig, coin.instId);
-        sig = await applyLiquidationBoost(sig);
-        sig = await applyWhaleBoost(sig);
-        sig = applyVolumeProfile(sig, await getOKXKlinesCached(coin.instId, '1H', 21));
-        sig = await apply4HTrend(sig, coin.instId);
-        sig = applyVWAP(sig, await getOKXKlinesCached(coin.instId, '1H', 24));
 
-        // MA200 — только для трендовых стратегий
-        const isTrendStrategy = sig.strategy.includes('RSI Диверг') ||
-                                sig.strategy.includes('MA20') ||
-                                sig.strategy.includes('Bounce') ||
-                                sig.strategy.includes('Funding');
-        if (isTrendStrategy) {
-          sig = await applyMA200(sig, coin.instId);
+        // 1. MARKET REGIME — жёсткие блоки (тренд/боковик/медведь)
+        sig = applyMarketRegime(sig, regime);
+        if (sig.confidence === 0) { filtered.push(sig); continue; }
+
+        // 2. SESSION — торговое время (07-21 UTC для проп)
+        sig = applySessionFilter(sig, session);
+        if (sig.confidence === 0) { filtered.push(sig); continue; }
+
+        // 3. MULTI-TIMEFRAME — 4H и 15m должны совпадать с 1H
+        sig = await applyMultiTimeframe(sig, coin.instId);
+
+        // 4. MACD MOMENTUM — против импульса не входим
+        if (k1h_pipe.length >= 35) {
+          const macd = calcMACD(k1h_pipe);
+          if (sig.direction === 'long' && macd.hist < 0) {
+            sig.confidence = Math.max(sig.confidence - 12, 0);
+            sig.macdNote   = `📉 MACD медвежий → -12%`;
+          } else if (sig.direction === 'short' && macd.hist > 0) {
+            sig.confidence = Math.max(sig.confidence - 12, 0);
+            sig.macdNote   = `📈 MACD бычий → -12%`;
+          } else {
+            sig.confidence = Math.min(sig.confidence + 6, 100);
+            sig.macdNote   = `✅ MACD подтверждает → +6%`;
+          }
         }
 
-        sig = applyOBV(sig, await getOKXKlinesCached(coin.instId, '1H', 20));
-        sig = applyBollingerSqueeze(sig, await getOKXKlinesCached(coin.instId, '1H', 25));
-        sig = await applyMultiTimeframe(sig, coin.instId);
-        sig = applyChartPatterns(sig, await getOKXKlinesCached(coin.instId, '1H', 20));
-        sig = applyMacroFilter(sig, macroEvent);
-        sig = applyETFFlow(sig, etfFlow);
-        sig = applyMarketRegime(sig, regime);
-        sig = applyLongShortRatio(sig, lsr);
-        sig = applyBTCDominance(sig, btcDom, coin.symbol);
-        sig = applyCoinbasePremium(sig, cbPremium);
-        sig = applyDayOfWeekFilter(sig);
-        sig = await applyLiquidationLevels(sig);
+        // 5. VOLUME — объём должен подтверждать движение
+        sig = applyVolumeProfile(sig, k1h_pipe);
 
-        // ── MACD MOMENTUM ФИЛЬТР (1H) ─────────────────────────
-        // Не входим против MACD импульса на 1H — уменьшает шум
+        // 6. VWAP — институциональный уровень
+        sig = applyVWAP(sig, k1h_pipe);
+
+        // 7. MACRO — блок перед FOMC/CPI
+        sig = applyMacroFilter(sig, macroEvent);
+
+        // 8. FVG — Fair Value Gap (если цена в зоне — подтверждение)
         try {
-          const k1h_macd = await getOKXKlinesCached(coin.instId, '1H', 40);
-          if (k1h_macd.length >= 35) {
-            const macd = calcMACD(k1h_macd);
-            // Hist > 0 = бычий импульс, Hist < 0 = медвежий
-            const macdBull = macd.hist > 0;
-            const macdBear = macd.hist < 0;
-            if (sig.direction === 'long' && macdBear) {
-              sig.confidence = Math.max(sig.confidence - 10, 0);
-              sig.macdNote   = `📉 MACD медвежий (${macd.hist.toFixed(5)}) → -10%`;
-            } else if (sig.direction === 'short' && macdBull) {
-              sig.confidence = Math.max(sig.confidence - 10, 0);
-              sig.macdNote   = `📈 MACD бычий (${macd.hist.toFixed(5)}) → -10%`;
-            } else {
-              // MACD подтверждает направление
-              sig.confidence = Math.min(sig.confidence + 5, 100);
-              sig.macdNote   = `✅ MACD подтверждает → +5%`;
+          const fvgKlines = k1h_pipe;
+          const fvgZones  = detectFVG(fvgKlines.slice(-30));
+          const atrForFVG = calcATR(fvgKlines, 14);
+          const inFVG = priceInFVG(sig.price, fvgZones, sig.direction);
+          if (inFVG) {
+            sig.confidence = Math.min(sig.confidence + 10, 100);
+            sig.fvgNote    = `📊 FVG зона → +10%`;
+          }
+          // FVG SL (если есть — использовать)
+          const fvgSL = calcFVGStopLoss(sig.price, sig.direction, fvgZones, atrForFVG);
+          if (fvgSL) {
+            const slPct = Math.abs((parseFloat(fvgSL.sl) - sig.price) / sig.price);
+            if (slPct <= 0.015) { // только если не выходит за 1.5%
+              sig.sl   = fvgSL.sl;
+              sig.slNote = fvgSL.note;
+              const slD = Math.abs(sig.price - parseFloat(fvgSL.sl));
+              sig.tp1  = sig.direction === 'long'
+                ? (sig.price + slD * 2).toFixed(4)
+                : (sig.price - slD * 2).toFixed(4);
+              sig.tp2  = sig.direction === 'long'
+                ? (sig.price + slD * 3).toFixed(4)
+                : (sig.price - slD * 3).toFixed(4);
             }
           }
-        } catch(e) { console.error('MACD filter error:', e.message); }
-
-        // FVG зоны
-        const fvgKlines = await getOKXKlinesCached(coin.instId, '1H', 30);
-        const fvgZones  = detectFVG(fvgKlines.slice(-30));
-        const atrForFVG = calcATR(fvgKlines, 14);
-        // FVG буст уверенности
-        const inFVG = priceInFVG(sig.price, fvgZones, sig.direction);
-        if (inFVG) {
-          sig.confidence = Math.min(sig.confidence + 12, 100);
-          sig.fvgNote    = `📊 Цена в FVG зоне → +12%`;
-        }
-
-        // IFVG (Inverse FVG) — сильнее обычного FVG (+15%)
-        const ifvgZones = detectIFVG(fvgKlines.slice(-30), fvgZones);
-        const inIFVG = ifvgZones.some(z =>
-          sig.price >= z.bottom && sig.price <= z.top &&
-          z.type === (sig.direction === 'long' ? 'bullish' : 'bearish')
-        );
-        if (inIFVG) {
-          sig.confidence = Math.min(sig.confidence + 15, 100);
-          sig.fvgNote = (sig.fvgNote || '') + ` 🔄 IFVG → +15%`;
-        }
-
-        // FVG стоп-лосс
-        const fvgSL = calcFVGStopLoss(sig.price, sig.direction, fvgZones, atrForFVG);
-        if (fvgSL) {
-          sig.sl     = fvgSL.sl;
-          sig.slNote = fvgSL.note;
-          // Пересчитываем TP на основе нового SL (RR 1:2 и 1:3)
-          const slDist = Math.abs(sig.price - parseFloat(fvgSL.sl));
-          if (sig.direction === 'long') {
-            sig.tp1 = (sig.price + slDist * 2).toFixed(4);
-            sig.tp2 = (sig.price + slDist * 3).toFixed(4);
-          } else {
-            sig.tp1 = (sig.price - slDist * 2).toFixed(4);
-            sig.tp2 = (sig.price - slDist * 3).toFixed(4);
-          }
-        }
-
-        // Fibonacci TP — берём только если даёт ЛУЧШИЙ (дальше) TP
-        const fibKlines = await getOKXKlinesCached(coin.instId, '1H', 20);
-        const fib = calcFibonacci(fibKlines, sig.direction, sig.price);
-        if (fib) {
-          const currentTP1 = parseFloat(sig.tp1);
-          const fibTP1     = fib.tp1;
-          // Лучший TP = дальше от цены входа
-          const fibIsBetter = sig.direction === 'long'
-            ? fibTP1 > currentTP1
-            : fibTP1 < currentTP1;
-          if (fibIsBetter) {
-            sig.tp1 = fib.tp1.toFixed(4);
-            sig.tp2 = fib.tp2.toFixed(4);
-            sig.fibNote = `📐 Fibonacci TP лучше: ${fib.key}`;
-          }
-        }
-        // Финальная проверка логики SL/TP
-        const entry = sig.price;
-        const sl    = parseFloat(sig.sl);
-        const tp1   = parseFloat(sig.tp1);
-        const tp2   = parseFloat(sig.tp2);
-        const slPctActual = Math.abs((sl - entry) / entry);
-
-        // Защита: если SL некорректный или > 1.5% — пересчитываем фикс 1.5%
-        const needsFix =
-          (sig.direction === 'long'  && (sl >= entry || tp1 <= entry || tp2 <= tp1)) ||
-          (sig.direction === 'short' && (sl <= entry || tp1 >= entry || tp2 >= tp1)) ||
-          slPctActual > 0.0151; // допуск погрешности
-
-        if (needsFix) {
-          const slDist = entry * 0.015;
-          if (sig.direction === 'long') {
-            sig.sl  = (entry - slDist).toFixed(4);
-            sig.tp1 = (entry + slDist * 2.5).toFixed(4);
-            sig.tp2 = (entry + slDist * 4.0).toFixed(4);
-          } else {
-            sig.sl  = (entry + slDist).toFixed(4);
-            sig.tp1 = (entry - slDist * 2.5).toFixed(4);
-            sig.tp2 = (entry - slDist * 4.0).toFixed(4);
-          }
-          sig.slNote = '📏 SL зафиксирован 1.5%';
-        }
+        } catch(e) { /* FVG не критичен */ }
 
         filtered.push(sig);
       }
 
-      const fngValue = fng?.value || 50;
+      // ── КАЛИБРОВКА CONFIDENCE ─────────────────────────────────
+      for (let i = 0; i < filtered.length; i++) {
+        filtered[i] = applyRealWRCalibration(filtered[i]);
+      }
 
-      // ── МАКРО-ФИЛЬТР: BTC 4H тренд + волатильность ──────────
-      // Блокируем сигналы против сильного движения BTC и в высокой волатильности
-      let btcTrend = null; // 'up' | 'down' | 'flat'
-      let btcVolatile = false;
-      try {
-        const btc4h = await getOKXKlinesCached('BTC-USDT-SWAP', '4H', 24);
-        if (btc4h.length >= 20) {
-          const closes  = btc4h.map(c => c.close);
-          const ma20    = closes.slice(-20).reduce((a,b) => a+b, 0) / 20;
-          const lastClose = closes[closes.length - 1];
-          const dev = (lastClose - ma20) / ma20;
-          if (dev > 0.015)       btcTrend = 'up';
-          else if (dev < -0.015) btcTrend = 'down';
-          else                   btcTrend = 'flat';
-          // Волатильность — стандартное отклонение последних 20 свечей
-          const stdev = Math.sqrt(closes.slice(-20).reduce((s,c) => s + (c-ma20)**2, 0) / 20) / ma20;
-          btcVolatile = stdev > 0.03; // > 3% колебания
-        }
-      } catch(e) { console.error('BTC macro error:', e.message); }
+      const fngValue = fng?.value || 50;
 
       const best = filtered
         .filter(s => {
-        // ── Повышенные пороги для качественных сигналов ──────
-        if (s.strategy.includes('4H Range'))       return s.confidence >= 80;
-        if (s.strategy.includes('Pullback'))       return s.confidence >= 78;
-        if (s.strategy.includes('Liquidity Sweep')) return s.confidence >= 82;
-        if (s.strategy.includes('RSI Диверг'))    return s.confidence >= 82;
-        if (s.strategy.includes('Funding'))       return s.confidence >= 80;
-        if (s.strategy.includes('Bounce'))        return s.confidence >= 82;
-        if (s.strategy.includes('MA20'))          return s.confidence >= 80;
-        if (s.strategy.includes('Поглощение'))    return s.confidence >= 80;
-        return s.confidence >= 82; // по умолчанию
-        })
-        .filter(s => {
-          // Extreme Fear (< 25) — блокируем LONG кроме S2 и S7
-          if (fngValue < 25 && s.direction === 'long') {
-            const allowed = s.strategy.includes('Bounce') || s.strategy.includes('Поглощение');
-            if (!allowed) {
-              console.log(`[FNG BLOCK] ${s.instId} LONG заблокирован F&G:${fngValue}`);
-              return false;
-            }
-          }
-          // Extreme Greed (> 75) — блокируем SHORT кроме S2 и S7
-          if (fngValue > 75 && s.direction === 'short') {
-            const allowed = s.strategy.includes('Bounce') || s.strategy.includes('Поглощение');
-            if (!allowed) {
-              console.log(`[FNG BLOCK] ${s.instId} SHORT заблокирован F&G:${fngValue}`);
-              return false;
-            }
-          }
-          return true;
-        })
-        .filter(s => {
-          // ── BTC 4H тренд: альты не идут против BTC ──────────
-          const symbol = s.instId.replace('-USDT-SWAP', '');
-          if (symbol !== 'BTC' && btcTrend) {
-            if (btcTrend === 'down' && s.direction === 'long') {
-              console.log(`[BTC TREND BLOCK] ${s.instId} LONG vs BTC down`);
-              return false;
-            }
-            if (btcTrend === 'up' && s.direction === 'short') {
-              console.log(`[BTC TREND BLOCK] ${s.instId} SHORT vs BTC up`);
-              return false;
-            }
-          }
-          // ── Волатильность BTC > 3%: блокируем альты ──────────
-          if (btcVolatile && symbol !== 'BTC') {
-            console.log(`[BTC VOLATILITY BLOCK] ${s.instId} — BTC volatile`);
-            return false;
-          }
-          return true;
+          // Единый порог — после калибровки WR confidence реальный
+          return s.confidence >= 78;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];
 
@@ -4275,6 +4264,20 @@ if (alreadyOpen) {
         console.log(`[SAFETY] ${coin.instId} BLOCK — SHORT с битой логикой SL/TP`);
         continue;
       }
+
+      // 5. ОБЪЁМ — главный фильтр против фейковых сигналов
+      // Текущий часовой объём должен быть выше среднего за 24ч
+      try {
+        const k1h_vol = await getOKXKlinesCached(coin.instId, '1H', 25);
+        if (k1h_vol.length >= 24) {
+          const avgVol = k1h_vol.slice(-24, -1).reduce((s,c) => s + (c.quoteVolume||0), 0) / 23;
+          const lastVol = k1h_vol[k1h_vol.length - 1].quoteVolume || 0;
+          if (avgVol > 0 && lastVol < avgVol * 0.7) {
+            console.log(`[SAFETY] ${coin.instId} BLOCK — объём ${(lastVol/avgVol).toFixed(2)}x от avg (нужно ≥0.7)`);
+            continue;
+          }
+        }
+      } catch(e) { /* если нет данных, пропускаем проверку */ }
 
       await sendTelegram(buildSignalAlert(best));
       setCoinCooldown(coin.instId);

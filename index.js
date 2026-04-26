@@ -1356,6 +1356,18 @@ function isAsianSession() {
 }
 
 function applySessionFilter(sig, session) {
+  // В проп-режиме — жёсткий блок вне рабочих часов
+  // Нерабочие часы = низкая ликвидность = фейковые пробои
+  if (store.propMode && !store.observeMode) {
+    const hour = new Date().getUTCHours();
+    // Разрешены: Лондон (07-16 UTC) + NY (13-21 UTC) = 07:00-21:00 UTC
+    if (hour < 7 || hour >= 21) {
+      sig.confidence  = 0;
+      sig.sessionNote = `❌ Проп: вне торговых часов (${hour}:xx UTC, нужно 07-21)`;
+      return sig;
+    }
+  }
+
   if (['USA', 'Europe', 'US+EU'].includes(session)) {
     sig.confidence = Math.min(sig.confidence + 5, 100);
     sig.sessionNote = `🇺🇸🇪🇺 ${session} → +5%`;
@@ -2380,48 +2392,83 @@ async function getMarketRegime(instId) {
 function applyMarketRegime(sig, regime) {
   if (!regime) return sig;
 
-  // 1. Медвежий рынок — блокируем лонги кроме S5
+  // ═══════════════════════════════════════════════════════════
+  // ЖЁСТКИЕ БЛОКИ — confidence → 0 (сигнал не пройдёт порог)
+  // ═══════════════════════════════════════════════════════════
+
+  // 1. БОКОВИК (ADX < 18) — пробойные стратегии НЕ работают
+  // S10 Range Breakout, S9 Pullback, S12 Sweep в боковике дают фальшивые пробои
+  const isBreakout = sig.strategy.includes('4H Range') ||
+                     sig.strategy.includes('Pullback') ||
+                     sig.strategy.includes('Liquidity Sweep');
+  if (isBreakout && regime.adx < 18) {
+    sig.confidence  = 0;
+    sig.regimeNote  = `❌ Боковик (ADX:${regime.adx.toFixed(1)}<18) — пробои ненадёжны`;
+    return sig;
+  }
+
+  // 2. МЕДВЕЖИЙ РЫНОК — ЛОНГИ полностью блокируются
+  // Исключение: S5 RSI Дивергенция (ловит локальные отскоки)
   if (regime.isBearMkt && sig.direction === 'long') {
     const isS5 = sig.strategy.includes('RSI Диверг');
     if (!isS5) {
-      sig.confidence = Math.max(sig.confidence - 20, 0);
-      sig.regimeNote = `⚠️ Медвежий рынок (ниже MA200) → -20%`;
-    } else {
-      // S5 в медвежьем рынке — осторожно но разрешаем
-      sig.confidence = Math.max(sig.confidence - 8, 0);
-      sig.regimeNote = `⚠️ Медвежий рынок — S5 осторожно → -8%`;
+      sig.confidence  = 0;
+      sig.regimeNote  = `❌ Медвежий рынок (ниже MA200) — LONG заблокирован`;
+      return sig;
+    }
+    // S5 в медвежьем — разрешаем но требуем уверенности
+    sig.confidence  = Math.max(sig.confidence - 12, 0);
+    sig.regimeNote  = `⚠️ Медвежий рынок — S5 осторожно → -12%`;
+  }
+
+  // 3. ЭКСТРЕМАЛЬНЫЙ СТРАХ (FNG < 25) — только шорты
+  // При панике лонги — ловля падающего ножа
+  if (sig.fng?.value < 25 && sig.direction === 'long') {
+    const isS5 = sig.strategy.includes('RSI Диверг');
+    if (!isS5) {
+      sig.confidence  = 0;
+      sig.regimeNote  = `❌ Паника (FNG:${sig.fng.value}<25) — LONG заблокирован`;
+      return sig;
     }
   }
 
-  // 2. Высокая волатильность — уменьшаем уверенность
+  // 4. ВЫСОКАЯ ВОЛАТИЛЬНОСТЬ — уменьшаем уверенность
   if (regime.isHighVol) {
-    sig.confidence = Math.max(sig.confidence - 10, 0);
-    sig.regimeNote = (sig.regimeNote || '') + ` 🌊 Высокая волатильность → -10%`;
+    sig.confidence  = Math.max(sig.confidence - 12, 0);
+    sig.regimeNote  = (sig.regimeNote || '') + ` 🌊 Высокая волатильность → -12%`;
   }
 
-  // 3. Сильный тренд (4H ADX > 30) — S2 Bounce очень рискован
+  // ═══════════════════════════════════════════════════════════
+  // МЯГКИЕ КОРРЕКТИРОВКИ
+  // ═══════════════════════════════════════════════════════════
+
+  // 5. Сильный тренд — Bounce очень опасен
   if (regime.isStrongTrend && sig.strategy.includes('Bounce')) {
-    sig.confidence = Math.max(sig.confidence - 20, 0);
-    sig.regimeNote = `📈 Сильный тренд (4H ADX:${regime.adx4h.toFixed(0)}) — bounce опасен → -20%`;
-  }
-  // Обычный тренд — S2 тоже под давлением
-  else if (regime.isTrending && sig.strategy.includes('Bounce')) {
-    sig.confidence = Math.max(sig.confidence - 12, 0);
-    sig.regimeNote = `📈 Тренд (ADX:${regime.adx.toFixed(0)}) — bounce рискован → -12%`;
+    sig.confidence  = Math.max(sig.confidence - 25, 0);
+    sig.regimeNote  = `📈 Сильный тренд (4H ADX:${regime.adx4h.toFixed(0)}) — bounce опасен → -25%`;
+  } else if (regime.isTrending && sig.strategy.includes('Bounce')) {
+    sig.confidence  = Math.max(sig.confidence - 15, 0);
+    sig.regimeNote  = `📈 Тренд (ADX:${regime.adx.toFixed(0)}) — bounce рискован → -15%`;
   }
 
-  // 4. Боковик — MA Cross слабее
+  // 6. Боковик — MA Cross слабее
   if (regime.isSideways && sig.strategy.includes('MA20')) {
-    sig.confidence = Math.max(sig.confidence - 10, 0);
-    sig.regimeNote = `↔️ Боковик (ADX:${regime.adx.toFixed(0)}) — MA крест слабее → -10%`;
+    sig.confidence  = Math.max(sig.confidence - 12, 0);
+    sig.regimeNote  = `↔️ Боковик (ADX:${regime.adx.toFixed(0)}) — MA крест слабее → -12%`;
   }
 
-  // 5. Сильный тренд подтверждает S5 и S4
+  // 7. Сильный тренд ПОДТВЕРЖДАЕТ трендовые стратегии
   if (regime.isStrongTrend) {
     if (sig.strategy.includes('RSI Диверг') || sig.strategy.includes('MA20')) {
-      sig.confidence = Math.min(sig.confidence + 7, 100);
-      sig.regimeNote = (sig.regimeNote || '') + ` 💪 Сильный тренд подтверждает → +7%`;
+      sig.confidence  = Math.min(sig.confidence + 8, 100);
+      sig.regimeNote  = (sig.regimeNote || '') + ` 💪 Сильный тренд → +8%`;
     }
+  }
+
+  // 8. ADX 20-25 (слабый тренд) — пробойные получают небольшой штраф
+  if (regime.adx >= 18 && regime.adx < 22 && isBreakout) {
+    sig.confidence  = Math.max(sig.confidence - 6, 0);
+    sig.regimeNote  = (sig.regimeNote || '') + ` ↔️ Слабый тренд (ADX:${regime.adx.toFixed(0)}) → -6%`;
   }
 
   return sig;
@@ -3981,6 +4028,29 @@ if (alreadyOpen) {
         sig = applyCoinbasePremium(sig, cbPremium);
         sig = applyDayOfWeekFilter(sig);
         sig = await applyLiquidationLevels(sig);
+
+        // ── MACD MOMENTUM ФИЛЬТР (1H) ─────────────────────────
+        // Не входим против MACD импульса на 1H — уменьшает шум
+        try {
+          const k1h_macd = await getOKXKlinesCached(coin.instId, '1H', 40);
+          if (k1h_macd.length >= 35) {
+            const macd = calcMACD(k1h_macd);
+            // Hist > 0 = бычий импульс, Hist < 0 = медвежий
+            const macdBull = macd.hist > 0;
+            const macdBear = macd.hist < 0;
+            if (sig.direction === 'long' && macdBear) {
+              sig.confidence = Math.max(sig.confidence - 10, 0);
+              sig.macdNote   = `📉 MACD медвежий (${macd.hist.toFixed(5)}) → -10%`;
+            } else if (sig.direction === 'short' && macdBull) {
+              sig.confidence = Math.max(sig.confidence - 10, 0);
+              sig.macdNote   = `📈 MACD бычий (${macd.hist.toFixed(5)}) → -10%`;
+            } else {
+              // MACD подтверждает направление
+              sig.confidence = Math.min(sig.confidence + 5, 100);
+              sig.macdNote   = `✅ MACD подтверждает → +5%`;
+            }
+          }
+        } catch(e) { console.error('MACD filter error:', e.message); }
 
         // FVG зоны
         const fvgKlines = await getOKXKlinesCached(coin.instId, '1H', 30);

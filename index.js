@@ -689,6 +689,49 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/paper') {
+    const stats = getPaperStats();
+    if (!stats) {
+      await sendTelegramTo(chatId,
+        `📄 PAPER TRADING\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Пока нет закрытых виртуальных сделок.\n` +
+        `Включи /observe и подожди — бот будет записывать сигналы и отслеживать их исход автоматически.`
+      );
+      return;
+    }
+
+    const { closed, wins, losses, expired, wr, totalPnl, byStrat } = stats;
+    const open = (global.paperTrades || []).filter(t => !t.outcome).length;
+
+    // Строки по стратегиям
+    const stratLines = Object.entries(byStrat)
+      .sort((a, b) => {
+        const wrA = a[1].wins / (a[1].wins + a[1].losses + a[1].expired || 1);
+        const wrB = b[1].wins / (b[1].wins + b[1].losses + b[1].expired || 1);
+        return wrB - wrA;
+      })
+      .map(([name, s]) => {
+        const total = s.wins + s.losses + s.expired;
+        const stratWR = total ? Math.round(s.wins / total * 100) : 0;
+        const icon = stratWR >= 55 ? '✅' : stratWR >= 40 ? '⚠️' : '❌';
+        const shortName = name.split(' ').slice(0, 3).join(' ');
+        return `${icon} ${shortName}: ${s.wins}W ${s.losses}L | WR ${stratWR}% | ${s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(1)}%`;
+      })
+      .join('\n');
+
+    await sendTelegramTo(chatId,
+      `📄 PAPER TRADING СТАТИСТИКА\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `📊 Всего закрыто: ${closed.length}\n` +
+      `✅ TP: ${wins.length} | ❌ SL: ${losses.length} | ⏰ Expired: ${expired.length}\n` +
+      `🎯 Win Rate: ${wr}%\n` +
+      `💰 Суммарный PnL: ${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%\n` +
+      `🔄 Открытых виртуальных: ${open}\n\n` +
+      `📈 По стратегиям:\n${stratLines || 'нет данных'}\n\n` +
+      `💡 ${wr >= 55 ? 'Хороший WR — можно переходить к реальной торговле с 0.5% риска' : wr >= 45 ? 'Нормально — продолжай наблюдение ещё неделю' : 'WR низкий — нужна настройка стратегий'}`
+    );
+  }
+
   else if (cmd === '/observe') {
     store.observeMode = !store.observeMode;
     saveSettings();
@@ -697,18 +740,19 @@ async function handleTelegramCommand(text, chatId) {
         `👁 РЕЖИМ НАБЛЮДЕНИЯ ВКЛЮЧЁН\n` +
         `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `✅ Все стратегии шлют сигналы\n` +
-        `❌ Сделки НЕ открываются\n` +
+        `✅ Виртуальные сделки записываются автоматически\n` +
+        `✅ Исходы (TP/SL) отслеживаются в реальном времени\n` +
         `❌ Реальных денег НЕ тратится\n\n` +
-        `Что делать:\n` +
-        `→ Записывай сигналы в блокнот\n` +
-        `→ Следи что происходит с ценой\n` +
-        `→ Через 5-7 дней увидишь что работает\n\n` +
+        `📊 Статистику смотри: /paper\n\n` +
+        `Через 2-3 недели /paper покажет реальный WR\n` +
+        `каждой стратегии — и ты поймёшь что работает.\n\n` +
         `Выключить: /observe`
       );
     } else {
       await sendTelegramTo(chatId,
         `👁 РЕЖИМ НАБЛЮДЕНИЯ ВЫКЛЮЧЕН\n` +
-        `Сигналы снова открывают сделки.`
+        `Сигналы снова открывают реальные сделки.\n\n` +
+        `Накопленная статистика сохранена — /paper`
       );
     }
   }
@@ -825,7 +869,8 @@ async function handleTelegramCommand(text, chatId) {
       `/emergency    — экстренный стоп\n` +
       `/resume       — возобновить\n` +
       `/weekends     — вкл/выкл выходные\n` +
-      `/observe      — 👁 режим наблюдения\n\n` +
+      `/observe      — 👁 режим наблюдения\n` +
+      `/paper        — 📄 paper trading статистика\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
@@ -4316,8 +4361,10 @@ if (alreadyOpen) {
       await sendTelegram(buildSignalAlert(best));
       setCoinCooldown(coin.instId);
       logSignal(best);
-      if (!store.observeMode) {
-        saveOpenTrade(best); // в режиме наблюдения сделки не открываем
+      if (store.observeMode) {
+        savePaperTrade(best); // paper trading — запись виртуальной сделки
+      } else {
+        saveOpenTrade(best);
       }
     }
   } finally {
@@ -4326,8 +4373,133 @@ if (alreadyOpen) {
 }
 
 // ============================================================
-//  TRAILING STOP — только для S5 RSI Дивергенция
+//  PAPER TRADING — виртуальные сделки для сбора статистики
 // ============================================================
+// Работает в observe mode — записывает "сделки на бумаге"
+// и автоматически отслеживает их исход через checkPaperTrades()
+
+function savePaperTrade(sig) {
+  if (!global.paperTrades) global.paperTrades = [];
+  global.paperTrades.push({
+    ts:         Date.now(),
+    instId:     sig.instId,
+    strategy:   sig.strategy,
+    direction:  sig.direction,
+    price:      sig.price,
+    sl:         parseFloat(sig.sl),
+    tp1:        parseFloat(sig.tp1),
+    tp2:        parseFloat(sig.tp2),
+    confidence: sig.confidence,
+    outcome:    null,  // заполнится позже
+    closedAt:   null,
+    closePrice: null,
+    pnl:        null,
+  });
+  // Держим максимум 200 paper trades
+  if (global.paperTrades.length > 200) {
+    global.paperTrades = global.paperTrades.slice(-200);
+  }
+  console.log(`[PAPER] ${sig.instId} ${sig.direction.toUpperCase()} $${sig.price} записана`);
+}
+
+async function checkPaperTrades() {
+  if (!global.paperTrades || !global.paperTrades.length) return;
+
+  const open = global.paperTrades.filter(t => !t.outcome);
+  if (!open.length) return;
+
+  for (const trade of open) {
+    try {
+      const price = await getCurrentPrice(trade.instId);
+      if (!price) continue;
+
+      const ageMin = (Date.now() - trade.ts) / 60000;
+
+      // Проверяем SL
+      const slHit = trade.direction === 'long'
+        ? price <= trade.sl
+        : price >= trade.sl;
+
+      // Проверяем TP1
+      const tp1Hit = trade.direction === 'long'
+        ? price >= trade.tp1
+        : price <= trade.tp1;
+
+      // Проверяем TP2
+      const tp2Hit = trade.direction === 'long'
+        ? price >= trade.tp2
+        : price <= trade.tp2;
+
+      if (tp2Hit) {
+        trade.outcome    = 'tp2';
+        trade.closePrice = price;
+        trade.closedAt   = Date.now();
+        const pnl = trade.direction === 'long'
+          ? (price - trade.price) / trade.price * 100
+          : (trade.price - price) / trade.price * 100;
+        trade.pnl = parseFloat(pnl.toFixed(2));
+        console.log(`[PAPER TP2] ${trade.instId} +${trade.pnl}%`);
+
+      } else if (tp1Hit) {
+        trade.outcome    = 'tp1';
+        trade.closePrice = price;
+        trade.closedAt   = Date.now();
+        const pnl = trade.direction === 'long'
+          ? (price - trade.price) / trade.price * 100
+          : (trade.price - price) / trade.price * 100;
+        trade.pnl = parseFloat(pnl.toFixed(2));
+        console.log(`[PAPER TP1] ${trade.instId} +${trade.pnl}%`);
+
+      } else if (slHit) {
+        trade.outcome    = 'sl';
+        trade.closePrice = price;
+        trade.closedAt   = Date.now();
+        const pnl = trade.direction === 'long'
+          ? (price - trade.price) / trade.price * 100
+          : (trade.price - price) / trade.price * 100;
+        trade.pnl = parseFloat(pnl.toFixed(2));
+        console.log(`[PAPER SL] ${trade.instId} ${trade.pnl}%`);
+
+      } else if (ageMin > 480) {
+        // Таймаут 8 часов
+        trade.outcome    = 'expired';
+        trade.closePrice = price;
+        trade.closedAt   = Date.now();
+        const pnl = trade.direction === 'long'
+          ? (price - trade.price) / trade.price * 100
+          : (trade.price - price) / trade.price * 100;
+        trade.pnl = parseFloat(pnl.toFixed(2));
+        console.log(`[PAPER EXPIRED] ${trade.instId} ${trade.pnl}%`);
+      }
+    } catch(e) { console.error(`[PAPER] checkPaperTrades error ${trade.instId}:`, e.message); }
+  }
+}
+
+function getPaperStats() {
+  if (!global.paperTrades || !global.paperTrades.length) return null;
+
+  const closed = global.paperTrades.filter(t => t.outcome);
+  if (!closed.length) return null;
+
+  const wins = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+  const losses = closed.filter(t => t.outcome === 'sl');
+  const expired = closed.filter(t => t.outcome === 'expired');
+  const wr = Math.round(wins.length / closed.length * 100);
+  const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
+
+  // По стратегиям
+  const byStrat = {};
+  for (const t of closed) {
+    const key = (t.strategy || '?').substring(0, 25);
+    if (!byStrat[key]) byStrat[key] = { wins: 0, losses: 0, expired: 0, pnl: 0 };
+    if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrat[key].wins++;
+    else if (t.outcome === 'sl') byStrat[key].losses++;
+    else byStrat[key].expired++;
+    byStrat[key].pnl += t.pnl || 0;
+  }
+
+  return { closed, wins, losses, expired, wr, totalPnl, byStrat };
+}
 async function checkTrailingStop() {
   if (!store.openTrades.length) return;
 
@@ -4850,6 +5022,13 @@ console.log(`📊 Сессия: ${getCurrentSession()}`);
 
 // Каждые 5 минут
 cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
+
+// Paper trading — проверяем виртуальные сделки каждые 5 минут
+cron.schedule('*/5 * * * *', () => {
+  if (store.observeMode) {
+    checkPaperTrades().catch(e => console.error('checkPaperTrades error:', e.message));
+  }
+});
 
 // Каждые 15 минут
 cron.schedule('*/15 * * * *', () => {

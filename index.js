@@ -689,6 +689,11 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/report') {
+    await sendTelegramTo(chatId, '🤖 Генерирую отчёт аналитика...');
+    await dailyReport();
+  }
+
   else if (cmd === '/paper') {
     const stats = getPaperStats();
     if (!stats) {
@@ -870,7 +875,8 @@ async function handleTelegramCommand(text, chatId) {
       `/resume       — возобновить\n` +
       `/weekends     — вкл/выкл выходные\n` +
       `/observe      — 👁 режим наблюдения\n` +
-      `/paper        — 📄 paper trading статистика\n\n` +
+      `/paper        — 📄 paper trading статистика\n` +
+      `/report       — 🤖 отчёт AI аналитика сейчас\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
@@ -4974,41 +4980,140 @@ async function dailyReport() {
   const fng   = await getFearAndGreed();
 
   try {
-    // Читаем из Supabase а не из памяти
-    const { data: trades } = await supabase
-      .from('trades')
-      .select('*')
-      .gte('closed_at', since);
-
-    const { data: signals } = await supabase
-      .from('signals')
-      .select('*')
-      .gte('ts', since);
-
-    const t = trades || [];
+    // ── 1. Собираем данные ────────────────────────────────────
+    const { data: trades }  = await supabase.from('trades').select('*').gte('closed_at', since);
+    const { data: signals } = await supabase.from('signals').select('*').gte('ts', since);
+    const t = trades  || [];
     const s = signals || [];
-
-    if (!t.length && !s.length) {
-      await sendTelegram(`📊 ДНЕВНОЙ ОТЧЁТ | ${getAlmatyDate()}\n😴 Сигналов не было.`);
-      return;
-    }
 
     const wins   = t.filter(x => x.outcome==='tp1'||x.outcome==='tp2');
     const losses = t.filter(x => x.outcome==='sl');
     const wr     = t.length ? Math.round(wins.length/t.length*100) : 0;
     const pnl    = t.reduce((a,x) => a+(parseFloat(x.pnl)||0), 0);
-    const longs  = s.filter(x => x.direction==='long').length;
-    const shorts = s.filter(x => x.direction==='short').length;
 
-    let msg = `📊 ДНЕВНОЙ ОТЧЁТ v4.0\n━━━━━━━━━━━━━━━━━━━━━━\n🗓 ${getAlmatyDate()}\n😐 F&G: ${fng.value} (${fng.label})\n\n`;
-    if (t.length) msg += `📈 Сделки: ${t.length} | ✅ TP: ${wins.length} ❌ SL: ${losses.length}\n🏆 Win Rate: ${wr}%  💰 PnL: ${pnl>=0?'+':''}${pnl.toFixed(1)}%\n\n`;
-    if (s.length) msg += `📨 Сигналов: ${s.length} (🟢 ${longs} / 🔴 ${shorts})\n`;
-    msg += '\n⚠️ Статистика бота, не реальных сделок.';
+    // Paper trading статистика
+    const paperStats = getPaperStats();
+    const paperOpen  = (global.paperTrades||[]).filter(t=>!t.outcome).length;
+
+    // BTC данные
+    let btcPrice = 0, btcChange = 0, btcRegime = 'неизвестен';
+    try {
+      const btc4h = await getOKXKlinesCached('BTC-USDT-SWAP', '4H', 24);
+      if (btc4h.length >= 6) {
+        btcPrice  = btc4h[btc4h.length-1].close;
+        btcChange = ((btcPrice - btc4h[0].open) / btc4h[0].open * 100);
+        const regime = await getMarketRegime('BTC-USDT-SWAP');
+        const adx = regime?.adx || 0;
+        btcRegime = adx > 25 ? `Тренд (ADX ${adx.toFixed(0)})` : adx < 18 ? `Боковик (ADX ${adx.toFixed(0)})` : `Нейтральный (ADX ${adx.toFixed(0)})`;
+      }
+    } catch(e) {}
+
+    // ── 2. Определяем активные стратегии по ADX ──────────────
+    let activeStrategies = [];
+    try {
+      const regime = await getMarketRegime('BTC-USDT-SWAP');
+      const adx = regime?.adx || 0;
+      if (adx > 25)      activeStrategies = ['S4 MA', 'S9 Pullback', 'S10 Breakout', 'S11 Elliott'];
+      else if (adx < 18) activeStrategies = ['S5 RSI Div', 'S6 Funding', 'S12 Sweep'];
+      else               activeStrategies = ['S5 RSI Div', 'S6 Funding', 'S11 Elliott', 'S12 Sweep'];
+    } catch(e) {}
+
+    // ── 3. AI Анализ через Claude API ────────────────────────
+    let aiAnalysis = '';
+    try {
+      const context = {
+        date: getAlmatyDate(),
+        time: getAlmatyTime(),
+        market: {
+          fng: `${fng.value} (${fng.label})`,
+          btcPrice: btcPrice.toFixed(0),
+          btcChange24h: btcChange.toFixed(2) + '%',
+          regime: btcRegime,
+          activeStrategies,
+        },
+        performance: {
+          trades24h: t.length,
+          winRate: wr + '%',
+          pnl24h: pnl.toFixed(2) + '%',
+          signals24h: s.length,
+        },
+        paperTrading: paperStats ? {
+          totalClosed: paperStats.closed.length,
+          winRate: paperStats.wr + '%',
+          totalPnl: paperStats.totalPnl.toFixed(2) + '%',
+          openPositions: paperOpen,
+          byStrategy: Object.entries(paperStats.byStrat).map(([k,v]) => ({
+            strategy: k,
+            wins: v.wins, losses: v.losses,
+            wr: Math.round(v.wins/(v.wins+v.losses+v.expired||1)*100) + '%'
+          }))
+        } : null,
+      };
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          messages: [{
+            role: 'user',
+            content: `Ты AI аналитик торгового бота на крипторынке. Проанализируй данные и дай краткий отчёт на русском языке (максимум 200 слов).
+
+Данные: ${JSON.stringify(context, null, 2)}
+
+Формат ответа:
+1. Оценка рынка (1-2 предложения)
+2. Что активно сегодня и почему
+3. На что обратить внимание
+4. Один конкретный совет на сегодня
+
+Будь конкретным и честным. Не используй markdown разметку.`
+          }]
+        })
+      });
+      const data = await response.json();
+      aiAnalysis = data?.content?.[0]?.text || '';
+    } catch(e) {
+      console.error('AI analyst error:', e.message);
+    }
+
+    // ── 4. Формируем сообщение ────────────────────────────────
+    const btcDir = btcChange >= 0 ? '📈' : '📉';
+    let msg = `🤖 УТРЕННИЙ ОТЧЁТ АНАЛИТИКА\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `🗓 ${getAlmatyDate()} | ${getAlmatyTime()}\n\n`;
+
+    msg += `📊 РЫНОК:\n`;
+    msg += `${btcDir} BTC: $${Number(btcPrice).toLocaleString()} (${btcChange>=0?'+':''}${btcChange.toFixed(2)}% 24ч)\n`;
+    msg += `😐 Fear & Greed: ${fng.value} (${fng.label})\n`;
+    msg += `📈 Режим: ${btcRegime}\n\n`;
+
+    msg += `⚙️ АКТИВНЫЕ СТРАТЕГИИ:\n`;
+    msg += activeStrategies.map(s => `  • ${s}`).join('\n') + '\n\n';
+
+    if (paperStats && paperStats.closed.length >= 3) {
+      msg += `📄 PAPER TRADING (${paperStats.closed.length} сделок):\n`;
+      msg += `  WR: ${paperStats.wr}% | PnL: ${paperStats.totalPnl>=0?'+':''}${paperStats.totalPnl.toFixed(1)}%\n\n`;
+    }
+
+    if (t.length) {
+      msg += `📈 ВЧЕРА (реальные):\n`;
+      msg += `  Сделок: ${t.length} | TP: ${wins.length} | SL: ${losses.length}\n`;
+      msg += `  WR: ${wr}% | PnL: ${pnl>=0?'+':''}${pnl.toFixed(1)}%\n\n`;
+    }
+
+    if (aiAnalysis) {
+      msg += `🧠 АНАЛИЗ:\n${aiAnalysis}\n\n`;
+    }
+
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `Команды: /paper /diag /account`;
 
     await sendTelegram(msg);
   } catch(e) {
     console.error('dailyReport error:', e.message);
-    await sendTelegram(`📊 ДНЕВНОЙ ОТЧЁТ | ${getAlmatyDate()}\n❌ Ошибка загрузки данных.`);
+    await sendTelegram(`📊 ОТЧЁТ | ${getAlmatyDate()}\n❌ Ошибка: ${e.message}`);
   }
 }
 

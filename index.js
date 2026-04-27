@@ -4125,29 +4125,28 @@ if (alreadyOpen) {
       if (!signals.length) continue;
 
       // ── АВТОРОТАЦИЯ СТРАТЕГИЙ ────────────────────────────────
-      // Включаем только стратегии подходящие текущему режиму рынка
+      // В observe mode — все стратегии активны для полного наблюдения
       const regime = await getMarketRegime(coin.instId);
       const adx    = regime?.adx || 0;
 
-      const allowedStrategies = (() => {
-        if (adx > 25) {
-          // ТРЕНД: пробойные + трендовые + Elliott (работает в трендах)
-          return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott'];
-        } else if (adx < 18) {
-          // БОКОВИК: дивергенции + funding + sweep
-          return ['RSI Диверг', 'Funding', 'Liquidity Sweep'];
-        } else {
-          // НЕЙТРАЛЬНЫЙ: только лучшие
-          return ['RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott'];
-        }
-      })();
+      if (!store.observeMode) {
+        const allowedStrategies = (() => {
+          if (adx > 25) {
+            return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott'];
+          } else if (adx < 18) {
+            return ['RSI Диверг', 'Funding', 'Liquidity Sweep'];
+          } else {
+            return ['RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott'];
+          }
+        })();
 
-      signals = signals.filter(s => {
-        const ok = allowedStrategies.some(name => s.strategy.includes(name));
-        if (!ok) console.log(`[ROTATION] ${coin.instId} ${s.strategy.split(' ').slice(0,2).join(' ')} — не подходит режиму ADX:${adx.toFixed(1)}`);
-        return ok;
-      });
-      if (!signals.length) continue;
+        signals = signals.filter(s => {
+          const ok = allowedStrategies.some(name => s.strategy.includes(name));
+          if (!ok) console.log(`[ROTATION] ${coin.instId} ${s.strategy.split(' ').slice(0,2).join(' ')} — ADX:${adx.toFixed(1)}`);
+          return ok;
+        });
+        if (!signals.length) continue;
+      }
 
       // ── 8 ФИЛЬТРОВ (независимых, без дублирования) ─────────
       const k1h_pipe = await getOKXKlinesCached(coin.instId, '1H', 50);
@@ -4230,8 +4229,9 @@ if (alreadyOpen) {
 
       const best = filtered
         .filter(s => {
-          // Единый порог — после калибровки WR confidence реальный
-          return s.confidence >= 78;
+          // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
+          const threshold = store.observeMode ? 70 : 78;
+          return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];
 

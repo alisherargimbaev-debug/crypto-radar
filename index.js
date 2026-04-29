@@ -83,6 +83,7 @@ const STRATEGY_SL = {
   '🔟 4H Range Breakout (5m)':       { sl: 1.2, tp1: 3.6, tp2: 5.4  }, // RR 1:3/1:4.5
   '1️⃣1️⃣ Elliott+Fib+SMA':           { sl: 1.5, tp1: 4.5, tp2: 7.5  }, // RR 1:3/1:5
   '1️⃣2️⃣ Liquidity Sweep (15m)':    { sl: 1.5, tp1: 3.75, tp2: 6.0 }, // RR 1:2.5/1:4
+  '1️⃣3️⃣ Order Block (1H)':          { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -253,6 +254,7 @@ const STRATEGY_META = {
   '🔟 4H Range Breakout (5m)':  { color: '#34d399', rating: 'A', wr: 'Новая' },
   '1️⃣2️⃣ Liquidity Sweep (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '1️⃣1️⃣ Elliott+Fib+SMA':       { color: '#a78bfa', rating: 'A', wr: 'Новая' },
+  '1️⃣3️⃣ Order Block (1H)':      { color: '#06b6d4', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -3393,6 +3395,111 @@ if (k1h.length >= 55) {
         }
       }
     } catch(e) { console.error('S12 error:', e.message); }
+
+    // ────────────────────────────────────────────────────────
+    // S13: Order Block Reversal (1H) — ICT концепт
+    // Находим зону где крупные игроки набирали позицию
+    // и ждём возврата цены к этой зоне
+    // ────────────────────────────────────────────────────────
+    try {
+      const k1h_s13 = await getOKXKlinesCached(instId, '1H', 50);
+      if (k1h_s13.length >= 20) {
+        const atr_s13   = calcATR(k1h_s13, 14);
+        const ma200_s13 = calcSMA(k1h_s13, Math.min(200, k1h_s13.length));
+        const uptrend   = price > ma200_s13;
+
+        // Ищем Order Block за последние 20-40 свечей
+        // Бычий OB: последняя медвежья свеча перед импульсом вверх (≥2 ATR)
+        // Медвежий OB: последняя бычья свеча перед импульсом вниз (≥2 ATR)
+        const searchCandles = k1h_s13.slice(-40, -5); // не берём последние 5
+
+        let bullishOB = null; // зона для лонга
+        let bearishOB = null; // зона для шорта
+
+        for (let j = 1; j < searchCandles.length - 1; j++) {
+          const prev = searchCandles[j - 1];
+          const curr = searchCandles[j];
+          const next = searchCandles[j + 1];
+          if (!prev || !curr || !next) continue;
+
+          const nextMove = Math.abs(next.close - next.open);
+
+          // Бычий OB: медвежья свеча (close < open) перед большим движением вверх
+          const isBearCandle = curr.close < curr.open;
+          const bigMoveUp    = next.close > next.open && nextMove >= atr_s13 * 1.5;
+          if (isBearCandle && bigMoveUp && uptrend) {
+            bullishOB = { high: curr.high, low: curr.low, ts: curr.ts };
+          }
+
+          // Медвежий OB: бычья свеча (close > open) перед большим движением вниз
+          const isBullCandle = curr.close > curr.open;
+          const bigMoveDn    = next.close < next.open && nextMove >= atr_s13 * 1.5;
+          if (isBullCandle && bigMoveDn && !uptrend) {
+            bearishOB = { high: curr.high, low: curr.low, ts: curr.ts };
+          }
+        }
+
+        // LONG: цена вернулась в зону бычьего OB
+        if (bullishOB) {
+          const inBullOB = price >= bullishOB.low && price <= bullishOB.high;
+          if (inBullOB) {
+            const rsi_s13 = calcRSI(k1h_s13, 14);
+            const slDist  = price - bullishOB.low * 0.999; // SL чуть ниже OB
+            const slPct   = slDist / price;
+
+            if (slPct <= 0.015 && slPct >= 0.004 && rsi_s13 < 65) {
+              let conf = 75;
+              if (rsi_s13 < 45) conf += 6;
+              if (slPct < 0.01) conf += 5; // тугой SL = точный OB
+              if (price > ma200_s13 * 1.01) conf += 4;
+
+              const sl  = (bullishOB.low * 0.999).toFixed(4);
+              const tp1 = (price + slDist * 2.0).toFixed(4);
+              const tp2 = (price + slDist * 3.0).toFixed(4);
+
+              signals.push({
+                strategy:  '1️⃣3️⃣ Order Block (1H)',
+                instId, direction: 'long',
+                signal:    '🟢 LONG', price,
+                confidence: Math.min(conf, 95),
+                metrics:   `Бычий OB: $${bullishOB.low.toFixed(4)}-$${bullishOB.high.toFixed(4)} | RSI:${rsi_s13.toFixed(0)}`,
+                sl, tp1, tp2,
+              });
+            }
+          }
+        }
+
+        // SHORT: цена вернулась в зону медвежьего OB
+        if (bearishOB) {
+          const inBearOB = price >= bearishOB.low && price <= bearishOB.high;
+          if (inBearOB) {
+            const rsi_s13 = calcRSI(k1h_s13, 14);
+            const slDist  = bearishOB.high * 1.001 - price; // SL чуть выше OB
+            const slPct   = slDist / price;
+
+            if (slPct <= 0.015 && slPct >= 0.004 && rsi_s13 > 35) {
+              let conf = 75;
+              if (rsi_s13 > 55) conf += 6;
+              if (slPct < 0.01) conf += 5;
+              if (price < ma200_s13 * 0.99) conf += 4;
+
+              const sl  = (bearishOB.high * 1.001).toFixed(4);
+              const tp1 = (price - slDist * 2.0).toFixed(4);
+              const tp2 = (price - slDist * 3.0).toFixed(4);
+
+              signals.push({
+                strategy:  '1️⃣3️⃣ Order Block (1H)',
+                instId, direction: 'short',
+                signal:    '🔴 SHORT', price,
+                confidence: Math.min(conf, 95),
+                metrics:   `Медвежий OB: $${bearishOB.low.toFixed(4)}-$${bearishOB.high.toFixed(4)} | RSI:${rsi_s13.toFixed(0)}`,
+                sl, tp1, tp2,
+              });
+            }
+          }
+        }
+      }
+    } catch(e) { console.error('S13 error:', e.message); }
 
     // ────────────────────────────────────────────────────────
     // S11: Elliott Wave + Fibonacci + SMA200 (live версия)

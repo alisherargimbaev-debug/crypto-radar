@@ -2,6 +2,15 @@ require('dotenv').config();
 const axios = require('axios');
 const cron  = require('node-cron');
 
+// ── Stocks Engine (акции NYSE/NASDAQ) ──────────────────────
+let stocksEngine = null;
+try {
+  stocksEngine = require('./stocks_engine');
+  console.log('[STOCKS] Engine загружен ✅');
+} catch(e) {
+  console.log('[STOCKS] Engine не найден — stocks отключён');
+}
+
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -693,6 +702,50 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/stocks') {
+    if (!stocksEngine) {
+      await sendTelegramTo(chatId, '❌ Stocks engine не загружен');
+      return;
+    }
+    if (!stocksEngine.isMarketOpen()) {
+      await sendTelegramTo(chatId,
+        `📈 STOCKS\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `🔴 Рынок закрыт\n\n` +
+        `NYSE/NASDAQ работает:\n` +
+        `🇺🇸 14:30 — 21:00 UTC\n` +
+        `🇰🇿 19:30 — 02:00 Алматы\n\n` +
+        `Сигналы будут приходить автоматически когда рынок откроется.`
+      );
+      return;
+    }
+    const alpacaKey    = process.env.ALPACA_KEY;
+    const alpacaSecret = process.env.ALPACA_SECRET;
+    if (!alpacaKey || !alpacaSecret) {
+      await sendTelegramTo(chatId,
+        `📈 STOCKS\n━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `⚠️ Нет API ключей Alpaca\n\n` +
+        `Добавь в Render Environment Variables:\n` +
+        `ALPACA_KEY = твой ключ\n` +
+        `ALPACA_SECRET = твой секрет\n\n` +
+        `Получить ключи: alpaca.markets → Paper Trading → API Keys`
+      );
+      return;
+    }
+    await sendTelegramTo(chatId, '⏳ Сканирую акции...');
+    const signals = await stocksEngine.scanStocks(alpacaKey, alpacaSecret, 0);
+    if (!signals.length) {
+      await sendTelegramTo(chatId, '📈 STOCKS\n\nСигналов нет. Попробуй позже.');
+      return;
+    }
+    await sendTelegramTo(chatId,
+      `📈 STOCKS — найдено ${signals.length} сигналов\n` +
+      `Топ-3:\n\n` +
+      signals.slice(0,3).map(s =>
+        `${s.direction === 'long' ? '🟢' : '🔴'} ${s.symbol} | ${s.strategy.split(' ').slice(0,2).join(' ')} | ${s.confidence}%`
+      ).join('\n')
+    );
+  }
+
   else if (cmd === '/webapp') {
     const appUrl = process.env.RENDER_EXTERNAL_URL
       ? process.env.RENDER_EXTERNAL_URL + '/paper-app'
@@ -902,7 +955,8 @@ async function handleTelegramCommand(text, chatId) {
       `/paper        — 📄 paper trading статистика\n` +
       `/report       — 🤖 отчёт AI аналитика сейчас\n` +
       `/debrief      — 🌙 вечерний дебрифинг сейчас\n` +
-      `/webapp       — 📱 Paper Trading веб-приложение\n\n` +
+      `/webapp       — 📱 Paper Trading веб-приложение\n` +
+      `/stocks       — 📈 сигналы по акциям\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
@@ -5527,6 +5581,40 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 
 // Вечерний дебрифинг — 16:00 UTC = 21:00 Алматы
 cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
+
+// ── Stocks сканирование — каждые 15 минут пока рынок открыт ─
+cron.schedule('*/15 * * * *', async () => {
+  if (!stocksEngine) return;
+  if (!stocksEngine.isMarketOpen()) return;
+
+  const alpacaKey    = process.env.ALPACA_KEY;
+  const alpacaSecret = process.env.ALPACA_SECRET;
+  if (!alpacaKey || !alpacaSecret) return;
+
+  try {
+    // Получаем изменение BTC за последний час для корреляции
+    let btcChange = 0;
+    try {
+      const btcBars = await getOKXKlinesCached('BTC-USDT-SWAP', '1H', 2);
+      if (btcBars.length >= 2) {
+        btcChange = (btcBars[1].close - btcBars[0].close) / btcBars[0].close * 100;
+      }
+    } catch(e) {}
+
+    const signals = await stocksEngine.scanStocks(alpacaKey, alpacaSecret, btcChange);
+    if (!signals.length) return;
+
+    // Берём только лучший сигнал (confidence >= 75)
+    const best = signals.find(s => s.confidence >= 75);
+    if (!best) return;
+
+    const msg = stocksEngine.formatStockSignal(best);
+    await sendTelegram(`📈 STOCKS SIGNAL\n${msg}`);
+    console.log(`[STOCKS] Сигнал отправлен: ${best.symbol} ${best.direction} ${best.confidence}%`);
+  } catch(e) {
+    console.error('[STOCKS] scan error:', e.message);
+  }
+});
 
 // Загружаем открытые сделки из Supabase при старте
 supabase.from('open_trades').select('*').then(({ data }) => {

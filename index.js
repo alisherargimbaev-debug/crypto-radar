@@ -693,6 +693,11 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/debrief') {
+    await sendTelegramTo(chatId, '🌙 Генерирую вечерний дебрифинг...');
+    await eveningDebrief();
+  }
+
   else if (cmd === '/report') {
     await sendTelegramTo(chatId, '🤖 Генерирую отчёт аналитика...');
     await dailyReport();
@@ -880,7 +885,8 @@ async function handleTelegramCommand(text, chatId) {
       `/weekends     — вкл/выкл выходные\n` +
       `/observe      — 👁 режим наблюдения\n` +
       `/paper        — 📄 paper trading статистика\n` +
-      `/report       — 🤖 отчёт AI аналитика сейчас\n\n` +
+      `/report       — 🤖 отчёт AI аналитика сейчас\n` +
+      `/debrief      — 🌙 вечерний дебрифинг сейчас\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
@@ -1029,52 +1035,107 @@ async function callGroq(prompt) {
 async function validateSignalWithAI(sig, fng, session) {
   const meta = STRATEGY_META[sig.strategy] || { rating: '?', wr: '?' };
 
+  // ── АГЕНТ РИСК-МЕНЕДЖЕР ───────────────────────────────────
+  // Проверяет сигнал по 6 критериям перед отправкой
+  // Каждый критерий может заблокировать или снизить confidence
+
+  // 1. Дневной лимит потерь
+  const today = new Date().toISOString().split('T')[0];
+  const dayLoss = global.dailyPnlTracker?.date === today
+    ? global.dailyPnlTracker.losses : 0;
+  const daySlCount = global.dailyPnlTracker?.date === today
+    ? (global.dailyPnlTracker.slCount || 0) : 0;
+  const maxDayLoss = store.propMode ? 3.0 : 5.0;
+
+  if (dayLoss >= maxDayLoss * 0.8) {
+    return {
+      approved: false,
+      confidence: 0,
+      reason: `🛑 Риск-менеджер: дневные потери ${dayLoss.toFixed(1)}% близко к лимиту ${maxDayLoss}%`
+    };
+  }
+
+  // 2. Серия SL подряд
+  if (daySlCount >= 2) {
+    // При 2+ SL за день — снижаем уверенность
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+  }
+  if (daySlCount >= 3) {
+    return {
+      approved: false,
+      confidence: 0,
+      reason: `🛑 Риск-менеджер: ${daySlCount} SL сегодня — пауза`
+    };
+  }
+
+  // 3. Время — избегаем первые 15 минут после открытия сессий
+  const nowUTC = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
+  const dangerZones = [
+    { start: 0, end: 15, label: 'открытие азии' },     // 00:00 UTC
+    { start: 420, end: 435, label: 'открытие лондона' }, // 07:00 UTC
+    { start: 870, end: 885, label: 'открытие NY' },      // 14:30 UTC
+  ];
+  const inDangerZone = dangerZones.find(z => nowUTC >= z.start && nowUTC <= z.end);
+  if (inDangerZone) {
+    sig.confidence = Math.max(sig.confidence - 8, 0);
+  }
+
+  // 4. Paper trading статистика — если стратегия плохо работает
+  const paperStats = getPaperStats();
+  if (paperStats) {
+    const stratKey = Object.keys(paperStats.byStrat).find(k =>
+      sig.strategy.includes(k.substring(2, 10))
+    );
+    if (stratKey) {
+      const s = paperStats.byStrat[stratKey];
+      const total = s.wins + s.losses + s.expired;
+      if (total >= 10) {
+        const stratWR = s.wins / total;
+        if (stratWR < 0.35) {
+          // Стратегия плохо работает — снижаем confidence
+          sig.confidence = Math.max(sig.confidence - 12, 0);
+          sig.rmNote = `⚠️ РМ: WR стратегии ${Math.round(stratWR*100)}% < 35% → -12%`;
+        } else if (stratWR > 0.6) {
+          // Стратегия хорошо работает — буст
+          sig.confidence = Math.min(sig.confidence + 5, 100);
+          sig.rmNote = `✅ РМ: WR стратегии ${Math.round(stratWR*100)}% → +5%`;
+        }
+      }
+    }
+  }
+
+  // 5. AI финальная оценка через Claude
   const prompt =
-    `Ты — профессиональный крипто-трейдер уровня проп-фонда, работающий с деривативами более 10 лет.
-Твоя задача — ПРОФЕССИОНАЛЬНАЯ ОЦЕНКА уже сгенерированного сигнала.
-Ты НЕ создаешь сигнал с нуля — ты РЕШАЕШЬ: ОСТАВИТЬ или ОТКЛОНИТЬ.
+    `Ты агент риск-менеджер торгового бота. Оцени сигнал кратко.
 
-📊 СИГНАЛ:
-Стратегия: ${sig.strategy} (Рейтинг: ${meta.rating}, Win Rate: ${meta.wr})
-Направление: ${sig.direction === 'long' ? 'LONG' : 'SHORT'}
-Цена: $${sig.price}
-Confidence (до AI): ${sig.confidence}%
+Сигнал: ${sig.strategy} ${sig.direction.toUpperCase()} ${sig.instId.replace('-USDT-SWAP','')}
+Цена: $${sig.price} | SL: $${sig.sl} | TP1: $${sig.tp1}
+Confidence: ${sig.confidence}%
 Метрики: ${sig.metrics}
-
-ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ:
+F&G: ${fng?.value || 50} (${fng?.label || 'N/A'})
 Сессия: ${session}
-Fear & Greed: ${fng ? fng.value + ' (' + fng.label + ')' : 'N/A'}
-${sig.srNote      ? 'Уровни S/R: '  + sig.srNote      : ''}
-${sig.fngNote     ? 'F&G: '         + sig.fngNote     : ''}
-${sig.patternNote ? 'Паттерны: '    + sig.patternNote  : ''}
-${sig.liqNote     ? 'Ликвидации: '  + sig.liqNote     : ''}
-${sig.newsNote    ? 'Новости: '     + sig.newsNote    : ''}
-${sig.whaleNote   ? 'Киты: '        + sig.whaleNote   : ''}
+SL сегодня: ${daySlCount}
+Потери сегодня: ${dayLoss.toFixed(1)}%
+${inDangerZone ? `⚠️ Опасная зона: ${inDangerZone.label}` : ''}
+${sig.rmNote || ''}
 
-ПРАВИЛА ОЦЕНКИ:
-- Рейтинг A (S4,S5,S6): одобряй при confidence 70%+
-- Рейтинг B (S2,S7): одобряй при confidence 75%+
-- Минимум 2 подтверждающих фактора → APPROVE
-- Азия сессия → снижай уверенность но не всегда REJECT
-- Ты не обязан отклонять — одобряй хорошие сигналы
-
-Ответь СТРОГО в одном из двух форматов:
-APPROVE | 94
+Ответь СТРОГО одной строкой:
+APPROVE | [число 60-95]
 или
-REJECT | причина одной строкой`;
+REJECT | [причина до 10 слов]`;
 
   try {
-    // Пробуем Claude API
-    if (process.env.CLAUDE_KEY) {
+    const apiKey = process.env.CLAUDE_KEY || process.env.ANTHROPIC_API_KEY;
+    if (apiKey) {
       const data = await httpPost(
         'https://api.anthropic.com/v1/messages',
         {
           model:      'claude-haiku-4-5-20251001',
-          max_tokens: 100,
+          max_tokens: 60,
           messages:   [{ role: 'user', content: prompt }],
         },
         {
-          'x-api-key':         process.env.CLAUDE_KEY,
+          'x-api-key':         apiKey,
           'anthropic-version': '2023-06-01',
           'Content-Type':      'application/json',
         }
@@ -1082,21 +1143,25 @@ REJECT | причина одной строкой`;
       const response = data?.content?.[0]?.text || '';
       if (response.trim()) {
         const line = response.trim().split('\n')[0].trim();
-        console.log(`[CLAUDE] ${sig.instId} → ${line}`);
+        console.log(`[RISK MGR] ${sig.instId} → ${line}`);
         return parseAIResponse(line, sig);
       }
     }
 
     // Fallback — Groq
-    console.log('[AI] Claude недоступен → Groq');
     const response = await callGroq(prompt);
     const line = response.trim().split('\n')[0].trim();
-    console.log(`[GROQ] ${sig.instId} → ${line}`);
+    console.log(`[RISK MGR GROQ] ${sig.instId} → ${line}`);
     return parseAIResponse(line, sig);
 
   } catch(e) {
-    console.error('[AI] error:', e.message);
-    return { approved: true, confidence: sig.confidence, reason: 'AI недоступен' };
+    console.error('[RISK MGR] error:', e.message);
+    // При ошибке AI — пропускаем сигнал если confidence достаточный
+    return {
+      approved: sig.confidence >= 65,
+      confidence: sig.confidence,
+      reason: sig.confidence >= 65 ? 'AI недоступен — пропущен по confidence' : 'AI недоступен — низкий confidence'
+    };
   }
 }
 
@@ -5129,6 +5194,96 @@ async function checkRSSNews() {
     console.error('checkRSSNews error:', e.message);
   }
 }
+// ============================================================
+//  ВЕЧЕРНИЙ ДЕБРИФИНГ — 21:00 Алматы
+// ============================================================
+async function eveningDebrief() {
+  try {
+    const since = Date.now() - 12 * 60 * 60 * 1000; // последние 12 часов
+
+    // Paper trading за день
+    const paperStats = getPaperStats();
+    const todayPaper = (global.paperTrades || [])
+      .filter(t => t.ts >= since && t.outcome);
+
+    // Какие стратегии дали сигналы сегодня
+    const todaySignals = (global.paperTrades || [])
+      .filter(t => t.ts >= since);
+
+    // Лучшая и худшая стратегия за день
+    const byStrat = {};
+    for (const t of todayPaper) {
+      const key = (t.strategy || '?').split(' ').slice(0,2).join(' ');
+      if (!byStrat[key]) byStrat[key] = { wins: 0, losses: 0, pnl: 0 };
+      if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrat[key].wins++;
+      else if (t.outcome === 'sl') byStrat[key].losses++;
+      byStrat[key].pnl += t.pnl || 0;
+    }
+
+    const stratLines = Object.entries(byStrat)
+      .map(([k, v]) => {
+        const total = v.wins + v.losses;
+        const wr = total ? Math.round(v.wins/total*100) : 0;
+        const icon = wr >= 60 ? '✅' : wr >= 40 ? '⚠️' : '❌';
+        return `${icon} ${k}: ${v.wins}W/${v.losses}L WR:${wr}% PnL:${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%`;
+      }).join('\n') || '  нет закрытых сделок';
+
+    // AI анализ дня
+    let aiSummary = '';
+    try {
+      const apiKey = process.env.CLAUDE_KEY || process.env.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        const fng = await getFearAndGreed();
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 200,
+            messages: [{
+              role: 'user',
+              content: `Ты AI аналитик торгового бота. Дай краткий вечерний дебрифинг на русском (максимум 100 слов).
+
+Данные за сегодня:
+- Сигналов получено: ${todaySignals.length}
+- Закрытых paper trades: ${todayPaper.length}
+- По стратегиям: ${stratLines}
+- F&G: ${fng?.value} (${fng?.label})
+
+Что работало сегодня? Что не работало? Что ожидать завтра? Конкретно и коротко.`
+            }]
+          })
+        });
+        const data = await response.json();
+        aiSummary = data?.content?.[0]?.text || '';
+      }
+    } catch(e) {}
+
+    let msg = `🌙 ВЕЧЕРНИЙ ДЕБРИФИНГ\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `📅 ${getAlmatyDate()} | ${getAlmatyTime()}\n\n`;
+
+    msg += `📊 ЗА СЕГОДНЯ:\n`;
+    msg += `  Сигналов: ${todaySignals.length}\n`;
+    msg += `  Закрыто paper: ${todayPaper.length}\n\n`;
+
+    if (Object.keys(byStrat).length > 0) {
+      msg += `📈 ПО СТРАТЕГИЯМ:\n${stratLines}\n\n`;
+    }
+
+    if (aiSummary) {
+      msg += `🧠 АНАЛИЗ:\n${aiSummary}\n\n`;
+    }
+
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `Завтра: /report в 9:00 Алматы`;
+
+    await sendTelegram(msg);
+  } catch(e) {
+    console.error('eveningDebrief error:', e.message);
+  }
+}
+
 async function dailyReport() {
   const since = Date.now() - 24*60*60*1000;
   const fng   = await getFearAndGreed();
@@ -5306,6 +5461,9 @@ cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('che
 
 // Каждый день в 07:00 UTC = 12:00 Алматы
 cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('dailyReport error:', e.message)); });
+
+// Вечерний дебрифинг — 16:00 UTC = 21:00 Алматы
+cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
 
 // Загружаем открытые сделки из Supabase при старте
 supabase.from('open_trades').select('*').then(({ data }) => {

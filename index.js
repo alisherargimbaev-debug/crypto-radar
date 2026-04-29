@@ -693,6 +693,21 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/webapp') {
+    const appUrl = process.env.RENDER_EXTERNAL_URL
+      ? process.env.RENDER_EXTERNAL_URL + '/paper-app'
+      : 'https://your-app.onrender.com/paper-app';
+    await sendTelegramTo(chatId,
+      `📱 PAPER TRADING APP\n\n` +
+      `Открой в браузере:\n${appUrl}\n\n` +
+      `Там видно:\n` +
+      `• Win Rate и PnL по всем стратегиям\n` +
+      `• Открытые виртуальные сделки\n` +
+      `• Последние 20 закрытых сделок\n` +
+      `• Автообновление каждые 30 секунд`
+    );
+  }
+
   else if (cmd === '/debrief') {
     await sendTelegramTo(chatId, '🌙 Генерирую вечерний дебрифинг...');
     await eveningDebrief();
@@ -886,7 +901,8 @@ async function handleTelegramCommand(text, chatId) {
       `/observe      — 👁 режим наблюдения\n` +
       `/paper        — 📄 paper trading статистика\n` +
       `/report       — 🤖 отчёт AI аналитика сейчас\n` +
-      `/debrief      — 🌙 вечерний дебрифинг сейчас\n\n` +
+      `/debrief      — 🌙 вечерний дебрифинг сейчас\n` +
+      `/webapp       — 📱 Paper Trading веб-приложение\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
       `/news_on       /news_off\n` +
@@ -3791,6 +3807,53 @@ const app     = express();
 const path = require('path');
 
 // ── NEWS API ──────────────────────────────────────────────────
+app.get('/paper-app', (req, res) => {
+  try {
+    const html = fs.readFileSync(path.join(__dirname, 'paper_trading_app.html'), 'utf8');
+    res.send(html);
+  } catch(e) {
+    res.status(500).send('Ошибка: ' + e.message);
+  }
+});
+
+app.get('/api/paper', (req, res) => {
+  const stats   = getPaperStats();
+  const open    = (global.paperTrades || []).filter(t => !t.outcome);
+  const closed  = (global.paperTrades || []).filter(t => t.outcome);
+  res.json({
+    open:    open.map(t => ({
+      instId:     t.instId,
+      strategy:   t.strategy,
+      direction:  t.direction,
+      price:      t.price,
+      sl:         t.sl,
+      tp1:        t.tp1,
+      confidence: t.confidence,
+      ageMin:     Math.round((Date.now() - t.ts) / 60000),
+    })),
+    closed:  closed.slice(-50).reverse().map(t => ({
+      instId:     t.instId,
+      strategy:   t.strategy,
+      direction:  t.direction,
+      price:      t.price,
+      outcome:    t.outcome,
+      pnl:        t.pnl,
+      ageMin:     t.closedAt ? Math.round((t.closedAt - t.ts) / 60000) : null,
+    })),
+    stats: stats ? {
+      total:    stats.closed.length,
+      wins:     stats.wins.length,
+      losses:   stats.losses.length,
+      expired:  stats.expired.length,
+      wr:       stats.wr,
+      totalPnl: parseFloat(stats.totalPnl.toFixed(2)),
+      byStrat:  stats.byStrat,
+    } : null,
+    observeMode: store.observeMode,
+    timestamp:   Date.now(),
+  });
+});
+
 app.get('/api/news', async (req, res) => {
   try {
     const key = process.env.CRYPTOCOMPARE_KEY || '';

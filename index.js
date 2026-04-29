@@ -71,6 +71,7 @@ const GROQ_KEY       = process.env.GROQ_KEY;
 // Все SL ≤ 1.5% — максимальная защита для проп-аккаунта
 // RR 1:3 минимум — математически оправдано при WR 40-50%
 const STRATEGY_SL = {
+  '1️⃣ Volume Spike (15m)':           { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // RR 1:3
   '2️⃣ Liquidity Bounce (1h)':       { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // RR 1:3/1:4.5
   '3️⃣ Ранний вход (5m)':            { sl: 1.0, tp1: 3.0, tp2: 4.5  }, // RR 1:3/1:4.5
   '4️⃣ MA20/MA50+RSI (1h)':          { sl: 1.5, tp1: 4.5, tp2: 6.75 }, // было 2.7 → 1.5
@@ -240,6 +241,7 @@ function updateDailyPnl(pnl, outcome) {
 
 // Рейтинг стратегий по win rate
 const STRATEGY_META = {
+  '1️⃣ Volume Spike (15m)':         { color: '#f59e0b', rating: 'B', wr: 'Новая' },
   '2️⃣ Liquidity Bounce (1h)': { color: '#fbbf24', rating: 'B', wr: 'Обновлена' },
   '3️⃣ Ранний вход (5m)':           { color: '#4a5a7a', rating: 'C', wr: '~38% (откл.)' },
   '4️⃣ MA20/MA50+RSI (1h)':         { color: '#34d399', rating: 'A', wr: '~40%' },
@@ -2551,9 +2553,14 @@ function applyMarketRegime(sig, regime) {
                      sig.strategy.includes('Pullback') ||
                      sig.strategy.includes('Liquidity Sweep');
   if (isBreakout && regime.adx < 18) {
-    sig.confidence  = 0;
-    sig.regimeNote  = `❌ Боковик (ADX:${regime.adx.toFixed(1)}<18) — пробои ненадёжны`;
-    return sig;
+    if (store.observeMode) {
+      sig.confidence  = Math.max(sig.confidence - 8, 0);
+      sig.regimeNote  = `⚠️ Боковик (ADX:${regime.adx.toFixed(1)}) — observe → -8%`;
+    } else {
+      sig.confidence  = 0;
+      sig.regimeNote  = `❌ Боковик (ADX:${regime.adx.toFixed(1)}<18) — пробои ненадёжны`;
+      return sig;
+    }
   }
 
   // 2. МЕДВЕЖИЙ РЫНОК — ЛОНГИ полностью блокируются
@@ -2561,13 +2568,19 @@ function applyMarketRegime(sig, regime) {
   if (regime.isBearMkt && sig.direction === 'long') {
     const isS5 = sig.strategy.includes('RSI Диверг');
     if (!isS5) {
-      sig.confidence  = 0;
-      sig.regimeNote  = `❌ Медвежий рынок (ниже MA200) — LONG заблокирован`;
-      return sig;
+      if (store.observeMode) {
+        sig.confidence  = Math.max(sig.confidence - 10, 0);
+        sig.regimeNote  = `⚠️ Медвежий рынок — observe → -10%`;
+      } else {
+        sig.confidence  = 0;
+        sig.regimeNote  = `❌ Медвежий рынок (ниже MA200) — LONG заблокирован`;
+        return sig;
+      }
+    } else {
+      // S5 в медвежьем — разрешаем но требуем уверенности
+      sig.confidence  = Math.max(sig.confidence - 12, 0);
+      sig.regimeNote  = `⚠️ Медвежий рынок — S5 осторожно → -12%`;
     }
-    // S5 в медвежьем — разрешаем но требуем уверенности
-    sig.confidence  = Math.max(sig.confidence - 12, 0);
-    sig.regimeNote  = `⚠️ Медвежий рынок — S5 осторожно → -12%`;
   }
 
   // 3. ЭКСТРЕМАЛЬНЫЙ СТРАХ (FNG < 25) — только шорты
@@ -2575,9 +2588,14 @@ function applyMarketRegime(sig, regime) {
   if (sig.fng?.value < 25 && sig.direction === 'long') {
     const isS5 = sig.strategy.includes('RSI Диверг');
     if (!isS5) {
-      sig.confidence  = 0;
-      sig.regimeNote  = `❌ Паника (FNG:${sig.fng.value}<25) — LONG заблокирован`;
-      return sig;
+      if (store.observeMode) {
+        sig.confidence  = Math.max(sig.confidence - 8, 0);
+        sig.regimeNote  = (sig.regimeNote || '') + ` ⚠️ Паника FNG:${sig.fng.value} → -8%`;
+      } else {
+        sig.confidence  = 0;
+        sig.regimeNote  = `❌ Паника (FNG:${sig.fng.value}<25) — LONG заблокирован`;
+        return sig;
+      }
     }
   }
 
@@ -2670,7 +2688,39 @@ async function runStrategies(instId, coinData, asianSession) {
     const tf5m = store.oiCache[ccy].tf5m;
     const tf1h = store.oiCache[ccy].tf1h;
 
-/* S2 ОТКЛЮЧЕНА — низкий WR в текущих условиях
+    // ────────────────────────────────────────────────────────
+    // S1: Volume Spike Breakout (15m)
+    // Резкий рост объёма + цена движется → импульсный пробой
+    // ────────────────────────────────────────────────────────
+    try {
+      const k15m_s1 = await getOKXKlinesCached(instId, '15m', 20);
+      if (k15m_s1.length >= 15) {
+        const last    = k15m_s1[k15m_s1.length-1];
+        const prev    = k15m_s1[k15m_s1.length-2];
+        const pc      = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
+        const avgVol  = k15m_s1.slice(-11,-1).reduce((a,c)=>a+(c.quoteVolume||0),0)/10;
+        const volSpike = (last.quoteVolume||0) >= avgVol * 2.0;
+
+        if (volSpike && Math.abs(pc) >= 1.0) {
+          const dir = pc >= 1.0 ? 'long' : 'short';
+          const atr_s1 = calcATR(k15m_s1, 14);
+          let conf = 65;
+          if ((last.quoteVolume||0) >= avgVol * 3.0) conf += 8;
+          if (Math.abs(pc) >= 2.0) conf += 6;
+
+          signals.push({
+            strategy:  '1️⃣ Volume Spike (15m)',
+            instId, direction: dir,
+            signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+            price, confidence: Math.min(conf, 95),
+            metrics:   `Vol: ${((last.quoteVolume||0)/avgVol).toFixed(1)}x | Δ: ${pc.toFixed(2)}%`,
+            ...calcSLTP(price, dir, '1️⃣ Volume Spike (15m)', atr_s1),
+          });
+        }
+      }
+    } catch(e) { console.error('S1 error:', e.message); }
+
+// S2 включена для observe mode (сбор данных)
 // S2: Liquidity Bounce (1h) — только в боковике или развороте
     if (!asianSession && k1h.length >= 2 && oi1h.length >= 2) {
       const pc   = calcPriceChangePct(k1h);
@@ -2728,7 +2778,7 @@ async function runStrategies(instId, coinData, asianSession) {
       }
     }
 
-    S2 ОТКЛЮЧЕНА */
+    // конец S2
 
     // S3: Ранний вход 5m
     /* if (k5m.length >= 7 && oi5m.length >= 2) {
@@ -2935,10 +2985,7 @@ if (k1h.length >= 55) {
       }
     }
 
-    // S7: Поглощение на объёме — ОТКЛЮЧЕНА (WR 26% < безубытка)
-    // Оставлена в бэктесте. Включить при WR > 42% на 30+ live сделках.
-    /* S7 ОТКЛЮЧЕНА
-— жёсткие фильтры
+    // S7: Поглощение на объёме — включена для observe mode (сбор данных)
     if (k15m.length >= 15) {
       const patterns  = detectCandlePatterns(k15m);
       const engulfing = patterns.find(p => p.name.includes('engulfing'));
@@ -2992,7 +3039,7 @@ if (k1h.length >= 55) {
       }
     }
 
-    S7 ОТКЛЮЧЕНА */
+    // конец S7
 
     // S8: Basis Farming — разница фьючерс/спот
     try {
@@ -4281,7 +4328,7 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const threshold = store.observeMode ? 70 : 78;
+          const threshold = store.observeMode ? 60 : 78;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];

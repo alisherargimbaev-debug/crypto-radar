@@ -761,6 +761,16 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/psychologist') {
+    await sendTelegramTo(chatId, '🧠 Анализирую твоё состояние...');
+    await psychologistAgent();
+  }
+
+  else if (cmd === '/audit') {
+    await sendTelegramTo(chatId, '🔍 Запускаю аудит стратегий...');
+    await auditorAgent();
+  }
+
   else if (cmd === '/debrief') {
     await sendTelegramTo(chatId, '🌙 Генерирую вечерний дебрифинг...');
     await eveningDebrief();
@@ -955,6 +965,8 @@ async function handleTelegramCommand(text, chatId) {
       `/paper        — 📄 paper trading статистика\n` +
       `/report       — 🤖 отчёт AI аналитика сейчас\n` +
       `/debrief      — 🌙 вечерний дебрифинг сейчас\n` +
+      `/psychologist — 🧠 проверить психологическое состояние\n` +
+      `/audit        — 🔍 аудит стратегий прямо сейчас\n` +
       `/webapp       — 📱 Paper Trading веб-приложение\n` +
       `/stocks       — 📈 сигналы по акциям\n\n` +
       `🔧 ПОДПИСКИ:\n` +
@@ -5314,6 +5326,183 @@ async function checkRSSNews() {
 // ============================================================
 //  ВЕЧЕРНИЙ ДЕБРИФИНГ — 21:00 Алматы
 // ============================================================
+// ============================================================
+//  АГЕНТ ПСИХОЛОГ — мониторит психологическое состояние
+// ============================================================
+async function psychologistAgent() {
+  try {
+    const history  = store.tradeHistory.slice(-20);
+    const paper    = (global.paperTrades || []).filter(t => t.outcome).slice(-20);
+    const allTrades = [...history, ...paper];
+    if (allTrades.length < 3) return;
+
+    // Анализируем паттерны
+    const recentSL   = allTrades.slice(-5).filter(t => t.outcome === 'sl').length;
+    const totalSL    = allTrades.filter(t => t.outcome === 'sl').length;
+    const totalWins  = allTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const wr         = allTrades.length ? Math.round(totalWins / allTrades.length * 100) : 0;
+
+    // Паттерны риска
+    const consecutiveSL = (() => {
+      let streak = 0;
+      for (let i = allTrades.length - 1; i >= 0; i--) {
+        if (allTrades[i].outcome === 'sl') streak++;
+        else break;
+      }
+      return streak;
+    })();
+
+    const daySlCount = global.dailyPnlTracker?.slCount || 0;
+
+    // Определяем уровень риска
+    let riskLevel = 'normal';
+    let message   = '';
+
+    if (consecutiveSL >= 4) {
+      riskLevel = 'critical';
+      message   = `🚨 ПСИХОЛОГ: ${consecutiveSL} SL подряд — это серьёзно.\n\nЯ рекомендую полную остановку на сегодня. Такая серия случается у всех трейдеров, но продолжение торговли в этом состоянии статистически ухудшает результат.\n\nЧто сделать прямо сейчас:\n1. Напиши /emergency\n2. Выйди на прогулку или займись чем-то другим\n3. Вернись завтра со свежей головой\n\nЭто не слабость — это профессионализм.`;
+    } else if (consecutiveSL === 3) {
+      riskLevel = 'high';
+      message   = `⚠️ ПСИХОЛОГ: 3 SL подряд.\n\nРекомендую взять паузу 2-3 часа. Рынок никуда не денется, а твоя голова отдохнёт.\n\nWR последних 20 сделок: ${wr}%\n\nЕсли хочешь продолжить — снизь риск до 0.3% на следующие 5 сделок.`;
+    } else if (daySlCount >= 3) {
+      riskLevel = 'high';
+      message   = `⚠️ ПСИХОЛОГ: ${daySlCount} SL за сегодня.\n\nДневной лимит почти исчерпан. Оставшийся потенциал не стоит риска потери аккаунта.\n\nРекомендую: /emergency до завтра.`;
+    } else if (recentSL >= 4 && wr < 35) {
+      riskLevel = 'medium';
+      message   = `💛 ПСИХОЛОГ: WR последних 20 сделок ${wr}% — ниже нормы.\n\nЭто сигнал что текущие условия рынка не подходят для стратегий. Не твоя ошибка — рынок изменился.\n\nЧто делать: уменьши частоту торговли, жди только сигналы с confidence 85+.`;
+    }
+
+    if (message) {
+      // AI усиливает сообщение
+      try {
+        const apiKey = process.env.CLAUDE_KEY || process.env.ANTHROPIC_API_KEY;
+        if (apiKey) {
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 150,
+              messages: [{
+                role: 'user',
+                content: `Ты торговый психолог. Трейдер в такой ситуации: ${consecutiveSL} SL подряд, WR ${wr}%, уровень риска: ${riskLevel}. Напиши одно короткое ободряющее предложение на русском (не более 20 слов) которое поможет ему принять правильное решение. Без советов — только поддержка.`
+              }]
+            })
+          });
+          const data = await resp.json();
+          const aiLine = data?.content?.[0]?.text || '';
+          if (aiLine) message += `\n\n💬 "${aiLine}"`;
+        }
+      } catch(e) {}
+
+      await sendTelegram(message);
+      console.log(`[PSYCHOLOGIST] Уровень риска: ${riskLevel}, отправлено сообщение`);
+    }
+  } catch(e) {
+    console.error('psychologistAgent error:', e.message);
+  }
+}
+
+// ============================================================
+//  АГЕНТ АУДИТОР — анализирует стратегии и отключает слабые
+// ============================================================
+async function auditorAgent() {
+  try {
+    const paper = (global.paperTrades || []).filter(t => t.outcome);
+    if (paper.length < 15) {
+      console.log('[AUDITOR] Мало данных для анализа (нужно 15+)');
+      return;
+    }
+
+    // Статистика по стратегиям
+    const byStrat = {};
+    for (const t of paper) {
+      const key = t.strategy || '?';
+      if (!byStrat[key]) byStrat[key] = { wins: 0, losses: 0, expired: 0, pnl: 0, total: 0 };
+      byStrat[key].total++;
+      if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrat[key].wins++;
+      else if (t.outcome === 'sl') byStrat[key].losses++;
+      else byStrat[key].expired++;
+      byStrat[key].pnl += t.pnl || 0;
+    }
+
+    const weak    = []; // WR < 35% и 10+ сделок
+    const strong  = []; // WR > 60% и 10+ сделок
+    const medium  = []; // всё остальное
+
+    for (const [name, s] of Object.entries(byStrat)) {
+      if (s.total < 10) continue; // мало данных
+      const wr = Math.round(s.wins / s.total * 100);
+      if (wr < 35)      weak.push({ name, wr, ...s });
+      else if (wr > 60) strong.push({ name, wr, ...s });
+      else              medium.push({ name, wr, ...s });
+    }
+
+    // Формируем отчёт
+    let msg = `🔍 АУДИТОР — ЕЖЕНЕДЕЛЬНЫЙ АНАЛИЗ\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `📊 Проанализировано: ${paper.length} paper trades\n\n`;
+
+    if (strong.length) {
+      msg += `✅ СИЛЬНЫЕ СТРАТЕГИИ:\n`;
+      for (const s of strong.sort((a,b) => b.wr - a.wr)) {
+        msg += `  ${s.name.split(' ').slice(0,2).join(' ')}: WR ${s.wr}% (${s.wins}W/${s.losses}L)\n`;
+      }
+      msg += '\n';
+    }
+
+    if (medium.length) {
+      msg += `⚠️ СРЕДНИЕ (наблюдаем):\n`;
+      for (const s of medium.sort((a,b) => b.wr - a.wr)) {
+        msg += `  ${s.name.split(' ').slice(0,2).join(' ')}: WR ${s.wr}%\n`;
+      }
+      msg += '\n';
+    }
+
+    if (weak.length) {
+      msg += `❌ СЛАБЫЕ (рекомендую отключить):\n`;
+      for (const s of weak) {
+        msg += `  ${s.name.split(' ').slice(0,2).join(' ')}: WR ${s.wr}% (${s.total} сделок)\n`;
+      }
+      msg += '\n';
+    }
+
+    // AI рекомендации
+    try {
+      const apiKey = process.env.CLAUDE_KEY || process.env.ANTHROPIC_API_KEY;
+      if (apiKey && (weak.length || strong.length)) {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 200,
+            messages: [{
+              role: 'user',
+              content: `Ты аудитор торгового бота. Дай конкретную рекомендацию на русском (max 80 слов):
+Сильные стратегии: ${strong.map(s=>s.name.split(' ').slice(0,2).join(' ')+' WR'+s.wr+'%').join(', ') || 'нет'}
+Слабые стратегии: ${weak.map(s=>s.name.split(' ').slice(0,2).join(' ')+' WR'+s.wr+'%').join(', ') || 'нет'}
+Всего сделок: ${paper.length}
+Что конкретно делать на следующей неделе?`
+            }]
+          })
+        });
+        const data = await resp.json();
+        const aiRec = data?.content?.[0]?.text || '';
+        if (aiRec) msg += `🧠 РЕКОМЕНДАЦИЯ АУДИТОРА:\n${aiRec}\n\n`;
+      }
+    } catch(e) {}
+
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `Следующий аудит: через 7 дней`;
+
+    await sendTelegram(msg);
+    console.log(`[AUDITOR] Отчёт отправлен. Слабых: ${weak.length}, Сильных: ${strong.length}`);
+  } catch(e) {
+    console.error('auditorAgent error:', e.message);
+  }
+}
+
 async function eveningDebrief() {
   try {
     const since = Date.now() - 12 * 60 * 60 * 1000; // последние 12 часов
@@ -5581,6 +5770,12 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 
 // Вечерний дебрифинг — 16:00 UTC = 21:00 Алматы
 cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
+
+// Агент Психолог — проверяет после каждого закрытия сделки (каждые 15 мин)
+cron.schedule('*/15 * * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
+
+// Агент Аудитор — каждое воскресенье в 10:00 UTC (15:00 Алматы)
+cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('auditor error:', e.message)); });
 
 // ── Stocks сканирование — каждые 15 минут пока рынок открыт ─
 cron.schedule('*/15 * * * *', async () => {

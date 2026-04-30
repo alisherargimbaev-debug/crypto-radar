@@ -2083,13 +2083,15 @@ function applyETFFlow(sig, etfFlow) {
 
 function applyMacroFilter(sig, macroEvent) {
   if (!macroEvent) return sig;
-
+  // В observe mode — только инфо, не блокируем
+  if (store.observeMode) {
+    sig.macroNote = `⚠️ Макро событие: ${macroEvent.events}`;
+    return sig;
+  }
   if (macroEvent.blocking) {
-    // В окне ±30 мин от события — обнуляем confidence (блокировка)
     sig.confidence = 0;
     sig.macroNote  = `🚫 NEWS BLOCK: ${macroEvent.blockReason} → торговля заблокирована`;
   } else {
-    // За 2 часа до события — снижаем уверенность на 25%
     sig.confidence  = Math.max(sig.confidence - 25, 0);
     sig.macroNote   = `⚠️ Скоро макро событие: ${macroEvent.events} → -25%`;
   }
@@ -4812,9 +4814,12 @@ if (alreadyOpen) {
 
       if (!best) continue;
 
-      const news = await checkNews(coin.symbol);
-      if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
-      if (news.note) best.newsNote = news.note;
+      // В observe mode новостной блок не применяем
+      if (!store.observeMode) {
+        const news = await checkNews(coin.symbol);
+        if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
+        if (news.note) best.newsNote = news.note;
+      }
 
       best.ts      = Date.now();
       best.fng     = fng;

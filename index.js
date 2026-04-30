@@ -207,6 +207,27 @@ function checkPortfolioRisk(sig) {
     }
   }
 
+  // ── MAX OPEN RISK — суммарный риск всех позиций не >2.5% ─
+  if (!store.observeMode && store.openTrades?.length) {
+    const totalRisk = store.openTrades.reduce((sum, t) => {
+      const entry = parseFloat(t.price);
+      const sl    = parseFloat(t.sl);
+      const slPct = entry && sl ? Math.abs((sl - entry) / entry * 100) : 1.5;
+      return sum + slPct;
+    }, 0);
+    const newRisk = sig.price && sig.sl
+      ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100)
+      : 1.5;
+    const maxTotal = store.propMode ? 2.5 : 4.5;
+    if (totalRisk + newRisk > maxTotal) {
+      console.log(`[MAX RISK BLOCK] ${sig.instId} — текущий риск ${totalRisk.toFixed(1)}% + ${newRisk.toFixed(1)}% > ${maxTotal}%`);
+      return {
+        allowed: false,
+        reason: `Суммарный риск превысит ${maxTotal}% (${(totalRisk + newRisk).toFixed(1)}%)`,
+      };
+    }
+  }
+
   // Лимит сделок (проп: 1, обычный: 3)
   const maxTrades = store.propMode ? 1 : MAX_OPEN_TRADES;
   if (open.length >= maxTrades) {
@@ -298,15 +319,44 @@ const store = {
 // ── DRAWDOWN-AWARE RISK SIZING ────────────────────────────
 // Профи уменьшают размер позиции когда в просадке, не увеличивают
 function getEffectiveRiskPct() {
-  if (!store.peakBalance || store.peakBalance <= store.accountBalance) {
-    return store.riskPct; // нет просадки — обычный риск
+  let baseRisk = store.riskPct;
+
+  // 1. ПРОСАДКА — снижаем риск
+  if (store.peakBalance && store.peakBalance > store.accountBalance) {
+    const dd = (store.peakBalance - store.accountBalance) / store.peakBalance * 100;
+    if (dd >= 7)        baseRisk *= 0.25;
+    else if (dd >= 5)   baseRisk *= 0.4;
+    else if (dd >= 3)   baseRisk *= 0.6;
+    else if (dd >= 1.5) baseRisk *= 0.8;
   }
-  const dd = (store.peakBalance - store.accountBalance) / store.peakBalance * 100;
-  if (dd >= 7) return store.riskPct * 0.25; // -7% → риск/4
-  if (dd >= 5) return store.riskPct * 0.4;  // -5% → риск × 0.4
-  if (dd >= 3) return store.riskPct * 0.6;  // -3% → риск × 0.6
-  if (dd >= 1.5) return store.riskPct * 0.8; // -1.5% → риск × 0.8
-  return store.riskPct;
+
+  // 2. WIN/LOSS STREAK — после серии SL снижаем, после серии TP можно поднять
+  const recent = store.tradeHistory.slice(-10);
+  if (recent.length >= 5) {
+    const lastTrades = recent.slice(-5);
+    const slStreak = (() => {
+      let n = 0;
+      for (let i = lastTrades.length - 1; i >= 0; i--) {
+        if (lastTrades[i].outcome === 'sl') n++; else break;
+      }
+      return n;
+    })();
+    const winStreak = (() => {
+      let n = 0;
+      for (let i = lastTrades.length - 1; i >= 0; i--) {
+        const o = lastTrades[i].outcome;
+        if (o === 'tp1' || o === 'tp2') n++; else break;
+      }
+      return n;
+    })();
+
+    if (slStreak >= 3) baseRisk *= 0.5;        // 3 SL подряд → риск /2
+    else if (slStreak >= 2) baseRisk *= 0.7;   // 2 SL подряд → риск × 0.7
+    else if (winStreak >= 4) baseRisk *= 1.15; // 4 TP подряд → риск × 1.15 (но не больше 1.5%)
+  }
+
+  // 3. ОГРАНИЧЕНИЯ
+  return Math.max(0.1, Math.min(baseRisk, store.riskPct * 1.2));
 }
 
 function updatePeakBalance() {
@@ -775,6 +825,30 @@ async function handleTelegramCommand(text, chatId) {
     await psychologistAgent();
   }
 
+  else if (cmd === '/versions') {
+    let msg = `📋 ВЕРСИИ СТРАТЕГИЙ\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    for (const [name, info] of Object.entries(STRATEGY_VERSIONS)) {
+      const short = name.split(' ').slice(0,3).join(' ');
+      msg += `${short}\n  v${info.v} (${info.date})\n  ${info.changes}\n\n`;
+    }
+    await sendTelegramTo(chatId, msg);
+  }
+
+  else if (cmd === '/logs') {
+    try {
+      if (!fs.existsSync(LOG_FILE)) {
+        await sendTelegramTo(chatId, '📋 Лог-файл пуст');
+        return;
+      }
+      const data = fs.readFileSync(LOG_FILE, 'utf8');
+      const lines = data.trim().split('\n').slice(-30); // последние 30 строк
+      const out = lines.join('\n').slice(-3500); // обрезать до 3500 chars
+      await sendTelegramTo(chatId, `📋 ПОСЛЕДНИЕ ЛОГИ:\n\`\`\`\n${out}\n\`\`\``);
+    } catch(e) {
+      await sendTelegramTo(chatId, '❌ Ошибка чтения логов: ' + e.message);
+    }
+  }
+
   else if (cmd === '/weekly') {
     await sendTelegramTo(chatId, '💼 Генерирую еженедельный отчёт...');
     await weeklyPnLReport();
@@ -1052,6 +1126,8 @@ async function handleTelegramCommand(text, chatId) {
       `/metrics      — 📊 проф. метрики (Sharpe, PF, etc)\n` +
       `/weekly       — 💼 еженедельный P&L отчёт\n` +
       `/benchmark    — 📊 сравнение с BTC buy&hold\n` +
+      `/versions     — 📋 версии стратегий\n` +
+      `/logs         — 📋 последние логи бота\n` +
       `/webapp       — 📱 Paper Trading веб-приложение\n` +
       `/stocks       — 📈 сигналы по акциям\n\n` +
       `🔧 ПОДПИСКИ:\n` +
@@ -4606,7 +4682,11 @@ if (alreadyOpen) {
 }
 
       let signals = await runStrategies(coin.instId, coin, asianSession);
-      if (!signals.length) continue;
+      if (!signals.length) {
+        if (Math.random() < 0.05) console.log(`[NO RAW SIGNALS] ${coin.instId}`);
+        continue;
+      }
+      if (signals.length) console.log(`[RAW SIGNALS] ${coin.instId}: ${signals.length} (${signals.map(s=>s.strategy.split(' ')[0]).join(',')})`);
 
       // ── АВТОРОТАЦИЯ СТРАТЕГИЙ ────────────────────────────────
       // В observe mode — все стратегии активны для полного наблюдения
@@ -4747,10 +4827,13 @@ if (alreadyOpen) {
       console.log(`[SLIP] ${best.instId}: est. slippage ±$${estSlippage.toFixed(4)}`);
 
       // Проверка портфельного риска ПЕРЕД AI валидацией
-      const portfolioCheck = checkPortfolioRisk(best);
-      if (!portfolioCheck.allowed) {
-        console.log(`[PORTFOLIO BLOCK] ${coin.instId} — ${portfolioCheck.reason}`);
-        continue;
+      // В observe mode пропускаем portfolio check
+      if (!store.observeMode) {
+        const portfolioCheck = checkPortfolioRisk(best);
+        if (!portfolioCheck.allowed) {
+          console.log(`[PORTFOLIO BLOCK] ${coin.instId} — ${portfolioCheck.reason}`);
+          continue;
+        }
       }
 
       // В observe mode пропускаем AI валидацию — собираем сырые данные
@@ -4765,37 +4848,37 @@ if (alreadyOpen) {
       }
 
       // ── ФИНАЛЬНАЯ ПРОВЕРКА БЕЗОПАСНОСТИ ─────────────────────
-      // Защита от багов: проверяем что сигнал имеет смысл перед отправкой
+      // В observe — только логика направления, без блоков по %
       const entry = best.price;
       const sl    = parseFloat(best.sl);
       const tp1   = parseFloat(best.tp1);
       const slPct = Math.abs((sl - entry) / entry * 100);
       const tp1Pct = Math.abs((tp1 - entry) / entry * 100);
 
-      // 1. SL не должен превышать 1.5%
-      if (slPct > 1.51) {
-        console.log(`[SAFETY] ${coin.instId} BLOCK — SL ${slPct.toFixed(2)}% > 1.5%`);
-        continue;
+      if (!store.observeMode) {
+        if (slPct > 1.51) {
+          console.log(`[SAFETY] ${coin.instId} BLOCK — SL ${slPct.toFixed(2)}% > 1.5%`);
+          continue;
+        }
+        if (slPct < 0.4) {
+          console.log(`[SAFETY] ${coin.instId} BLOCK — SL ${slPct.toFixed(2)}% < 0.4%`);
+          continue;
+        }
+        if (tp1Pct / slPct < 1.8) {
+          console.log(`[SAFETY] ${coin.instId} BLOCK — RR ${(tp1Pct/slPct).toFixed(2)} < 1.8`);
+          continue;
+        }
       }
-      // 2. SL не должен быть слишком узким (защита от шума)
-      if (slPct < 0.4) {
-        console.log(`[SAFETY] ${coin.instId} BLOCK — SL ${slPct.toFixed(2)}% < 0.4% (слишком тугой)`);
-        continue;
-      }
-      // 3. Минимальный RR 1:1.8
-      if (tp1Pct / slPct < 1.8) {
-        console.log(`[SAFETY] ${coin.instId} BLOCK — RR ${(tp1Pct/slPct).toFixed(2)} < 1.8`);
-        continue;
-      }
-      // 4. Логика направления
+      // Логика направления — критично всегда
       if (best.direction === 'long' && (sl >= entry || tp1 <= entry)) {
-        console.log(`[SAFETY] ${coin.instId} BLOCK — LONG с битой логикой SL/TP`);
+        console.log(`[SAFETY] ${coin.instId} BLOCK — LONG битая логика`);
         continue;
       }
       if (best.direction === 'short' && (sl <= entry || tp1 >= entry)) {
-        console.log(`[SAFETY] ${coin.instId} BLOCK — SHORT с битой логикой SL/TP`);
+        console.log(`[SAFETY] ${coin.instId} BLOCK — SHORT битая логика`);
         continue;
       }
+      console.log(`[SIGNAL OK] ${coin.instId} ${best.direction} conf=${best.confidence} → отправка`);
 
       // 5. ОБЪЁМ — главный фильтр против фейковых сигналов
       // Текущий часовой объём должен быть выше среднего за 24ч
@@ -4929,8 +5012,64 @@ async function checkPaperTrades() {
 }
 
 // ============================================================
-//  ПРОФЕССИОНАЛЬНЫЕ МЕТРИКИ — Sharpe, Sortino, Profit Factor, etc
+//  ВЕРСИОНИРОВАНИЕ СТРАТЕГИЙ
 // ============================================================
+const STRATEGY_VERSIONS = {
+  '1️⃣ Volume Spike (15m)':         { v: '1.0', date: '2026-04-29', changes: 'Initial release' },
+  '2️⃣ Liquidity Bounce (1h)':      { v: '1.0', date: '2026-04-26', changes: 'Re-enabled for observe' },
+  '3️⃣ Ранний вход (5m)':           { v: '1.0', date: '2026-04-20', changes: 'Initial' },
+  '4️⃣ MA20/MA50+RSI (1h)':        { v: '2.0', date: '2026-04-25', changes: 'Added RSI confirmation' },
+  '5️⃣ RSI Дивергенция (1h)':      { v: '2.1', date: '2026-04-26', changes: 'Lowered threshold to 80' },
+  '6️⃣ Funding Extreme (1h)':      { v: '1.0', date: '2026-04-20', changes: 'Initial' },
+  '7️⃣ Поглощение на объёме (15m)':{ v: '1.1', date: '2026-04-26', changes: 'Re-enabled, volume 5x' },
+  '8️⃣ Basis Farming (1h)':        { v: '1.0', date: '2026-04-20', changes: 'Initial' },
+  '9️⃣ Pullback (15m)':            { v: '2.0', date: '2026-04-25', changes: 'Adaptive ATR SL' },
+  '🔟 4H Range Breakout (5m)':     { v: '3.0', date: '2026-04-25', changes: 'Strengthened with 4 filters' },
+  '1️⃣1️⃣ Elliott+Fib+SMA':         { v: '1.0', date: '2026-04-26', changes: 'Initial live' },
+  '1️⃣2️⃣ Liquidity Sweep (15m)':  { v: '1.0', date: '2026-04-26', changes: 'Initial - smart money setup' },
+  '1️⃣3️⃣ Order Block (1H)':       { v: '1.0', date: '2026-04-28', changes: 'Initial - ICT concept' },
+};
+
+function getStrategyVersion(name) {
+  return STRATEGY_VERSIONS[name] || { v: '?', date: 'unknown', changes: 'no version info' };
+}
+
+
+const LOG_FILE = './bot.log';
+
+function logToFile(level, msg) {
+  try {
+    const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+    fs.appendFileSync(LOG_FILE, line);
+    // Ротация: если файл > 10MB — обрезаем до последних 1MB
+    const stats = fs.statSync(LOG_FILE);
+    if (stats.size > 10 * 1024 * 1024) {
+      const data = fs.readFileSync(LOG_FILE, 'utf8');
+      fs.writeFileSync(LOG_FILE, data.slice(-1024 * 1024));
+    }
+  } catch(e) { /* silent */ }
+}
+
+// Перехватываем console.error и важные логи
+const _origError = console.error;
+console.error = function(...args) {
+  _origError.apply(console, args);
+  logToFile('ERROR', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+};
+
+const _origLog = console.log;
+console.log = function(...args) {
+  _origLog.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  // Логируем только важные события
+  if (msg.includes('[SIGNAL OK]') || msg.includes('[BLOCK]') ||
+      msg.includes('[REJECT]') || msg.includes('[PAPER]') ||
+      msg.includes('[EMERGENCY]') || msg.includes('Initial')) {
+    logToFile('INFO', msg);
+  }
+};
+
+
 function calcAdvancedMetrics(trades) {
   if (!trades || trades.length < 5) return null;
 

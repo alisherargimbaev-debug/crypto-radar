@@ -766,6 +766,41 @@ async function handleTelegramCommand(text, chatId) {
     await psychologistAgent();
   }
 
+  else if (cmd === '/metrics') {
+    // Объединяем real + paper для метрик
+    const all = [
+      ...store.tradeHistory,
+      ...((global.paperTrades || []).filter(t => t.outcome)),
+    ];
+    const m = calcAdvancedMetrics(all);
+    if (!m) {
+      await sendTelegramTo(chatId, '📊 Недостаточно данных (нужно 5+ закрытых сделок)');
+      return;
+    }
+    const dd = checkWeeklyDrawdown();
+    const pfIcon = m.profitFactor >= 1.5 ? '✅' : m.profitFactor >= 1.0 ? '⚠️' : '❌';
+    const shIcon = m.sharpe >= 2.0 ? '✅' : m.sharpe >= 1.0 ? '⚠️' : '❌';
+    const expIcon = m.expectancy >= 0.3 ? '✅' : m.expectancy >= 0 ? '⚠️' : '❌';
+    await sendTelegramTo(chatId,
+      `📊 ПРОФЕССИОНАЛЬНЫЕ МЕТРИКИ\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `📈 Сделок: ${m.total}\n` +
+      `🎯 Win Rate: ${m.wr}%\n` +
+      `💰 Total PnL: ${m.totalPnl >= 0 ? '+' : ''}${m.totalPnl}%\n\n` +
+      `${pfIcon} Profit Factor: ${m.profitFactor}\n` +
+      `   (норма >1.5, отлично >2)\n\n` +
+      `${expIcon} Expectancy: ${m.expectancy}\n` +
+      `   (ожидаемая прибыль на сделку)\n\n` +
+      `${shIcon} Sharpe Ratio: ${m.sharpe}\n` +
+      `   (норма >1.5, отлично >2)\n\n` +
+      `📉 Max Drawdown: -${m.maxDD}%\n` +
+      `🔄 Recovery Factor: ${m.recoveryFactor}\n\n` +
+      `📅 Weekly DD: -${dd.weekLoss}% / 8%\n` +
+      `${dd.isOverLimit ? '🚨 ПРЕВЫШЕН — авто-стоп' : '✅ В норме'}\n\n` +
+      `💡 avg Win: +${m.avgWin}% | avg Loss: -${m.avgLoss}%`
+    );
+  }
+
   else if (cmd === '/audit') {
     await sendTelegramTo(chatId, '🔍 Запускаю аудит стратегий...');
     await auditorAgent();
@@ -967,6 +1002,7 @@ async function handleTelegramCommand(text, chatId) {
       `/debrief      — 🌙 вечерний дебрифинг сейчас\n` +
       `/psychologist — 🧠 проверить психологическое состояние\n` +
       `/audit        — 🔍 аудит стратегий прямо сейчас\n` +
+      `/metrics      — 📊 проф. метрики (Sharpe, PF, etc)\n` +
       `/webapp       — 📱 Paper Trading веб-приложение\n` +
       `/stocks       — 📈 сигналы по акциям\n\n` +
       `🔧 ПОДПИСКИ:\n` +
@@ -4553,13 +4589,24 @@ if (alreadyOpen) {
       const filtered = [];
       for (let sig of signals) {
 
-        // 1. MARKET REGIME — жёсткие блоки (тренд/боковик/медведь)
-        sig = applyMarketRegime(sig, regime);
-        if (sig.confidence === 0) { filtered.push(sig); continue; }
+        // В observe mode — НИКАКИХ жёстких блоков, только мягкие корректировки
+        // Цель: собрать максимум сырых данных для анализа
+        if (!store.observeMode) {
+          // 1. MARKET REGIME — жёсткие блоки (только в реальной торговле)
+          sig = applyMarketRegime(sig, regime);
+          if (sig.confidence === 0) { filtered.push(sig); continue; }
 
-        // 2. SESSION — торговое время (07-21 UTC для проп)
-        sig = applySessionFilter(sig, session);
-        if (sig.confidence === 0) { filtered.push(sig); continue; }
+          // 2. SESSION — торговое время
+          sig = applySessionFilter(sig, session);
+          if (sig.confidence === 0) { filtered.push(sig); continue; }
+        } else {
+          // В observe — только мягкая корректировка confidence (информационно)
+          sig = applyMarketRegime(sig, regime);
+          // Если жёсткий блок выставил 0 — восстанавливаем минимум 50
+          if (sig.confidence === 0) sig.confidence = 50;
+          sig = applySessionFilter(sig, session);
+          if (sig.confidence === 0) sig.confidence = 45;
+        }
 
         // 3. MULTI-TIMEFRAME — 4H и 15m должны совпадать с 1H
         sig = await applyMultiTimeframe(sig, coin.instId);
@@ -4629,7 +4676,7 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const threshold = store.observeMode ? 60 : 78;
+          const threshold = store.observeMode ? 50 : 78;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];
@@ -4657,13 +4704,16 @@ if (alreadyOpen) {
         continue;
       }
 
-      const aiResult = await validateSignalWithAI(best, fng, session);
-      if (!aiResult.approved) {
-        console.log(`[AI REJECT] ${coin.instId} → ${aiResult.reason}`);
-        continue;
+      // В observe mode пропускаем AI валидацию — собираем сырые данные
+      if (!store.observeMode) {
+        const aiResult = await validateSignalWithAI(best, fng, session);
+        if (!aiResult.approved) {
+          console.log(`[AI REJECT] ${coin.instId} → ${aiResult.reason}`);
+          continue;
+        }
+        best.confidence = aiResult.confidence;
+        best.aiNote     = `🤖 AI: ${aiResult.reason}`;
       }
-      best.confidence = aiResult.confidence;
-      best.aiNote     = `🤖 AI: ${aiResult.reason}`;
 
       // ── ФИНАЛЬНАЯ ПРОВЕРКА БЕЗОПАСНОСТИ ─────────────────────
       // Защита от багов: проверяем что сигнал имеет смысл перед отправкой
@@ -4826,6 +4876,98 @@ async function checkPaperTrades() {
         console.log(`[PAPER EXPIRED] ${trade.instId} ${trade.pnl}%`);
       }
     } catch(e) { console.error(`[PAPER] checkPaperTrades error ${trade.instId}:`, e.message); }
+  }
+}
+
+// ============================================================
+//  ПРОФЕССИОНАЛЬНЫЕ МЕТРИКИ — Sharpe, Profit Factor, etc
+// ============================================================
+function calcAdvancedMetrics(trades) {
+  if (!trades || trades.length < 5) return null;
+
+  const closed = trades.filter(t => t.outcome && t.outcome !== 'expired');
+  if (closed.length < 5) return null;
+
+  const wins   = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+  const losses = closed.filter(t => t.outcome === 'sl');
+
+  const wr = wins.length / closed.length;
+
+  // Gross Profit / Loss
+  const grossProfit = wins.reduce((s, t)   => s + Math.abs(t.pnl || 0), 0);
+  const grossLoss   = losses.reduce((s, t) => s + Math.abs(t.pnl || 0), 0);
+
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
+
+  // Expectancy = WR × avgWin - (1-WR) × avgLoss
+  const avgWin  = wins.length ? grossProfit / wins.length : 0;
+  const avgLoss = losses.length ? grossLoss / losses.length : 0;
+  const expectancy = wr * avgWin - (1 - wr) * avgLoss;
+
+  // Max Drawdown — максимальная просадка от пика
+  let peak = 0, equity = 0, maxDD = 0;
+  for (const t of closed) {
+    equity += (t.pnl || 0);
+    if (equity > peak) peak = equity;
+    const dd = peak - equity;
+    if (dd > maxDD) maxDD = dd;
+  }
+
+  // Sharpe Ratio (упрощённый — годовой)
+  const returns = closed.map(t => t.pnl || 0);
+  const meanRet = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((s, r) => s + Math.pow(r - meanRet, 2), 0) / returns.length;
+  const stdDev = Math.sqrt(variance);
+  // Annualized: предполагаем ~30 сделок в месяц
+  const sharpe = stdDev > 0 ? (meanRet / stdDev) * Math.sqrt(360) : 0;
+
+  // Recovery Factor
+  const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
+  const recoveryFactor = maxDD > 0 ? totalPnl / maxDD : totalPnl;
+
+  return {
+    total:       closed.length,
+    wr:          parseFloat((wr * 100).toFixed(1)),
+    avgWin:      parseFloat(avgWin.toFixed(2)),
+    avgLoss:     parseFloat(avgLoss.toFixed(2)),
+    profitFactor: parseFloat(profitFactor.toFixed(2)),
+    expectancy:  parseFloat(expectancy.toFixed(3)),
+    maxDD:       parseFloat(maxDD.toFixed(2)),
+    sharpe:      parseFloat(sharpe.toFixed(2)),
+    recoveryFactor: parseFloat(recoveryFactor.toFixed(2)),
+    totalPnl:    parseFloat(totalPnl.toFixed(2)),
+  };
+}
+
+// ============================================================
+//  WEEKLY DRAWDOWN LIMIT
+// ============================================================
+function checkWeeklyDrawdown() {
+  const now = Date.now();
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const recent = store.tradeHistory.filter(t => (t.closedAt || t.ts) >= weekAgo);
+  const totalLoss = recent.reduce((s, t) => s + (t.pnl < 0 ? Math.abs(t.pnl) : 0), 0);
+  return {
+    weekLoss:   parseFloat(totalLoss.toFixed(2)),
+    isOverLimit: totalLoss >= 8.0, // 8% за неделю = стоп
+  };
+}
+
+// ============================================================
+//  HEARTBEAT — мониторинг живости бота
+// ============================================================
+async function heartbeat() {
+  try {
+    if (!global.heartbeatLog) global.heartbeatLog = { last: Date.now(), checks: 0 };
+    global.heartbeatLog.last = Date.now();
+    global.heartbeatLog.checks++;
+
+    // Лог каждые 12 проверок (час)
+    if (global.heartbeatLog.checks % 12 === 0) {
+      console.log(`[HEARTBEAT] alive | uptime: ${Math.round(process.uptime() / 60)} мин | checks: ${global.heartbeatLog.checks}`);
+    }
+  } catch(e) {
+    console.error('heartbeat error:', e.message);
   }
 }
 
@@ -5776,6 +5918,28 @@ cron.schedule('*/15 * * * *', () => { psychologistAgent().catch(e => console.err
 
 // Агент Аудитор — каждое воскресенье в 10:00 UTC (15:00 Алматы)
 cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('auditor error:', e.message)); });
+
+// Heartbeat — каждые 5 минут (мониторинг живости)
+cron.schedule('*/5 * * * *', () => { heartbeat().catch(()=>{}); });
+
+// Weekly drawdown check — каждый час
+cron.schedule('0 * * * *', async () => {
+  try {
+    const dd = checkWeeklyDrawdown();
+    if (dd.isOverLimit && !store.emergencyStop) {
+      store.emergencyStop = true;
+      saveSettings();
+      await sendTelegram(
+        `🚨 АВТО-СТОП: WEEKLY DRAWDOWN\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Потери за неделю: -${dd.weekLoss}%\n` +
+        `Лимит: 8%\n\n` +
+        `Бот автоматически остановлен.\n` +
+        `Включить: /resume`
+      );
+    }
+  } catch(e) { console.error('weekly DD error:', e.message); }
+});
 
 // ── Stocks сканирование — каждые 15 минут пока рынок открыт ─
 cron.schedule('*/15 * * * *', async () => {

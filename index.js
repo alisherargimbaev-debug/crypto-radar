@@ -198,6 +198,15 @@ function checkPortfolioRisk(sig) {
     }
   }
 
+  // ── КОРРЕЛЯЦИОННЫЙ КОНТРОЛЬ ─────────────────────────────
+  if (!store.observeMode) {
+    const corrCheck = checkCorrelation(sig);
+    if (!corrCheck.allowed) {
+      console.log(`[CORR BLOCK] ${sig.instId} — ${corrCheck.reason}`);
+      return { allowed: false, reason: corrCheck.reason };
+    }
+  }
+
   // Лимит сделок (проп: 1, обычный: 3)
   const maxTrades = store.propMode ? 1 : MAX_OPEN_TRADES;
   if (open.length >= maxTrades) {
@@ -766,8 +775,32 @@ async function handleTelegramCommand(text, chatId) {
     await psychologistAgent();
   }
 
+  else if (cmd === '/weekly') {
+    await sendTelegramTo(chatId, '💼 Генерирую еженедельный отчёт...');
+    await weeklyPnLReport();
+  }
+
+  else if (cmd === '/benchmark') {
+    const btc7  = await getBTCBenchmark(7);
+    const btc30 = await getBTCBenchmark(30);
+    const all   = [...store.tradeHistory, ...((global.paperTrades||[]).filter(t=>t.outcome))];
+    const m7    = calcAdvancedMetrics(all.filter(t => (t.closedAt||t.ts) >= Date.now() - 7*24*60*60*1000));
+    const m30   = calcAdvancedMetrics(all);
+    await sendTelegramTo(chatId,
+      `📊 БЕНЧМАРК vs BTC Buy&Hold\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `За 7 дней:\n` +
+      `  BTC: ${btc7 ? (btc7.change >= 0 ? '+' : '') + btc7.change + '%' : 'н/д'}\n` +
+      `  Бот: ${m7 ? (m7.totalPnl >= 0 ? '+' : '') + m7.totalPnl + '%' : 'мало данных'}\n\n` +
+      `За всё время:\n` +
+      `  Бот: ${m30 ? (m30.totalPnl >= 0 ? '+' : '') + m30.totalPnl + '%' : 'мало данных'}\n` +
+      `  BTC 30д: ${btc30 ? (btc30.change >= 0 ? '+' : '') + btc30.change + '%' : 'н/д'}\n\n` +
+      `💡 Цель: обгонять BTC на растущем рынке\n` +
+      `   и терять меньше на падающем`
+    );
+  }
+
   else if (cmd === '/metrics') {
-    // Объединяем real + paper для метрик
     const all = [
       ...store.tradeHistory,
       ...((global.paperTrades || []).filter(t => t.outcome)),
@@ -777,27 +810,41 @@ async function handleTelegramCommand(text, chatId) {
       await sendTelegramTo(chatId, '📊 Недостаточно данных (нужно 5+ закрытых сделок)');
       return;
     }
-    const dd = checkWeeklyDrawdown();
+    const dd     = checkWeeklyDrawdown();
     const pfIcon = m.profitFactor >= 1.5 ? '✅' : m.profitFactor >= 1.0 ? '⚠️' : '❌';
     const shIcon = m.sharpe >= 2.0 ? '✅' : m.sharpe >= 1.0 ? '⚠️' : '❌';
-    const expIcon = m.expectancy >= 0.3 ? '✅' : m.expectancy >= 0 ? '⚠️' : '❌';
+    const soIcon = m.sortino >= 2.0 ? '✅' : m.sortino >= 1.0 ? '⚠️' : '❌';
+    const exIcon = m.expectancy >= 0.3 ? '✅' : m.expectancy >= 0 ? '⚠️' : '❌';
+
+    // Анализ проигранных стратегий
+    let lossLines = '';
+    if (m.lossByStrategy && Object.keys(m.lossByStrategy).length) {
+      const top = Object.entries(m.lossByStrategy)
+        .sort((a,b) => b[1].totalLoss - a[1].totalLoss)
+        .slice(0,3);
+      lossLines = `\n❌ Топ убыточных:\n` + top.map(([k,v]) =>
+        `  ${k}: ${v.count}x SL (-${v.totalLoss.toFixed(1)}%)`
+      ).join('\n');
+    }
+
     await sendTelegramTo(chatId,
       `📊 ПРОФЕССИОНАЛЬНЫЕ МЕТРИКИ\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `📈 Сделок: ${m.total}\n` +
-      `🎯 Win Rate: ${m.wr}%\n` +
+      `📈 Сделок: ${m.total} | WR: ${m.wr}%\n` +
       `💰 Total PnL: ${m.totalPnl >= 0 ? '+' : ''}${m.totalPnl}%\n\n` +
       `${pfIcon} Profit Factor: ${m.profitFactor}\n` +
-      `   (норма >1.5, отлично >2)\n\n` +
-      `${expIcon} Expectancy: ${m.expectancy}\n` +
-      `   (ожидаемая прибыль на сделку)\n\n` +
+      `   норма >1.5 | отлично >2.0\n\n` +
+      `${exIcon} Expectancy: ${m.expectancy}%\n` +
+      `   ожидаемая прибыль на сделку\n\n` +
       `${shIcon} Sharpe Ratio: ${m.sharpe}\n` +
-      `   (норма >1.5, отлично >2)\n\n` +
+      `${soIcon} Sortino Ratio: ${m.sortino}\n` +
+      `   норма >1.5 (Sortino строже)\n\n` +
       `📉 Max Drawdown: -${m.maxDD}%\n` +
       `🔄 Recovery Factor: ${m.recoveryFactor}\n\n` +
+      `💵 avg Win: +${m.avgWin}% | avg Loss: -${m.avgLoss}%\n\n` +
       `📅 Weekly DD: -${dd.weekLoss}% / 8%\n` +
-      `${dd.isOverLimit ? '🚨 ПРЕВЫШЕН — авто-стоп' : '✅ В норме'}\n\n` +
-      `💡 avg Win: +${m.avgWin}% | avg Loss: -${m.avgLoss}%`
+      `${dd.isOverLimit ? '🚨 ПРЕВЫШЕН' : '✅ В норме'}` +
+      lossLines
     );
   }
 
@@ -1003,6 +1050,8 @@ async function handleTelegramCommand(text, chatId) {
       `/psychologist — 🧠 проверить психологическое состояние\n` +
       `/audit        — 🔍 аудит стратегий прямо сейчас\n` +
       `/metrics      — 📊 проф. метрики (Sharpe, PF, etc)\n` +
+      `/weekly       — 💼 еженедельный P&L отчёт\n` +
+      `/benchmark    — 📊 сравнение с BTC buy&hold\n` +
       `/webapp       — 📱 Paper Trading веб-приложение\n` +
       `/stocks       — 📈 сигналы по акциям\n\n` +
       `🔧 ПОДПИСКИ:\n` +
@@ -4880,7 +4929,7 @@ async function checkPaperTrades() {
 }
 
 // ============================================================
-//  ПРОФЕССИОНАЛЬНЫЕ МЕТРИКИ — Sharpe, Profit Factor, etc
+//  ПРОФЕССИОНАЛЬНЫЕ МЕТРИКИ — Sharpe, Sortino, Profit Factor, etc
 // ============================================================
 function calcAdvancedMetrics(trades) {
   if (!trades || trades.length < 5) return null;
@@ -4913,35 +4962,187 @@ function calcAdvancedMetrics(trades) {
     if (dd > maxDD) maxDD = dd;
   }
 
-  // Sharpe Ratio (упрощённый — годовой)
   const returns = closed.map(t => t.pnl || 0);
   const meanRet = returns.reduce((a, b) => a + b, 0) / returns.length;
+
+  // Sharpe Ratio
   const variance = returns.reduce((s, r) => s + Math.pow(r - meanRet, 2), 0) / returns.length;
-  const stdDev = Math.sqrt(variance);
-  // Annualized: предполагаем ~30 сделок в месяц
-  const sharpe = stdDev > 0 ? (meanRet / stdDev) * Math.sqrt(360) : 0;
+  const stdDev   = Math.sqrt(variance);
+  const sharpe   = stdDev > 0 ? (meanRet / stdDev) * Math.sqrt(360) : 0;
+
+  // Sortino Ratio — только downside deviation (только убыточные сделки)
+  const negReturns    = returns.filter(r => r < 0);
+  const downsideVar   = negReturns.length
+    ? negReturns.reduce((s, r) => s + r * r, 0) / returns.length
+    : 0;
+  const downsideDev   = Math.sqrt(downsideVar);
+  const sortino       = downsideDev > 0 ? (meanRet / downsideDev) * Math.sqrt(360) : 0;
 
   // Recovery Factor
   const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
   const recoveryFactor = maxDD > 0 ? totalPnl / maxDD : totalPnl;
 
+  // Анализ проигранных сделок
+  const lossByStrategy = {};
+  for (const t of losses) {
+    const key = (t.strategy || '?').split(' ').slice(0,2).join(' ');
+    if (!lossByStrategy[key]) lossByStrategy[key] = { count: 0, totalLoss: 0 };
+    lossByStrategy[key].count++;
+    lossByStrategy[key].totalLoss += Math.abs(t.pnl || 0);
+  }
+
   return {
-    total:       closed.length,
-    wr:          parseFloat((wr * 100).toFixed(1)),
-    avgWin:      parseFloat(avgWin.toFixed(2)),
-    avgLoss:     parseFloat(avgLoss.toFixed(2)),
-    profitFactor: parseFloat(profitFactor.toFixed(2)),
-    expectancy:  parseFloat(expectancy.toFixed(3)),
-    maxDD:       parseFloat(maxDD.toFixed(2)),
-    sharpe:      parseFloat(sharpe.toFixed(2)),
+    total:          closed.length,
+    wr:             parseFloat((wr * 100).toFixed(1)),
+    avgWin:         parseFloat(avgWin.toFixed(2)),
+    avgLoss:        parseFloat(avgLoss.toFixed(2)),
+    profitFactor:   parseFloat(profitFactor.toFixed(2)),
+    expectancy:     parseFloat(expectancy.toFixed(3)),
+    maxDD:          parseFloat(maxDD.toFixed(2)),
+    sharpe:         parseFloat(sharpe.toFixed(2)),
+    sortino:        parseFloat(sortino.toFixed(2)),
     recoveryFactor: parseFloat(recoveryFactor.toFixed(2)),
-    totalPnl:    parseFloat(totalPnl.toFixed(2)),
+    totalPnl:       parseFloat(totalPnl.toFixed(2)),
+    lossByStrategy,
   };
 }
 
 // ============================================================
-//  WEEKLY DRAWDOWN LIMIT
+//  BTC БЕНЧМАРК — сравнение с buy&hold
 // ============================================================
+async function getBTCBenchmark(daysSince = 7) {
+  try {
+    const limit  = Math.min(daysSince * 6, 200); // 4H свечей
+    const btc4h  = await getOKXKlinesCached('BTC-USDT-SWAP', '4H', limit);
+    if (btc4h.length < 2) return null;
+    const start  = btc4h[0].open;
+    const end    = btc4h[btc4h.length - 1].close;
+    const change = (end - start) / start * 100;
+    return { change: parseFloat(change.toFixed(2)), start, end };
+  } catch(e) { return null; }
+}
+
+// ============================================================
+//  КОРРЕЛЯЦИОННЫЙ КОНТРОЛЬ
+// ============================================================
+const CORR_SECTORS = {
+  'BTC': 'btc',   'ETH': 'eth',
+  'SOL': 'l1',    'AVAX': 'l1',   'ADA': 'l1',   'DOT': 'l1',
+  'LINK': 'defi', 'UNI': 'defi',  'AAVE': 'defi', 'CRV': 'defi',
+  'DOGE': 'meme', 'SHIB': 'meme', 'PEPE': 'meme', 'FLOKI': 'meme',
+  'BNB': 'cex',   'OKB': 'cex',
+  'OP': 'l2',     'ARB': 'l2',    'MATIC': 'l2',  'IMX': 'l2',
+};
+
+function checkCorrelation(newSig) {
+  if (!store.openTrades?.length) return { allowed: true };
+  const newSymbol = newSig.instId.replace('-USDT-SWAP', '');
+  const newSector = CORR_SECTORS[newSymbol] || 'other';
+  const newDir    = newSig.direction;
+
+  for (const trade of store.openTrades) {
+    const sym    = trade.instId?.replace('-USDT-SWAP', '');
+    const sector = CORR_SECTORS[sym] || 'other';
+    // Блокируем если: тот же сектор И то же направление
+    if (sector === newSector && trade.direction === newDir && sector !== 'other') {
+      return {
+        allowed: false,
+        reason:  `Корреляция: уже открыт ${sym} (${sector}) в ${newDir}`,
+      };
+    }
+  }
+  return { allowed: true };
+}
+
+// ============================================================
+//  ЕЖЕНЕДЕЛЬНЫЙ P&L ОТЧЁТ В $$$
+// ============================================================
+async function weeklyPnLReport() {
+  try {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const real    = store.tradeHistory.filter(t => (t.closedAt || t.ts) >= weekAgo && t.outcome);
+    const paper   = (global.paperTrades || []).filter(t => t.ts >= weekAgo && t.outcome);
+
+    const balance = store.accountBalance;
+    const riskPct = store.riskPct;
+
+    // Real P&L в $$$
+    const realPnlPct = real.reduce((s, t) => s + (t.pnl || 0), 0);
+    const realPnlUSD = parseFloat((balance * realPnlPct / 100).toFixed(2));
+
+    // Paper P&L в $$$
+    const paperPnlPct = paper.reduce((s, t) => s + (t.pnl || 0), 0);
+    const paperPnlUSD = parseFloat((balance * paperPnlPct / 100).toFixed(2));
+
+    // BTC benchmark
+    const btcBench = await getBTCBenchmark(7);
+    const btcUSD   = btcBench ? parseFloat((balance * btcBench.change / 100).toFixed(2)) : null;
+
+    // Метрики
+    const m = calcAdvancedMetrics([...real, ...paper]);
+
+    // Анализ проигранных
+    let lossAnalysis = '';
+    if (m?.lossByStrategy) {
+      const topLosers = Object.entries(m.lossByStrategy)
+        .sort((a, b) => b[1].totalLoss - a[1].totalLoss)
+        .slice(0, 3);
+      if (topLosers.length) {
+        lossAnalysis = `\n❌ Топ убыточных стратегий:\n` +
+          topLosers.map(([k, v]) =>
+            `  ${k}: ${v.count} SL, -${v.totalLoss.toFixed(1)}%`
+          ).join('\n');
+      }
+    }
+
+    const weekStart = new Date(weekAgo).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' });
+    const weekEnd   = new Date().toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit' });
+
+    let msg = `💼 ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `📅 ${weekStart} — ${weekEnd}\n`;
+    msg += `💰 Баланс: $${balance.toLocaleString()}\n\n`;
+
+    if (real.length) {
+      const icon = realPnlUSD >= 0 ? '✅' : '❌';
+      msg += `${icon} РЕАЛЬНЫЕ СДЕЛКИ:\n`;
+      msg += `  ${real.length} сделок | ${realPnlPct >= 0 ? '+' : ''}${realPnlPct.toFixed(2)}%\n`;
+      msg += `  ${realPnlUSD >= 0 ? '+' : ''}$${realPnlUSD} за неделю\n\n`;
+    }
+
+    if (paper.length) {
+      const icon = paperPnlUSD >= 0 ? '📄' : '📄';
+      msg += `${icon} PAPER TRADING:\n`;
+      msg += `  ${paper.length} сделок | ${paperPnlPct >= 0 ? '+' : ''}${paperPnlPct.toFixed(2)}%\n`;
+      msg += `  ≈ ${paperPnlUSD >= 0 ? '+' : ''}$${paperPnlUSD} (виртуально)\n\n`;
+    }
+
+    if (btcBench) {
+      const vsBot   = realPnlPct - btcBench.change;
+      const vsBotUSD = parseFloat((balance * vsBot / 100).toFixed(2));
+      const icon    = vsBot >= 0 ? '✅' : '❌';
+      msg += `📊 БЕНЧМАРК BTC Buy&Hold:\n`;
+      msg += `  BTC: ${btcBench.change >= 0 ? '+' : ''}${btcBench.change}% (${btcUSD >= 0 ? '+' : ''}$${btcUSD})\n`;
+      msg += `  ${icon} Бот vs BTC: ${vsBot >= 0 ? '+' : ''}${vsBot.toFixed(2)}% (${vsBotUSD >= 0 ? '+' : ''}$${vsBotUSD})\n\n`;
+    }
+
+    if (m) {
+      msg += `📈 МЕТРИКИ:\n`;
+      msg += `  Profit Factor: ${m.profitFactor}\n`;
+      msg += `  Sharpe: ${m.sharpe} | Sortino: ${m.sortino}\n`;
+      msg += `  Expectancy: ${m.expectancy}%\n`;
+      msg += `  Max DD: -${m.maxDD}%\n`;
+    }
+
+    msg += lossAnalysis;
+    msg += `\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `/metrics — детальные метрики`;
+
+    await sendTelegram(msg);
+  } catch(e) {
+    console.error('weeklyPnLReport error:', e.message);
+  }
+}
 function checkWeeklyDrawdown() {
   const now = Date.now();
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
@@ -5921,6 +6122,9 @@ cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('aud
 
 // Heartbeat — каждые 5 минут (мониторинг живости)
 cron.schedule('*/5 * * * *', () => { heartbeat().catch(()=>{}); });
+
+// Еженедельный P&L отчёт — воскресенье 18:00 UTC = 23:00 Алматы
+cron.schedule('0 18 * * 0', () => { weeklyPnLReport().catch(e => console.error('weeklyPnL error:', e.message)); });
 
 // Weekly drawdown check — каждый час
 cron.schedule('0 * * * *', async () => {

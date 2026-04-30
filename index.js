@@ -4881,18 +4881,20 @@ if (alreadyOpen) {
       console.log(`[SIGNAL OK] ${coin.instId} ${best.direction} conf=${best.confidence} → отправка`);
 
       // 5. ОБЪЁМ — главный фильтр против фейковых сигналов
-      // Текущий часовой объём должен быть выше среднего за 24ч
-      try {
-        const k1h_vol = await getOKXKlinesCached(coin.instId, '1H', 25);
-        if (k1h_vol.length >= 24) {
-          const avgVol = k1h_vol.slice(-24, -1).reduce((s,c) => s + (c.quoteVolume||0), 0) / 23;
-          const lastVol = k1h_vol[k1h_vol.length - 1].quoteVolume || 0;
-          if (avgVol > 0 && lastVol < avgVol * 0.7) {
-            console.log(`[SAFETY] ${coin.instId} BLOCK — объём ${(lastVol/avgVol).toFixed(2)}x от avg (нужно ≥0.7)`);
-            continue;
+      // В observe mode отключён для сбора всех данных
+      if (!store.observeMode) {
+        try {
+          const k1h_vol = await getOKXKlinesCached(coin.instId, '1H', 25);
+          if (k1h_vol.length >= 24) {
+            const avgVol = k1h_vol.slice(-24, -1).reduce((s,c) => s + (c.quoteVolume||0), 0) / 23;
+            const lastVol = k1h_vol[k1h_vol.length - 1].quoteVolume || 0;
+            if (avgVol > 0 && lastVol < avgVol * 0.7) {
+              console.log(`[SAFETY] ${coin.instId} BLOCK — объём ${(lastVol/avgVol).toFixed(2)}x от avg (нужно ≥0.7)`);
+              continue;
+            }
           }
-        }
-      } catch(e) { /* если нет данных, пропускаем проверку */ }
+        } catch(e) { /* если нет данных, пропускаем проверку */ }
+      }
 
       await sendTelegram(buildSignalAlert(best));
       setCoinCooldown(coin.instId);

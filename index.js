@@ -4046,41 +4046,48 @@ app.get('/paper-app', (req, res) => {
 });
 
 app.get('/api/paper', (req, res) => {
-  const stats   = getPaperStats();
-  const open    = (global.paperTrades || []).filter(t => !t.outcome);
-  const closed  = (global.paperTrades || []).filter(t => t.outcome);
-  res.json({
-    open:    open.map(t => ({
-      instId:     t.instId,
-      strategy:   t.strategy,
-      direction:  t.direction,
-      price:      t.price,
-      sl:         t.sl,
-      tp1:        t.tp1,
-      confidence: t.confidence,
-      ageMin:     Math.round((Date.now() - t.ts) / 60000),
-    })),
-    closed:  closed.slice(-50).reverse().map(t => ({
-      instId:     t.instId,
-      strategy:   t.strategy,
-      direction:  t.direction,
-      price:      t.price,
-      outcome:    t.outcome,
-      pnl:        t.pnl,
-      ageMin:     t.closedAt ? Math.round((t.closedAt - t.ts) / 60000) : null,
-    })),
-    stats: stats ? {
-      total:    stats.closed.length,
-      wins:     stats.wins.length,
-      losses:   stats.losses.length,
-      expired:  stats.expired.length,
-      wr:       stats.wr,
-      totalPnl: parseFloat(stats.totalPnl.toFixed(2)),
-      byStrat:  stats.byStrat,
-    } : null,
-    observeMode: store.observeMode,
-    timestamp:   Date.now(),
-  });
+  try {
+    const stats   = getPaperStats();
+    const open    = (global.paperTrades || []).filter(t => !t.outcome);
+    const closed  = (global.paperTrades || []).filter(t => t.outcome);
+    res.json({
+      open:    open.map(t => ({
+        instId:     t.instId,
+        strategy:   t.strategy,
+        direction:  t.direction,
+        price:      t.price,
+        sl:         t.sl,
+        tp1:        t.tp1,
+        confidence: t.confidence,
+        ageMin:     Math.round((Date.now() - t.ts) / 60000),
+      })),
+      closed:  closed.slice(-50).reverse().map(t => ({
+        instId:     t.instId,
+        strategy:   t.strategy,
+        direction:  t.direction,
+        price:      t.price,
+        outcome:    t.outcome,
+        pnl:        t.pnl,
+        closedAt:   t.closedAt,
+        ts:         t.ts,
+        ageMin:     t.closedAt ? Math.round((t.closedAt - t.ts) / 60000) : null,
+      })),
+      stats: stats ? {
+        total:    stats.closed.length,
+        wins:     stats.wins.length,
+        losses:   stats.losses.length,
+        expired:  stats.expired.length,
+        wr:       stats.wr,
+        totalPnl: parseFloat(stats.totalPnl.toFixed(2)),
+        byStrat:  stats.byStrat,
+      } : null,
+      observeMode: store.observeMode,
+      timestamp:   Date.now(),
+    });
+  } catch(e) {
+    console.error('[API/paper] error:', e.message);
+    res.json({ open: [], closed: [], stats: null, observeMode: store.observeMode, error: e.message });
+  }
 });
 
 app.get('/api/news', async (req, res) => {
@@ -6360,7 +6367,20 @@ setTimeout(() => {
   checkSignals().catch(e => console.error('Initial checkSignals error:', e.message));
 }, 10000);
 // Запускаем опрос команд Telegram
-pollTelegramUpdates();
+// Сначала удаляем вебхук чтобы избежать 409 конфликта
+(async () => {
+  try {
+    await httpPost(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/deleteWebhook`,
+      { drop_pending_updates: false },
+      { 'Content-Type': 'application/json' }
+    );
+    console.log('[TG] Webhook удалён, запускаю polling...');
+  } catch(e) {
+    console.error('[TG] deleteWebhook error:', e.message);
+  }
+  pollTelegramUpdates();
+})();
 
 // Загружаем подписки пользователей из Supabase (персональные on/off модулей)
 loadSubscriptions().catch(e => console.error('[SUBS] initial load error:', e.message));

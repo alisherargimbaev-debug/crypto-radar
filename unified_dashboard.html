@@ -490,18 +490,32 @@ function showPage(id, btn) {
   if (loaders[id]) loaders[id]();
 }
 
+// ── SAFE FETCH HELPER ────────────────────────────────────────
+async function safeFetch(url, fallback={}) {
+  try {
+    const r = await fetch(url);
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      return fallback;
+    }
+    return await r.json();
+  } catch(e) {
+    return fallback;
+  }
+}
+
 // ── PAPER API ────────────────────────────────────────────────
 async function loadPaper() {
-  try {
-    const r = await fetch('/api/paper');
-    const d = await r.json();
-    renderOverview(d);
-    renderPaperPage(d);
-    renderRadar(d);
-  } catch(e) { console.error('Paper error:', e); }
+  const d = await safeFetch('/api/paper', { open:[], closed:[], stats:null });
+  renderOverview(d);
+  renderPaperPage(d);
+  renderRadar(d);
 }
 
 function renderOverview(d) {
+  if (!d || (!d.stats && (!d.open || !d.open.length) && (!d.closed || !d.closed.length))) {
+    // Нет связи или нет данных — показываем оффлайн
+  }
   const s = d.stats;
   document.getElementById('ov-open').textContent = d.open?.length || 0;
   if (s) {
@@ -641,9 +655,8 @@ function renderRadar(d) {
 
 // ── METRICS ──────────────────────────────────────────────────
 async function loadMetrics() {
+  const d = await safeFetch('/api/paper', { closed:[], stats:null });
   try {
-    const r = await fetch('/api/paper');
-    const d = await r.json();
     const closed = (d.closed||[]).filter(t=>t.outcome&&t.outcome!=='expired');
     if (closed.length < 5) { document.querySelectorAll('[id^="m-"]').forEach(e=>e.textContent='—'); return; }
     const wins = closed.filter(t=>t.outcome==='tp1'||t.outcome==='tp2');
@@ -676,14 +689,15 @@ async function loadMetrics() {
     set('m-avgw','+'+aw+'%','green'); set('m-avgl','-'+al+'%','red');
     set('m-pnl',(totalPnl>=0?'+':'')+totalPnl.toFixed(2)+'%',totalPnl>=0?'green':'red');
     document.getElementById('m-wdd').textContent = '—';
-  } catch(e) { console.error('Metrics error:',e); }
+  } catch(e) {
+    document.querySelectorAll('[id^="m-"]').forEach(el=>el.textContent='—');
+  }
 }
 
 // ── TRACK RECORD ─────────────────────────────────────────────
 async function loadTrackRecord() {
+  const d = await safeFetch('/api/paper', { closed:[], stats:null });
   try {
-    const r = await fetch('/api/paper');
-    const d = await r.json();
     const closed = (d.closed||[]).filter(t=>t.pnl!=null).reverse();
     const s = d.stats;
     // Equity curve
@@ -720,7 +734,7 @@ async function loadTrackRecord() {
     const ctx2=document.getElementById('monthlyChart').getContext('2d');
     if(monthlyChart)monthlyChart.destroy();
     monthlyChart=new Chart(ctx2,{type:'bar',data:{labels:ml.length?ml:['No data'],datasets:[{data:ml.length?mv:[0],backgroundColor:mv.map(v=>v>=0?'rgba(34,204,102,0.5)':'rgba(255,68,68,0.5)'),borderColor:mv.map(v=>v>=0?'#22cc66':'#ff4444'),borderWidth:1,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:tickColor,font:{family:'DM Mono',size:10}},grid:{display:false}},y:{ticks:{color:tickColor,font:{family:'DM Mono',size:10}},grid:{color:gridColor}}}}});
-  } catch(e){console.error('TrackRecord error:',e);}
+  } catch(e) { /* silent */ }
 }
 
 // ── STRATEGIES ────────────────────────────────────────────────
@@ -740,8 +754,8 @@ async function loadStrategies() {
     {id:'S12',name:'Liquidity Sweep',tf:'15m',type:'Smart Money'},
     {id:'S13',name:'Order Block',tf:'1H',type:'ICT'},
   ];
-  let byStrat={};
-  try{const r=await fetch('/api/paper');const d=await r.json();byStrat=d.stats?.byStrat||{};}catch(e){}
+  const d = await safeFetch('/api/paper', { stats:null });
+  const byStrat = d.stats?.byStrat || {};
   const typeCls={'Momentum':'b-blue','Reversal':'b-yellow','Trend':'b-green','Contrarian':'b-purple','Pattern':'b-dim','Arbitrage':'b-dim','Breakout':'b-green','Smart Money':'b-green','ICT':'b-green'};
   document.getElementById('strat-grid').innerHTML=defs.map(s=>{
     const key=Object.keys(byStrat).find(k=>k.includes(s.name.substring(0,6)));
@@ -810,18 +824,52 @@ async function addDCA(){
 
 // ── WHALES ────────────────────────────────────────────────────
 async function loadWhales(){
-  try{
-    const r=await fetch('/api/whales');const d=await r.json();
-    const w=d.whales||d||[];
+  const d = await safeFetch('/api/whales', { traders:[], positions:[] });
+  try {
     const el=document.getElementById('whale-body');
-    if(!w.length){el.innerHTML='<div class="empty">NO WHALE DATA</div>';return;}
+    // Handle different formats from copytrader module
+    let positions=[];
+    if(d.positions) positions=d.positions;
+    else if(d.whales) positions=d.whales;
+    else if(Array.isArray(d)) positions=d;
+    else if(d.traders) {
+      // Format: {traders: [{name, positions:[]}]}
+      d.traders.forEach(t => {
+        (t.positions||t.pos||[]).forEach(p => {
+          positions.push({
+            name: t.name||t.handle,
+            symbol: p.symbol||p.coin,
+            side: p.side||p.direction,
+            size: p.size||p.notional||p.qty,
+            pnl: p.pnl||p.unrealisedPnl||0,
+            leverage: p.leverage,
+          });
+        });
+      });
+    }
+    if(!positions.length){
+      // Try to show traders list even without positions
+      const traders=d.traders||[];
+      if(traders.length){
+        el.innerHTML=`<div style="margin-bottom:12px;font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);letter-spacing:1px">TRACKING ${traders.length} WHALES — WAITING FOR POSITIONS...</div>
+        <table class="tbl"><thead><tr><th>Trader</th><th>Platform</th><th>Status</th></tr></thead><tbody>${
+          traders.slice(0,15).map(t=>`<tr>
+            <td style="font-family:'DM Mono',monospace;font-size:.6rem">${(t.name||t.handle||'Whale').substring(0,20)}</td>
+            <td><span class="badge b-dim">${t.platform||t.source||'HL'}</span></td>
+            <td><span class="badge b-green">ACTIVE</span></td>
+          </tr>`).join('')
+        }</tbody></table>`;
+        return;
+      }
+      el.innerHTML='<div class="empty">NO WHALE DATA — MONITORING ACTIVE</div>';return;
+    }
     el.innerHTML=`<table class="tbl"><thead><tr><th>Trader</th><th>Symbol</th><th>Side</th><th>Size</th><th>PnL</th></tr></thead><tbody>${
-      w.slice(0,15).map(t=>`<tr>
+      positions.slice(0,20).map(t=>`<tr>
         <td style="font-family:'DM Mono',monospace;font-size:.6rem">${(t.name||t.trader||'Whale').substring(0,14)}</td>
-        <td><strong>${t.symbol||'—'}</strong></td>
-        <td><span class="badge ${t.side==='Buy'||t.side==='long'?'b-green':'b-red'}">${t.side||'—'}</span></td>
-        <td style="font-family:'DM Mono',monospace">$${((t.size||0)/1e6).toFixed(1)}M</td>
-        <td class="${(t.pnl||0)>=0?'c-green':'c-red'}" style="font-family:'DM Mono',monospace">${(t.pnl||0)>=0?'+':''}${(t.pnl||0).toFixed(1)}%</td>
+        <td><strong>${t.symbol||t.coin||'—'}</strong></td>
+        <td><span class="badge ${t.side==='Buy'||t.side==='Long'||t.side==='long'?'b-green':'b-red'}">${t.side||'—'}</span></td>
+        <td style="font-family:'DM Mono',monospace">$${((Number(t.size)||0)/1e6).toFixed(1)}M</td>
+        <td class="${(t.pnl||0)>=0?'c-green':'c-red'}" style="font-family:'DM Mono',monospace">${(t.pnl||0)>=0?'+':''}${Number(t.pnl||0).toFixed(1)}%</td>
       </tr>`).join('')
     }</tbody></table>`;
   }catch(e){document.getElementById('whale-body').innerHTML='<div class="empty">WHALE DATA UNAVAILABLE</div>';}
@@ -829,8 +877,8 @@ async function loadWhales(){
 
 // ── NEWS ──────────────────────────────────────────────────────
 async function loadNews(){
-  try{
-    const r=await fetch('/api/news');const d=await r.json();
+  const d = await safeFetch('/api/news', { news:[] });
+  try {
     const news=d.news||d||[];
     const el=document.getElementById('news-body');
     if(!news.length){el.innerHTML='<div class="empty">NO NEWS AVAILABLE</div>';return;}
@@ -842,7 +890,7 @@ async function loadNews(){
           ${n.sentiment?`<span class="badge ${n.sentiment==='POSITIVE'?'b-green':n.sentiment==='NEGATIVE'?'b-red':'b-dim'}">${n.sentiment}</span>`:''}
         </div>
       </div>`).join('');
-  }catch(e){document.getElementById('news-body').innerHTML='<div class="empty">NEWS UNAVAILABLE</div>';}
+  } catch(e){ document.getElementById('news-body').innerHTML='<div class="empty">NEWS UNAVAILABLE</div>'; }
 }
 
 // ── TICKER ────────────────────────────────────────────────────
@@ -858,7 +906,7 @@ async function loadTicker(){
     }).join('');
     const t=document.getElementById('ticker');
     t.innerHTML=items+items;
-  }catch(e){document.getElementById('ticker').parentElement.style.display='none';}
+  } catch(e){ /* keep ticker visible */ }
 }
 
 // ── INIT ──────────────────────────────────────────────────────

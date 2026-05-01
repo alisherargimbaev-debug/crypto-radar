@@ -312,7 +312,7 @@ const store = {
   riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
   emergencyStop:  false, // аварийная остановка (kill switch)
   blockWeekends:  true,  // не торговать в субботу-воскресенье
-  observeMode:    false, // режим наблюдения — сигналы приходят но не открываются
+  observeMode:    true,  // режим наблюдения — сигналы приходят но не открываются (DEFAULT для сбора данных)
   peakBalance:    0,     // макс баланс для расчёта drawdown
 };
 
@@ -2083,15 +2083,13 @@ function applyETFFlow(sig, etfFlow) {
 
 function applyMacroFilter(sig, macroEvent) {
   if (!macroEvent) return sig;
-  // В observe mode — только инфо, не блокируем
-  if (store.observeMode) {
-    sig.macroNote = `⚠️ Макро событие: ${macroEvent.events}`;
-    return sig;
-  }
+
   if (macroEvent.blocking) {
+    // В окне ±30 мин от события — обнуляем confidence (блокировка)
     sig.confidence = 0;
     sig.macroNote  = `🚫 NEWS BLOCK: ${macroEvent.blockReason} → торговля заблокирована`;
   } else {
+    // За 2 часа до события — снижаем уверенность на 25%
     sig.confidence  = Math.max(sig.confidence - 25, 0);
     sig.macroNote   = `⚠️ Скоро макро событие: ${macroEvent.events} → -25%`;
   }
@@ -4047,46 +4045,65 @@ app.get('/paper-app', (req, res) => {
 
 app.get('/api/paper', (req, res) => {
   try {
-    const stats   = getPaperStats();
-    const open    = (global.paperTrades || []).filter(t => !t.outcome);
-    const closed  = (global.paperTrades || []).filter(t => t.outcome);
+  const stats   = getPaperStats();
+  const open    = (global.paperTrades || []).filter(t => !t.outcome);
+  const closed  = (global.paperTrades || []).filter(t => t.outcome);
+  res.json({
+    open:    open.map(t => ({
+      instId:     t.instId,
+      strategy:   t.strategy,
+      direction:  t.direction,
+      price:      t.price,
+      sl:         t.sl,
+      tp1:        t.tp1,
+      confidence: t.confidence,
+      ageMin:     Math.round((Date.now() - t.ts) / 60000),
+    })),
+    closed:  closed.slice(-50).reverse().map(t => ({
+      instId:     t.instId,
+      strategy:   t.strategy,
+      direction:  t.direction,
+      price:      t.price,
+      outcome:    t.outcome,
+      pnl:        t.pnl,
+      ageMin:     t.closedAt ? Math.round((t.closedAt - t.ts) / 60000) : null,
+    })),
+    stats: stats ? {
+      total:    stats.closed.length,
+      wins:     stats.wins.length,
+      losses:   stats.losses.length,
+      expired:  stats.expired.length,
+      wr:       stats.wr,
+      totalPnl: parseFloat(stats.totalPnl.toFixed(2)),
+      byStrat:  stats.byStrat,
+    } : null,
+    observeMode: store.observeMode,
+    timestamp:   Date.now(),
+  });
+  } catch(e) {
+    console.error('[API/paper]', e.message);
+    res.json({ open:[], closed:[], stats:null, observeMode:store.observeMode, error:e.message });
+  }
+});
+
+app.get('/api/radar', async (req, res) => {
+  try {
+    const candidates = await getOKXCandidates();
     res.json({
-      open:    open.map(t => ({
-        instId:     t.instId,
-        strategy:   t.strategy,
-        direction:  t.direction,
-        price:      t.price,
-        sl:         t.sl,
-        tp1:        t.tp1,
-        confidence: t.confidence,
-        ageMin:     Math.round((Date.now() - t.ts) / 60000),
+      ok:    true,
+      coins: candidates.slice(0, 50).map(c => ({
+        instId:      c.instId,
+        symbol:      c.symbol,
+        price:       c.price,
+        change24h:   parseFloat((c.change24h || 0).toFixed(2)),
+        volume24h:   c.volume24h,
+        fundingRate: parseFloat(((c.fundingRate || 0) * 100).toFixed(4)),
       })),
-      closed:  closed.slice(-50).reverse().map(t => ({
-        instId:     t.instId,
-        strategy:   t.strategy,
-        direction:  t.direction,
-        price:      t.price,
-        outcome:    t.outcome,
-        pnl:        t.pnl,
-        closedAt:   t.closedAt,
-        ts:         t.ts,
-        ageMin:     t.closedAt ? Math.round((t.closedAt - t.ts) / 60000) : null,
-      })),
-      stats: stats ? {
-        total:    stats.closed.length,
-        wins:     stats.wins.length,
-        losses:   stats.losses.length,
-        expired:  stats.expired.length,
-        wr:       stats.wr,
-        totalPnl: parseFloat(stats.totalPnl.toFixed(2)),
-        byStrat:  stats.byStrat,
-      } : null,
-      observeMode: store.observeMode,
-      timestamp:   Date.now(),
+      count:     candidates.length,
+      timestamp: Date.now(),
     });
   } catch(e) {
-    console.error('[API/paper] error:', e.message);
-    res.json({ open: [], closed: [], stats: null, observeMode: store.observeMode, error: e.message });
+    res.json({ ok: false, error: e.message, coins: [] });
   }
 });
 
@@ -4821,12 +4838,9 @@ if (alreadyOpen) {
 
       if (!best) continue;
 
-      // В observe mode новостной блок не применяем
-      if (!store.observeMode) {
-        const news = await checkNews(coin.symbol);
-        if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
-        if (news.note) best.newsNote = news.note;
-      }
+      const news = await checkNews(coin.symbol);
+      if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
+      if (news.note) best.newsNote = news.note;
 
       best.ts      = Date.now();
       best.fng     = fng;
@@ -4925,8 +4939,28 @@ if (alreadyOpen) {
 // ============================================================
 //  PAPER TRADING — виртуальные сделки для сбора статистики
 // ============================================================
-// Работает в observe mode — записывает "сделки на бумаге"
-// и автоматически отслеживает их исход через checkPaperTrades()
+const PAPER_FILE = './paper_trades.json';
+
+function loadPaperTrades() {
+  try {
+    if (fs.existsSync(PAPER_FILE)) {
+      const data = JSON.parse(fs.readFileSync(PAPER_FILE, 'utf8'));
+      global.paperTrades = data.trades || [];
+      console.log(`[PAPER] Загружено ${global.paperTrades.length} сделок из файла`);
+    } else {
+      global.paperTrades = [];
+    }
+  } catch(e) {
+    console.error('[PAPER] load error:', e.message);
+    global.paperTrades = [];
+  }
+}
+function savePaperTradesToFile() {
+  try {
+    fs.writeFileSync(PAPER_FILE, JSON.stringify({ trades: global.paperTrades || [], saved: Date.now() }));
+  } catch(e) { console.error('[PAPER] save error:', e.message); }
+}
+loadPaperTrades();
 
 function savePaperTrade(sig) {
   if (!global.paperTrades) global.paperTrades = [];
@@ -4950,6 +4984,7 @@ function savePaperTrade(sig) {
     global.paperTrades = global.paperTrades.slice(-200);
   }
   console.log(`[PAPER] ${sig.instId} ${sig.direction.toUpperCase()} $${sig.price} записана`);
+  savePaperTradesToFile();
 }
 
 async function checkPaperTrades() {
@@ -5023,6 +5058,7 @@ async function checkPaperTrades() {
       }
     } catch(e) { console.error(`[PAPER] checkPaperTrades error ${trade.instId}:`, e.message); }
   }
+  savePaperTradesToFile();
 }
 
 // ============================================================
@@ -6367,7 +6403,6 @@ setTimeout(() => {
   checkSignals().catch(e => console.error('Initial checkSignals error:', e.message));
 }, 10000);
 // Запускаем опрос команд Telegram
-// Сначала удаляем вебхук чтобы избежать 409 конфликта
 (async () => {
   try {
     await httpPost(
@@ -6376,9 +6411,7 @@ setTimeout(() => {
       { 'Content-Type': 'application/json' }
     );
     console.log('[TG] Webhook удалён, запускаю polling...');
-  } catch(e) {
-    console.error('[TG] deleteWebhook error:', e.message);
-  }
+  } catch(e) { console.error('[TG] deleteWebhook error:', e.message); }
   pollTelegramUpdates();
 })();
 

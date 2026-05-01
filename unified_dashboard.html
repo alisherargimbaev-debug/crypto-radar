@@ -240,6 +240,7 @@ nav::-webkit-scrollbar{display:none;}
     <button class="nav-btn" onclick="showPage('dca',this)">🏦 DCA Vault</button>
     <button class="nav-btn" onclick="showPage('whales',this)">🐋 Whales</button>
     <button class="nav-btn" onclick="showPage('news',this)">📰 News</button>
+    <button class="nav-btn" onclick="showPage('media',this)">𝕏 Media</button>
     <button class="nav-btn" onclick="showPage('investor',this)">💼 Investor</button>
   </div>
 </nav>
@@ -268,12 +269,22 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- RADAR -->
 <div class="page" id="page-radar">
+  <div class="stats-row" id="radar-stats">
+    <div class="stat-card blue"><div class="stat-label">Scanning</div><div class="stat-value" id="r-coins">—</div><div class="stat-sub">COINS TRACKED</div></div>
+    <div class="stat-card green"><div class="stat-label">Pumps</div><div class="stat-value" id="r-pumps">0</div><div class="stat-sub">+5% IN 24H</div></div>
+    <div class="stat-card red"><div class="stat-label">Dumps</div><div class="stat-value" id="r-dumps">0</div><div class="stat-sub">-5% IN 24H</div></div>
+    <div class="stat-card yellow"><div class="stat-label">Recent Signals</div><div class="stat-value" id="r-sigs">0</div><div class="stat-sub">PAPER TRADES</div></div>
+  </div>
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="sec-title" style="margin:0">Signal Radar</div>
-      <button class="btn" onclick="loadPaper()">↻ REFRESH</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div class="sec-title" style="margin:0">Market Radar — Top 50 Coins</div>
+      <button class="btn" onclick="loadRadarFull()">↻ REFRESH</button>
     </div>
-    <div id="radar-body"><div class="empty">SCANNING MARKETS...</div></div>
+    <div id="radar-body"><div class="empty">LOADING MARKET DATA...</div></div>
+  </div>
+  <div class="panel">
+    <div class="sec-title">Recent Signals (Paper Trading)</div>
+    <div id="radar-signals"><div class="empty">NO SIGNALS YET</div></div>
   </div>
 </div>
 
@@ -391,6 +402,14 @@ nav::-webkit-scrollbar{display:none;}
   </div>
 </div>
 
+<!-- MEDIA -->
+<div class="page" id="page-media">
+  <div class="panel">
+    <div class="sec-title">Crypto Media — Latest Articles</div>
+    <div id="media-body"><div class="empty">LOADING ARTICLES...</div></div>
+  </div>
+</div>
+
 <!-- INVESTOR -->
 <div class="page" id="page-investor">
   <div class="inv-hero">
@@ -486,7 +505,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   if (btn) btn.classList.add('active');
-  const loaders = { paper: loadPaper, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, radar: loadPaper, overview: loadPaper };
+  const loaders = { paper: loadPaper, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadPaper };
   if (loaders[id]) loaders[id]();
 }
 
@@ -628,9 +647,11 @@ function renderPaperPage(d) {
 }
 
 function renderRadar(d) {
-  const el = document.getElementById('radar-body');
-  const all = [...(d.open||[]), ...(d.closed||[]).slice(0,30)];
-  if (!all.length) { el.innerHTML = '<div class="empty">SCANNING 50 COINS EVERY 5 MINUTES...</div>'; return; }
+  // Recent signals box
+  const el = document.getElementById('radar-signals');
+  if (!el) return;
+  const all = [...(d.open||[]), ...(d.closed||[]).slice(0,20)];
+  if (!all.length) { el.innerHTML = '<div class="empty">NO SIGNALS YET — OBSERVE MODE COLLECTING</div>'; return; }
   const rows = all.map(t => {
     const coin = (t.instId||'?').replace('-USDT-SWAP','');
     const dc = t.direction === 'long' ? 'b-green' : 'b-red';
@@ -651,6 +672,48 @@ function renderRadar(d) {
     </tr>`;
   }).join('');
   el.innerHTML = `<table class="tbl"><thead><tr><th>Symbol</th><th>Dir</th><th>Strategy</th><th>Conf</th><th>Status</th><th>PnL</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  // Stats
+  const sigEl = document.getElementById('r-sigs');
+  if (sigEl) sigEl.textContent = all.length;
+}
+
+// Полный radar — список всех монет с движениями
+async function loadRadarFull() {
+  const d = await safeFetch('/api/radar', { coins:[] });
+  const coins = d.coins || [];
+
+  // Stats
+  const sce = document.getElementById('r-coins');
+  if (sce) sce.textContent = coins.length || '—';
+  const pumps = coins.filter(c => c.change24h >= 5).length;
+  const dumps = coins.filter(c => c.change24h <= -5).length;
+  const pe = document.getElementById('r-pumps'); if (pe) pe.textContent = pumps;
+  const de = document.getElementById('r-dumps'); if (de) de.textContent = dumps;
+
+  const el = document.getElementById('radar-body');
+  if (!coins.length) { el.innerHTML = '<div class="empty">SCANNING MARKETS...</div>'; return; }
+
+  const rows = coins.slice(0, 50).map(c => {
+    const ch = c.change24h || 0;
+    const chCls = ch >= 0 ? 'c-green' : 'c-red';
+    const fr = c.fundingRate || 0;
+    const frCls = fr >= 0 ? 'c-yellow' : 'c-blue';
+    const vol = c.volume24h ? '$' + (c.volume24h/1e6).toFixed(1) + 'M' : '—';
+    const tag = ch >= 5 ? '<span class="badge b-green">PUMP</span>' :
+                ch <= -5 ? '<span class="badge b-red">DUMP</span>' :
+                Math.abs(fr) > 0.01 ? '<span class="badge b-yellow">FUND</span>' : '';
+    return `<tr>
+      <td><strong>${c.symbol}</strong></td>
+      <td style="font-family:'DM Mono',monospace">$${c.price < 0.01 ? c.price.toFixed(6) : c.price.toLocaleString()}</td>
+      <td class="${chCls}" style="font-family:'DM Mono',monospace">${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--dim)">${vol}</td>
+      <td class="${frCls}" style="font-family:'DM Mono',monospace">${fr >= 0 ? '+' : ''}${fr.toFixed(4)}%</td>
+      <td>${tag}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<table class="tbl"><thead><tr><th>Coin</th><th>Price</th><th>24h</th><th>Volume</th><th>Funding</th><th>Tag</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // ── METRICS ──────────────────────────────────────────────────
@@ -877,20 +940,51 @@ async function loadWhales(){
 
 // ── NEWS ──────────────────────────────────────────────────────
 async function loadNews(){
-  const d = await safeFetch('/api/news', { news:[] });
+  const d = await safeFetch('/api/news', { data:[] });
   try {
-    const news=d.news||d||[];
-    const el=document.getElementById('news-body');
-    if(!news.length){el.innerHTML='<div class="empty">NO NEWS AVAILABLE</div>';return;}
-    el.innerHTML=news.slice(0,20).map(n=>`
-      <div style="padding:14px 0;border-bottom:1px solid var(--border)">
-        <div style="font-size:.82rem;margin-bottom:6px;line-height:1.5">${n.title||n.headline||'—'}</div>
-        <div style="display:flex;gap:12px;align-items:center">
-          <span style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)">${n.source||n.provider||'News'}</span>
-          ${n.sentiment?`<span class="badge ${n.sentiment==='POSITIVE'?'b-green':n.sentiment==='NEGATIVE'?'b-red':'b-dim'}">${n.sentiment}</span>`:''}
+    // CryptoCompare returns {ok:true, data:[...]}
+    const news = d.data || d.news || (Array.isArray(d) ? d : []);
+    const el = document.getElementById('news-body');
+    if(!news.length){ el.innerHTML='<div class="empty">NO NEWS AVAILABLE</div>'; return; }
+    el.innerHTML = news.slice(0,25).map(n=>{
+      const title = n.title || n.headline || '—';
+      const source = n.source_info?.name || n.source || 'Crypto';
+      const time = n.published_on ? new Date(n.published_on*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+      const url = n.url || n.guid || '#';
+      const sentiment = n.sentiment ? n.sentiment.toUpperCase() : null;
+      const cats = n.categories ? n.categories.split('|').slice(0,2) : [];
+      return `<div style="padding:16px 0;border-bottom:1px solid var(--border)">
+        <a href="${url}" target="_blank" style="color:var(--text);text-decoration:none;font-size:.85rem;line-height:1.5;display:block;margin-bottom:8px;font-weight:500">${title}</a>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">${source.toUpperCase()}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">${time}</span>
+          ${cats.map(c => `<span class="badge b-dim">${c}</span>`).join('')}
+          ${sentiment ? `<span class="badge ${sentiment==='POSITIVE'?'b-green':sentiment==='NEGATIVE'?'b-red':'b-dim'}">${sentiment}</span>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch(e){ document.getElementById('news-body').innerHTML='<div class="empty">NEWS UNAVAILABLE</div>'; }
+}
+
+// ── MEDIA (RSS + Twitter feeds) ──────────────────────────────
+async function loadMedia(){
+  const d = await safeFetch('/api/rss', { articles:[] });
+  const articles = d.articles || d || [];
+  const el = document.getElementById('media-body');
+  if(!articles.length){ el.innerHTML='<div class="empty">LOADING MEDIA FEEDS...</div>'; return; }
+  el.innerHTML = articles.slice(0,30).map(a => {
+    const time = a.pubDate ? new Date(a.pubDate).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+    return `<div style="padding:16px 0;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start">
+      ${a.avatar ? `<div style="width:32px;height:32px;border-radius:50%;background:${a.color || 'var(--panel2)'};color:white;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.55rem;font-weight:700;flex-shrink:0">${a.avatar}</div>` : ''}
+      <div style="flex:1;min-width:0">
+        <a href="${a.link || a.url || '#'}" target="_blank" style="color:var(--text);text-decoration:none;font-size:.82rem;line-height:1.5;display:block;margin-bottom:6px;font-weight:500">${a.title || '—'}</a>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">@${a.handle || a.source || 'crypto'}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">${time}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ── TICKER ────────────────────────────────────────────────────
@@ -911,6 +1005,7 @@ async function loadTicker(){
 
 // ── INIT ──────────────────────────────────────────────────────
 loadPaper();
+loadRadarFull();
 loadTicker();
 setInterval(loadPaper,30000);
 setInterval(loadTicker,60000);

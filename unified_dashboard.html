@@ -231,17 +231,18 @@ nav::-webkit-scrollbar{display:none;}
 <!-- NAV -->
 <nav>
   <div class="nav-inner">
-    <button class="nav-btn active" onclick="showPage('overview',this)">📡 Overview</button>
-    <button class="nav-btn" onclick="showPage('radar',this)">🔭 Radar</button>
-    <button class="nav-btn" onclick="showPage('paper',this)">📄 Paper</button>
-    <button class="nav-btn" onclick="showPage('metrics',this)">📊 Metrics</button>
-    <button class="nav-btn" onclick="showPage('trackrecord',this)">📈 Track Record</button>
-    <button class="nav-btn" onclick="showPage('strategies',this)">⚙️ Strategies</button>
-    <button class="nav-btn" onclick="showPage('dca',this)">🏦 DCA Vault</button>
-    <button class="nav-btn" onclick="showPage('whales',this)">🐋 Whales</button>
-    <button class="nav-btn" onclick="showPage('news',this)">📰 News</button>
-    <button class="nav-btn" onclick="showPage('media',this)">𝕏 Media</button>
-    <button class="nav-btn" onclick="showPage('investor',this)">💼 Investor</button>
+    <button class="nav-btn active" onclick="showPage('overview',this)">Overview</button>
+    <button class="nav-btn" onclick="showPage('radar',this)">Radar</button>
+    <button class="nav-btn" onclick="showPage('paper',this)">Paper</button>
+    <button class="nav-btn" onclick="showPage('metrics',this)">Metrics</button>
+    <button class="nav-btn" onclick="showPage('trackrecord',this)">Track Record</button>
+    <button class="nav-btn" onclick="showPage('strategies',this)">Strategies</button>
+    <button class="nav-btn" onclick="showPage('dca',this)">DCA Vault</button>
+    <button class="nav-btn" onclick="showPage('calc',this)">Calculator</button>
+    <button class="nav-btn" onclick="showPage('whales',this)">Whales</button>
+    <button class="nav-btn" onclick="showPage('news',this)">News</button>
+    <button class="nav-btn" onclick="showPage('media',this)">Media</button>
+    <button class="nav-btn" onclick="showPage('investor',this)">Investor</button>
   </div>
 </nav>
 
@@ -273,7 +274,8 @@ nav::-webkit-scrollbar{display:none;}
     <div class="stat-card blue"><div class="stat-label">Scanning</div><div class="stat-value" id="r-coins">—</div><div class="stat-sub">COINS TRACKED</div></div>
     <div class="stat-card green"><div class="stat-label">Pumps</div><div class="stat-value" id="r-pumps">0</div><div class="stat-sub">+5% IN 24H</div></div>
     <div class="stat-card red"><div class="stat-label">Dumps</div><div class="stat-value" id="r-dumps">0</div><div class="stat-sub">-5% IN 24H</div></div>
-    <div class="stat-card yellow"><div class="stat-label">Recent Signals</div><div class="stat-value" id="r-sigs">0</div><div class="stat-sub">PAPER TRADES</div></div>
+    <div class="stat-card yellow"><div class="stat-label">Grade A</div><div class="stat-value" id="r-grade-a">0</div><div class="stat-sub">PRIME TARGETS</div></div>
+    <div class="stat-card"><div class="stat-label">Recent Signals</div><div class="stat-value" id="r-sigs">0</div><div class="stat-sub">PAPER TRADES</div></div>
   </div>
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
@@ -353,6 +355,53 @@ nav::-webkit-scrollbar{display:none;}
   <div class="strat-grid" id="strat-grid"><div class="empty">LOADING...</div></div>
 </div>
 
+<!-- CALCULATOR -->
+<div class="page" id="page-calc">
+  <div class="grid-2">
+    <div class="panel">
+      <div class="sec-title">Position Calculator</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Account Balance ($)</label>
+          <input class="dca-input" type="number" id="calc-balance" value="10000" oninput="calcPosition()">
+        </div>
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Risk Per Trade (%)</label>
+          <input class="dca-input" type="number" id="calc-risk" value="0.5" step="0.1" oninput="calcPosition()">
+        </div>
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Entry Price ($)</label>
+          <input class="dca-input" type="number" id="calc-entry" value="100" step="any" oninput="calcPosition()">
+        </div>
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Stop Loss Price ($)</label>
+          <input class="dca-input" type="number" id="calc-sl" value="98.5" step="any" oninput="calcPosition()">
+        </div>
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Take Profit Price ($)</label>
+          <input class="dca-input" type="number" id="calc-tp" value="103" step="any" oninput="calcPosition()">
+        </div>
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Leverage</label>
+          <input class="dca-input" type="number" id="calc-leverage" value="10" oninput="calcPosition()">
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sec-title">Calculation Result</div>
+      <div class="m-row"><div class="m-name">Risk Amount</div><div class="m-val red" id="calc-risk-usd">$50</div></div>
+      <div class="m-row"><div class="m-name">Stop Loss</div><div class="m-val red" id="calc-sl-pct">-1.50%</div></div>
+      <div class="m-row"><div class="m-name">Take Profit</div><div class="m-val green" id="calc-tp-pct">+3.00%</div></div>
+      <div class="m-row"><div class="m-name">Risk / Reward</div><div class="m-val yellow" id="calc-rr">1:2.00</div></div>
+      <div class="m-row"><div><div class="m-name">Position Size</div><div class="m-hint">USD</div></div><div class="m-val blue" id="calc-pos-usd">$3,333</div></div>
+      <div class="m-row"><div><div class="m-name">Quantity</div><div class="m-hint">Coins / Contracts</div></div><div class="m-val" id="calc-qty">33.33</div></div>
+      <div class="m-row"><div><div class="m-name">Margin Required</div><div class="m-hint">With leverage</div></div><div class="m-val" id="calc-margin">$333</div></div>
+      <div class="m-row"><div class="m-name">Potential Profit</div><div class="m-val green" id="calc-profit">+$100</div></div>
+      <div class="m-row"><div class="m-name">Potential Loss</div><div class="m-val red" id="calc-loss">-$50</div></div>
+    </div>
+  </div>
+</div>
+
 <!-- DCA VAULT -->
 <div class="page" id="page-dca">
   <div class="dca-hero">
@@ -386,10 +435,57 @@ nav::-webkit-scrollbar{display:none;}
   </div>
 </div>
 
+<!-- CALCULATOR -->
+<div class="page" id="page-calc">
+  <div class="grid-2">
+    <div class="panel">
+      <div class="sec-title">Position Calculator</div>
+      <div style="margin-bottom:16px">
+        <div class="m-row">
+          <div class="m-name">Account Balance ($)</div>
+          <input type="number" id="calc-balance" value="9379" class="dca-input" style="max-width:140px;margin:0">
+        </div>
+        <div class="m-row">
+          <div class="m-name">Risk per Trade (%)</div>
+          <input type="number" id="calc-risk" value="0.5" step="0.1" class="dca-input" style="max-width:140px;margin:0">
+        </div>
+        <div class="m-row">
+          <div class="m-name">Leverage</div>
+          <input type="number" id="calc-lev" value="10" class="dca-input" style="max-width:140px;margin:0">
+        </div>
+        <div class="m-row">
+          <div class="m-name">Entry Price ($)</div>
+          <input type="number" id="calc-entry" value="0" step="any" class="dca-input" style="max-width:140px;margin:0">
+        </div>
+        <div class="m-row">
+          <div class="m-name">Stop Loss (%)</div>
+          <input type="number" id="calc-sl" value="1.5" step="0.1" class="dca-input" style="max-width:140px;margin:0">
+        </div>
+      </div>
+      <button class="btn btn-full" onclick="calculate()">CALCULATE</button>
+    </div>
+    <div class="panel">
+      <div class="sec-title">Result</div>
+      <div class="m-row"><div class="m-name">Risk Amount</div><div class="m-val" id="r-risk">—</div></div>
+      <div class="m-row"><div class="m-name">Position Size</div><div class="m-val blue" id="r-pos">—</div></div>
+      <div class="m-row"><div class="m-name">Margin Required</div><div class="m-val" id="r-margin">—</div></div>
+      <div class="m-row"><div class="m-name">SL Price</div><div class="m-val red" id="r-slp">—</div></div>
+      <div class="m-row"><div class="m-name">TP1 (RR 1:2)</div><div class="m-val green" id="r-tp1">—</div></div>
+      <div class="m-row"><div class="m-name">TP2 (RR 1:3)</div><div class="m-val green" id="r-tp2">—</div></div>
+      <div class="m-row"><div class="m-name">Quantity (units)</div><div class="m-val" id="r-qty">—</div></div>
+    </div>
+  </div>
+</div>
+
 <!-- WHALES -->
 <div class="page" id="page-whales">
   <div class="panel">
-    <div class="sec-title">Whale Activity</div>
+    <div class="sec-title">Whale Activity — Tracked Traders</div>
+    <div style="font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim);letter-spacing:1px;margin-bottom:14px;line-height:1.6">
+      MONITORING TOP TRADERS FROM HYPERLIQUID & BINANCE.<br>
+      DASHES SHOWN WHEN TRADERS HAVE NO OPEN POSITIONS.<br>
+      ALERTS DELIVERED VIA TELEGRAM IN REAL-TIME.
+    </div>
     <div id="whale-body"><div class="empty">LOADING WHALE DATA...</div></div>
   </div>
 </div>
@@ -505,7 +601,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   if (btn) btn.classList.add('active');
-  const loaders = { paper: loadPaper, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadPaper };
+  const loaders = { paper: loadPaper, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadPaper };
   if (loaders[id]) loaders[id]();
 }
 
@@ -688,11 +784,27 @@ async function loadRadarFull() {
   if (sce) sce.textContent = coins.length || '—';
   const pumps = coins.filter(c => c.change24h >= 5).length;
   const dumps = coins.filter(c => c.change24h <= -5).length;
-  const pe = document.getElementById('r-pumps'); if (pe) pe.textContent = pumps;
-  const de = document.getElementById('r-dumps'); if (de) de.textContent = dumps;
+  const gradeA = coins.filter(c => Math.abs(c.change24h) >= 8 && c.volume24h > 100e6).length;
+  const neg = coins.filter(c => c.fundingRate < -0.005).length;
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('r-pumps', pumps);
+  set('r-dumps', dumps);
+  set('r-grade', gradeA);
+  set('r-neg', neg);
 
   const el = document.getElementById('radar-body');
   if (!coins.length) { el.innerHTML = '<div class="empty">SCANNING MARKETS...</div>'; return; }
+
+  // Compute grades A/B/C/D based on volume and movement
+  function getGrade(c) {
+    const vol = c.volume24h || 0;
+    const ch = Math.abs(c.change24h || 0);
+    const score = (vol / 1e9) * 0.5 + ch * 0.5;
+    if (vol >= 5e9 && ch >= 3) return 'A';
+    if (vol >= 1e9 || ch >= 5) return 'B';
+    if (vol >= 200e6 || ch >= 2) return 'C';
+    return 'D';
+  }
 
   const rows = coins.slice(0, 50).map(c => {
     const ch = c.change24h || 0;
@@ -703,6 +815,8 @@ async function loadRadarFull() {
     const tag = ch >= 5 ? '<span class="badge b-green">PUMP</span>' :
                 ch <= -5 ? '<span class="badge b-red">DUMP</span>' :
                 Math.abs(fr) > 0.01 ? '<span class="badge b-yellow">FUND</span>' : '';
+    const grade = getGrade(c);
+    const gCls = grade === 'A' ? 'b-yellow' : grade === 'B' ? 'b-green' : grade === 'C' ? 'b-blue' : 'b-dim';
     return `<tr>
       <td><strong>${c.symbol}</strong></td>
       <td style="font-family:'DM Mono',monospace">$${c.price < 0.01 ? c.price.toFixed(6) : c.price.toLocaleString()}</td>
@@ -888,7 +1002,6 @@ async function addDCA(){
 // ── WHALES ────────────────────────────────────────────────────
 async function loadWhales(){
   const d = await safeFetch('/api/whales', { traders:[], positions:[] });
-  try {
     const el=document.getElementById('whale-body');
     // Handle different formats from copytrader module
     let positions=[];
@@ -910,21 +1023,32 @@ async function loadWhales(){
         });
       });
     }
+    const traders = d.traders || [];
+
+    if(!positions.length && !traders.length){
+      el.innerHTML = '<div class="empty">NO WHALE DATA — MONITORING ACTIVE</div>';
+      return;
+    }
+
     if(!positions.length){
-      // Try to show traders list even without positions
-      const traders=d.traders||[];
-      if(traders.length){
-        el.innerHTML=`<div style="margin-bottom:12px;font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);letter-spacing:1px">TRACKING ${traders.length} WHALES — WAITING FOR POSITIONS...</div>
-        <table class="tbl"><thead><tr><th>Trader</th><th>Platform</th><th>Status</th></tr></thead><tbody>${
-          traders.slice(0,15).map(t=>`<tr>
-            <td style="font-family:'DM Mono',monospace;font-size:.6rem">${(t.name||t.handle||'Whale').substring(0,20)}</td>
-            <td><span class="badge b-dim">${t.platform||t.source||'HL'}</span></td>
+      // Show only traders without empty position columns
+      el.innerHTML = `<div style="margin-bottom:16px;padding:14px;background:var(--panel2);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim);letter-spacing:1px;line-height:1.6">
+        TRACKING <span style="color:var(--green)">${traders.length} WHALES</span> ON HYPERLIQUID & BINANCE — WAITING FOR LARGE POSITIONS TO OPEN.<br>
+        ALERTS WILL BE SENT TO TELEGRAM AUTOMATICALLY.
+      </div>
+      <table class="tbl"><thead><tr><th>#</th><th>Trader Address</th><th>Platform</th><th>Status</th></tr></thead><tbody>${
+        traders.slice(0,15).map((t,i)=>{
+          const addr = t.name || t.handle || t.address || 'Whale';
+          const platform = t.platform || t.source || 'HL';
+          return `<tr>
+            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:.55rem">${(i+1).toString().padStart(2,'0')}</td>
+            <td style="font-family:'DM Mono',monospace;font-size:.65rem">${addr.substring(0,24)}</td>
+            <td><span class="badge ${platform==='BN'?'b-yellow':'b-blue'}">${platform==='BN'?'BINANCE':'HYPERLIQUID'}</span></td>
             <td><span class="badge b-green">ACTIVE</span></td>
-          </tr>`).join('')
-        }</tbody></table>`;
-        return;
-      }
-      el.innerHTML='<div class="empty">NO WHALE DATA — MONITORING ACTIVE</div>';return;
+          </tr>`;
+        }).join('')
+      }</tbody></table>`;
+      return;
     }
     el.innerHTML=`<table class="tbl"><thead><tr><th>Trader</th><th>Symbol</th><th>Side</th><th>Size</th><th>PnL</th></tr></thead><tbody>${
       positions.slice(0,20).map(t=>`<tr>
@@ -935,7 +1059,6 @@ async function loadWhales(){
         <td class="${(t.pnl||0)>=0?'c-green':'c-red'}" style="font-family:'DM Mono',monospace">${(t.pnl||0)>=0?'+':''}${Number(t.pnl||0).toFixed(1)}%</td>
       </tr>`).join('')
     }</tbody></table>`;
-  }catch(e){document.getElementById('whale-body').innerHTML='<div class="empty">WHALE DATA UNAVAILABLE</div>';}
 }
 
 // ── NEWS ──────────────────────────────────────────────────────
@@ -968,18 +1091,27 @@ async function loadNews(){
 
 // ── MEDIA (RSS + Twitter feeds) ──────────────────────────────
 async function loadMedia(){
-  const d = await safeFetch('/api/rss', { articles:[] });
-  const articles = d.articles || d || [];
+  const d = await safeFetch('/api/rss', { ok:false, articles:[] });
+  // API returns: { ok: true, articles: [{title, link, pubDate, source, handle, avatar, color, contentSnippet}] }
+  const articles = d.articles || [];
   const el = document.getElementById('media-body');
-  if(!articles.length){ el.innerHTML='<div class="empty">LOADING MEDIA FEEDS...</div>'; return; }
-  el.innerHTML = articles.slice(0,30).map(a => {
-    const time = a.pubDate ? new Date(a.pubDate).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
-    return `<div style="padding:16px 0;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start">
-      ${a.avatar ? `<div style="width:32px;height:32px;border-radius:50%;background:${a.color || 'var(--panel2)'};color:white;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.55rem;font-weight:700;flex-shrink:0">${a.avatar}</div>` : ''}
+  if(!articles.length){
+    el.innerHTML='<div class="empty">NO ARTICLES — RSS FEEDS UNAVAILABLE</div>';
+    return;
+  }
+  el.innerHTML = articles.slice(0,40).map(a => {
+    let time = '';
+    if (a.pubDate) {
+      try { time = new Date(a.pubDate).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
+    }
+    const snippet = a.contentSnippet ? a.contentSnippet.substring(0, 140) + (a.contentSnippet.length > 140 ? '...' : '') : '';
+    return `<div style="padding:16px 0;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:flex-start">
+      <div style="width:36px;height:36px;border-radius:50%;background:${a.color || 'var(--panel2)'};color:white;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.55rem;font-weight:700;flex-shrink:0">${a.avatar || 'NW'}</div>
       <div style="flex:1;min-width:0">
-        <a href="${a.link || a.url || '#'}" target="_blank" style="color:var(--text);text-decoration:none;font-size:.82rem;line-height:1.5;display:block;margin-bottom:6px;font-weight:500">${a.title || '—'}</a>
+        <a href="${a.link || '#'}" target="_blank" style="color:var(--text);text-decoration:none;font-size:.85rem;line-height:1.5;display:block;margin-bottom:6px;font-weight:500">${a.title || '—'}</a>
+        ${snippet ? `<div style="font-size:.7rem;color:var(--dim);line-height:1.5;margin-bottom:8px">${snippet}</div>` : ''}
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">@${a.handle || a.source || 'crypto'}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">@${a.handle || (a.source || 'crypto').toLowerCase()}</span>
           <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">${time}</span>
         </div>
       </div>
@@ -1001,6 +1133,69 @@ async function loadTicker(){
     const t=document.getElementById('ticker');
     t.innerHTML=items+items;
   } catch(e){ /* keep ticker visible */ }
+}
+
+
+// ── CALCULATOR ────────────────────────────────────────────────
+function calculate() {
+  const bal   = parseFloat(document.getElementById('calc-balance').value) || 0;
+  const risk  = parseFloat(document.getElementById('calc-risk').value) || 0;
+  const lev   = parseFloat(document.getElementById('calc-lev').value) || 1;
+  const entry = parseFloat(document.getElementById('calc-entry').value) || 0;
+  const slPct = parseFloat(document.getElementById('calc-sl').value) || 0;
+
+  const riskUSD = bal * (risk / 100);
+  const posSize = slPct > 0 ? riskUSD / (slPct / 100) : 0;
+  const margin  = posSize / lev;
+  const qty     = entry > 0 ? posSize / entry : 0;
+  const slPrice = entry * (1 - slPct / 100);
+  const tp1     = entry * (1 + (slPct * 2) / 100);
+  const tp2     = entry * (1 + (slPct * 3) / 100);
+
+  document.getElementById('r-risk').textContent   = '$' + riskUSD.toFixed(2);
+  document.getElementById('r-pos').textContent    = '$' + posSize.toFixed(0);
+  document.getElementById('r-margin').textContent = '$' + margin.toFixed(0);
+  document.getElementById('r-slp').textContent    = entry > 0 ? '$' + slPrice.toFixed(4) : '—';
+  document.getElementById('r-tp1').textContent    = entry > 0 ? '$' + tp1.toFixed(4) : '—';
+  document.getElementById('r-tp2').textContent    = entry > 0 ? '$' + tp2.toFixed(4) : '—';
+  document.getElementById('r-qty').textContent    = qty.toFixed(6);
+}
+
+// ── CALCULATOR ────────────────────────────────────────────────
+function calcPosition() {
+  const balance  = parseFloat(document.getElementById('calc-balance')?.value) || 0;
+  const riskPct  = parseFloat(document.getElementById('calc-risk')?.value) || 0;
+  const entry    = parseFloat(document.getElementById('calc-entry')?.value) || 0;
+  const sl       = parseFloat(document.getElementById('calc-sl')?.value) || 0;
+  const tp       = parseFloat(document.getElementById('calc-tp')?.value) || 0;
+  const leverage = parseFloat(document.getElementById('calc-leverage')?.value) || 1;
+
+  if (!balance || !entry || !sl) return;
+
+  const riskUSD  = balance * riskPct / 100;
+  const slDist   = Math.abs(entry - sl);
+  const slPct    = (slDist / entry) * 100;
+  const tpDist   = Math.abs(tp - entry);
+  const tpPct    = tp ? (tpDist / entry) * 100 : 0;
+  const rr       = slDist > 0 ? (tpDist / slDist) : 0;
+  const posUSD   = slPct > 0 ? (riskUSD / (slPct/100)) : 0;
+  const qty      = entry > 0 ? (posUSD / entry) : 0;
+  const margin   = leverage > 0 ? (posUSD / leverage) : posUSD;
+  const isLong   = tp > entry;
+  const profitUSD = isLong ? qty * (tp - entry) : qty * (entry - tp);
+  const lossUSD   = qty * slDist;
+
+  const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+
+  set('calc-risk-usd', '$' + riskUSD.toFixed(2));
+  set('calc-sl-pct', (isLong ? '-' : '+') + slPct.toFixed(2) + '%');
+  set('calc-tp-pct', (isLong ? '+' : '-') + tpPct.toFixed(2) + '%');
+  set('calc-rr', '1:' + rr.toFixed(2));
+  set('calc-pos-usd', '$' + posUSD.toLocaleString(undefined, {maximumFractionDigits: 0}));
+  set('calc-qty', qty.toFixed(qty > 1 ? 2 : 6));
+  set('calc-margin', '$' + margin.toLocaleString(undefined, {maximumFractionDigits: 0}));
+  set('calc-profit', '+$' + profitUSD.toFixed(2));
+  set('calc-loss', '-$' + lossUSD.toFixed(2));
 }
 
 // ── INIT ──────────────────────────────────────────────────────

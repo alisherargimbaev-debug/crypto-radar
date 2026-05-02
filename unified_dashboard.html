@@ -1089,30 +1089,50 @@ async function loadNews(){
   } catch(e){ document.getElementById('news-body').innerHTML='<div class="empty">NEWS UNAVAILABLE</div>'; }
 }
 
-// ── MEDIA (RSS + Twitter feeds) ──────────────────────────────
+// ── MEDIA (crypto news styled as media feed) ──────────────────
 async function loadMedia(){
-  const d = await safeFetch('/api/rss', { ok:false, articles:[] });
-  // API returns: { ok: true, articles: [{title, link, pubDate, source, handle, avatar, color, contentSnippet}] }
-  const articles = d.articles || [];
   const el = document.getElementById('media-body');
-  if(!articles.length){
-    el.innerHTML='<div class="empty">NO ARTICLES — RSS FEEDS UNAVAILABLE</div>';
+  if (!el) return;
+  el.innerHTML = '<div class="empty" style="letter-spacing:2px">LOADING...</div>';
+
+  const d = await safeFetch('/api/news', { data: [] });
+  const raw = d.data || d.news || (Array.isArray(d) ? d : []);
+
+  if (!raw.length) {
+    el.innerHTML = '<div class="empty">MEDIA UNAVAILABLE</div>';
     return;
   }
-  el.innerHTML = articles.slice(0,40).map(a => {
-    let time = '';
-    if (a.pubDate) {
-      try { time = new Date(a.pubDate).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); } catch(e){}
-    }
-    const snippet = a.contentSnippet ? a.contentSnippet.substring(0, 140) + (a.contentSnippet.length > 140 ? '...' : '') : '';
-    return `<div style="padding:16px 0;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:flex-start">
-      <div style="width:36px;height:36px;border-radius:50%;background:${a.color || 'var(--panel2)'};color:white;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.55rem;font-weight:700;flex-shrink:0">${a.avatar || 'NW'}</div>
+
+  const sourceColors = {
+    'CoinTelegraph':'#00cc88','cointelegraph':'#00cc88',
+    'CoinDesk':'#1d9bf0','coindesk':'#1d9bf0',
+    'Decrypt':'#9945ff','decrypt':'#9945ff',
+    'The Block':'#ff8c00','theblock':'#ff8c00',
+    'Bitcoin Magazine':'#f7931a',
+    'CryptoSlate':'#6366f1',
+    'Blockworks':'#e879f9',
+  };
+
+  el.innerHTML = raw.slice(0, 30).map(n => {
+    const title  = n.title || n.headline || '';
+    const src    = n.source_info?.name || n.source || 'Crypto';
+    const color  = sourceColors[src] || '#888';
+    const avatar = src.substring(0, 2).toUpperCase();
+    const time   = n.published_on
+      ? new Date(n.published_on * 1000).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})
+      : '';
+    const url    = n.url || n.guid || '#';
+    const sent   = n.sentiment ? n.sentiment.toUpperCase() : null;
+    const cats   = n.categories ? n.categories.split('|').slice(0, 2) : [];
+    return `<div style="padding:14px 0;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:flex-start">
+      <div style="width:36px;height:36px;border-radius:50%;background:${color}22;border:1px solid ${color}55;color:${color};display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:.55rem;font-weight:700;flex-shrink:0">${avatar}</div>
       <div style="flex:1;min-width:0">
-        <a href="${a.link || '#'}" target="_blank" style="color:var(--text);text-decoration:none;font-size:.85rem;line-height:1.5;display:block;margin-bottom:6px;font-weight:500">${a.title || '—'}</a>
-        ${snippet ? `<div style="font-size:.7rem;color:var(--dim);line-height:1.5;margin-bottom:8px">${snippet}</div>` : ''}
+        <a href="${url}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none;font-size:.82rem;line-height:1.5;display:block;margin-bottom:6px;font-weight:500">${title}</a>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">@${a.handle || (a.source || 'crypto').toLowerCase()}</span>
-          <span style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">${time}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:.48rem;color:${color};letter-spacing:1px">${src.toUpperCase()}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)">${time}</span>
+          ${cats.map(c => `<span class="badge b-dim" style="font-size:.42rem">${c}</span>`).join('')}
+          ${sent ? `<span class="badge ${sent==='POSITIVE'?'b-green':sent==='NEGATIVE'?'b-red':'b-dim'}" style="font-size:.42rem">${sent}</span>` : ''}
         </div>
       </div>
     </div>`;

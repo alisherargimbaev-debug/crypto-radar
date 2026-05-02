@@ -4043,46 +4043,66 @@ app.get('/paper-app', (req, res) => {
   }
 });
 
-app.get('/api/paper', (req, res) => {
+app.get('/api/paper', async (req, res) => {
   try {
-  const stats   = getPaperStats();
-  const open    = (global.paperTrades || []).filter(t => !t.outcome);
-  const closed  = (global.paperTrades || []).filter(t => t.outcome);
-  res.json({
-    open:    open.map(t => ({
-      instId:     t.instId,
-      strategy:   t.strategy,
-      direction:  t.direction,
-      price:      t.price,
-      sl:         t.sl,
-      tp1:        t.tp1,
-      confidence: t.confidence,
-      ageMin:     Math.round((Date.now() - t.ts) / 60000),
-    })),
-    closed:  closed.slice(-50).reverse().map(t => ({
-      instId:     t.instId,
-      strategy:   t.strategy,
-      direction:  t.direction,
-      price:      t.price,
-      outcome:    t.outcome,
-      pnl:        t.pnl,
-      ageMin:     t.closedAt ? Math.round((t.closedAt - t.ts) / 60000) : null,
-    })),
-    stats: stats ? {
-      total:    stats.closed.length,
-      wins:     stats.wins.length,
-      losses:   stats.losses.length,
-      expired:  stats.expired.length,
-      wr:       stats.wr,
-      totalPnl: parseFloat(stats.totalPnl.toFixed(2)),
-      byStrat:  stats.byStrat,
-    } : null,
-    observeMode: store.observeMode,
-    timestamp:   Date.now(),
-  });
+    const open = (global.paperTrades || []).filter(t => !t.outcome);
+
+    // Закрытые — из Supabase (хранятся вечно)
+    const { data: closedDB } = await supabase
+      .from('paper_trades')
+      .select('*')
+      .not('outcome', 'is', null)
+      .order('closed_at', { ascending: false })
+      .limit(200);
+
+    const closed = (closedDB || []).map(r => ({
+      instId:    r.inst_id,
+      strategy:  r.strategy,
+      direction: r.direction,
+      price:     parseFloat(r.price),
+      outcome:   r.outcome,
+      pnl:       r.pnl ? parseFloat(r.pnl) : null,
+      closedAt:  r.closed_at,
+      ts:        r.ts,
+      ageMin:    r.closed_at && r.ts ? Math.round((r.closed_at - r.ts) / 60000) : null,
+    }));
+
+    const wins    = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses  = closed.filter(t => t.outcome === 'sl');
+    const expired = closed.filter(t => t.outcome === 'expired');
+    const wr      = closed.length ? Math.round(wins.length / closed.length * 100) : 0;
+    const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
+
+    const byStrat = {};
+    for (const t of closed) {
+      const key = (t.strategy || '?').substring(0, 30);
+      if (!byStrat[key]) byStrat[key] = { wins: 0, losses: 0, expired: 0, pnl: 0 };
+      if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrat[key].wins++;
+      else if (t.outcome === 'sl') byStrat[key].losses++;
+      else byStrat[key].expired++;
+      byStrat[key].pnl += t.pnl || 0;
+    }
+    for (const k of Object.keys(byStrat)) byStrat[k].pnl = parseFloat(byStrat[k].pnl.toFixed(2));
+
+    res.json({
+      open: open.map(t => ({
+        instId:     t.instId,
+        strategy:   t.strategy,
+        direction:  t.direction,
+        price:      t.price,
+        sl:         t.sl,
+        tp1:        t.tp1,
+        confidence: t.confidence,
+        ageMin:     Math.round((Date.now() - t.ts) / 60000),
+      })),
+      closed,
+      stats: closed.length ? { total: closed.length, wins: wins.length, losses: losses.length, expired: expired.length, wr, totalPnl: parseFloat(totalPnl.toFixed(2)), byStrat } : null,
+      observeMode: store.observeMode,
+      timestamp:   Date.now(),
+    });
   } catch(e) {
     console.error('[API/paper]', e.message);
-    res.json({ open:[], closed:[], stats:null, observeMode:store.observeMode, error:e.message });
+    res.json({ open: [], closed: [], stats: null, observeMode: store.observeMode, error: e.message });
   }
 });
 
@@ -4145,24 +4165,44 @@ app.get('/api/rss', async (req, res) => {
     const articles = [];
     for (const feed of feeds) {
       try {
-        const xml = await httpGet(feed.url);
-        if (!xml || typeof xml !== 'string') continue;
+        // Используем fetch для получения XML как текст
+        const resp = await fetch(feed.url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 CryptoRadar RSS Reader' },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!resp.ok) continue;
+        const xml = await resp.text();
+        if (!xml || xml.length < 100) continue;
+
         const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
         for (const item of items.slice(0, 8)) {
           const c = item[1];
           const title   = (c.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/) || c.match(/<title>([\s\S]*?)<\/title>/))?.[1]?.trim() || '';
           const pubDate = (c.match(/<pubDate>(.*?)<\/pubDate>/))?.[1] || '';
-          const link    = (c.match(/<link>(.*?)<\/link>/))?.[1]?.trim() || '';
+          const link    = (c.match(/<link>(.*?)<\/link>/))?.[1]?.trim() ||
+                          (c.match(/<link\s+\/?>(.*?)<\/link>/))?.[1]?.trim() || '';
           if (!title || title.length < 5) continue;
-          articles.push({ title, pubDate, link, source: feed });
+          articles.push({
+            title,
+            pubDate,
+            link,
+            handle:  feed.handle,
+            source:  feed.name,
+            avatar:  feed.avatar,
+            color:   feed.color,
+          });
         }
-      } catch(e) { continue; }
+      } catch(e) {
+        console.log(`[RSS] ${feed.name} error: ${e.message}`);
+        continue;
+      }
     }
 
     articles.sort((a,b) => new Date(b.pubDate) - new Date(a.pubDate));
-    res.json({ ok: true, data: articles });
+    res.json({ ok: true, articles });
   } catch(e) {
-    res.status(500).json({ ok: false, error: e.message });
+    console.error('[RSS API]', e.message);
+    res.status(500).json({ ok: false, error: e.message, articles: [] });
   }
 });
 
@@ -4941,30 +4981,88 @@ if (alreadyOpen) {
 // ============================================================
 const PAPER_FILE = './paper_trades.json';
 
-function loadPaperTrades() {
+// Загрузка из Supabase при старте
+async function loadPaperTrades() {
   try {
-    if (fs.existsSync(PAPER_FILE)) {
-      const data = JSON.parse(fs.readFileSync(PAPER_FILE, 'utf8'));
-      global.paperTrades = data.trades || [];
-      console.log(`[PAPER] Загружено ${global.paperTrades.length} сделок из файла`);
+    // Сначала пробуем Supabase
+    const { data, error } = await supabase
+      .from('paper_trades')
+      .select('*')
+      .is('outcome', null) // только открытые
+      .order('ts', { ascending: false })
+      .limit(200);
+
+    if (!error && data?.length) {
+      global.paperTrades = data.map(r => ({
+        ts:         r.ts,
+        instId:     r.inst_id,
+        strategy:   r.strategy,
+        direction:  r.direction,
+        price:      parseFloat(r.price),
+        sl:         parseFloat(r.sl),
+        tp1:        parseFloat(r.tp1),
+        tp2:        parseFloat(r.tp2),
+        confidence: r.confidence,
+        outcome:    r.outcome,
+        closePrice: r.close_price ? parseFloat(r.close_price) : null,
+        closedAt:   r.closed_at,
+        pnl:        r.pnl ? parseFloat(r.pnl) : null,
+        _id:        r.id,
+      }));
+      console.log(`[PAPER] Загружено ${global.paperTrades.length} открытых сделок из Supabase`);
     } else {
       global.paperTrades = [];
+      console.log('[PAPER] Supabase: нет открытых сделок');
     }
   } catch(e) {
-    console.error('[PAPER] load error:', e.message);
+    console.error('[PAPER] loadPaperTrades error:', e.message);
     global.paperTrades = [];
   }
 }
-function savePaperTradesToFile() {
+
+// Сохраняем новую paper сделку в Supabase
+async function savePaperTradeToSupabase(sig) {
   try {
-    fs.writeFileSync(PAPER_FILE, JSON.stringify({ trades: global.paperTrades || [], saved: Date.now() }));
-  } catch(e) { console.error('[PAPER] save error:', e.message); }
+    const { data, error } = await supabase.from('paper_trades').insert({
+      ts:         sig.ts || Date.now(),
+      inst_id:    sig.instId,
+      strategy:   sig.strategy,
+      direction:  sig.direction,
+      price:      sig.price,
+      sl:         parseFloat(sig.sl),
+      tp1:        parseFloat(sig.tp1),
+      tp2:        parseFloat(sig.tp2),
+      confidence: sig.confidence,
+      outcome:    null,
+    }).select().single();
+    if (!error && data) return data.id;
+  } catch(e) {
+    console.error('[PAPER] savePaperTradeToSupabase error:', e.message);
+  }
+  return null;
 }
-loadPaperTrades();
+
+// Закрываем paper сделку в Supabase
+async function closePaperTradeInSupabase(trade) {
+  if (!trade._id) return;
+  try {
+    await supabase.from('paper_trades').update({
+      outcome:     trade.outcome,
+      close_price: trade.closePrice,
+      closed_at:   trade.closedAt,
+      pnl:         trade.pnl,
+    }).eq('id', trade._id);
+  } catch(e) {
+    console.error('[PAPER] closePaperTradeInSupabase error:', e.message);
+  }
+}
+
+// Загружаем при старте
+loadPaperTrades().catch(e => console.error('[PAPER] init error:', e.message));
 
 function savePaperTrade(sig) {
   if (!global.paperTrades) global.paperTrades = [];
-  global.paperTrades.push({
+  const trade = {
     ts:         Date.now(),
     instId:     sig.instId,
     strategy:   sig.strategy,
@@ -4974,17 +5072,21 @@ function savePaperTrade(sig) {
     tp1:        parseFloat(sig.tp1),
     tp2:        parseFloat(sig.tp2),
     confidence: sig.confidence,
-    outcome:    null,  // заполнится позже
+    outcome:    null,
     closedAt:   null,
     closePrice: null,
     pnl:        null,
-  });
-  // Держим максимум 200 paper trades
-  if (global.paperTrades.length > 200) {
-    global.paperTrades = global.paperTrades.slice(-200);
+    _id:        null, // будет заполнен из Supabase
+  };
+  global.paperTrades.push(trade);
+  if (global.paperTrades.length > 500) {
+    global.paperTrades = global.paperTrades.slice(-500);
   }
+  // Сохраняем в Supabase async
+  savePaperTradeToSupabase(trade).then(id => {
+    if (id) trade._id = id;
+  }).catch(e => console.error('[PAPER] save error:', e.message));
   console.log(`[PAPER] ${sig.instId} ${sig.direction.toUpperCase()} $${sig.price} записана`);
-  savePaperTradesToFile();
 }
 
 async function checkPaperTrades() {
@@ -5056,9 +5158,12 @@ async function checkPaperTrades() {
         trade.pnl = parseFloat(pnl.toFixed(2));
         console.log(`[PAPER EXPIRED] ${trade.instId} ${trade.pnl}%`);
       }
+      // Если сделка закрылась — сохраняем в Supabase
+      if (trade.outcome) {
+        closePaperTradeInSupabase(trade).catch(e => console.error('[PAPER] close error:', e.message));
+      }
     } catch(e) { console.error(`[PAPER] checkPaperTrades error ${trade.instId}:`, e.message); }
   }
-  savePaperTradesToFile();
 }
 
 // ============================================================

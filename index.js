@@ -93,6 +93,8 @@ const STRATEGY_SL = {
   '1️⃣1️⃣ Elliott+Fib+SMA':           { sl: 1.5, tp1: 4.5, tp2: 7.5  }, // RR 1:3/1:5
   '1️⃣2️⃣ Liquidity Sweep (15m)':    { sl: 1.5, tp1: 3.75, tp2: 6.0 }, // RR 1:2.5/1:4
   '1️⃣3️⃣ Order Block (1H)':          { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3
+  '1️⃣4️⃣ Whale Follow (15m)':        { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3 (быстрая реакция)
+  '1️⃣5️⃣ Liquidation Hunt (5m)':     { sl: 1.0, tp1: 2.5,  tp2: 4.0 }, // RR 1:2.5/1:4 (тугой SL — каскад быстрый)
 };
 
 const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, volMin: 10000000 };
@@ -294,6 +296,8 @@ const STRATEGY_META = {
   '1️⃣2️⃣ Liquidity Sweep (15m)': { color: '#34d399', rating: 'A', wr: 'Новая' },
   '1️⃣1️⃣ Elliott+Fib+SMA':       { color: '#a78bfa', rating: 'A', wr: 'Новая' },
   '1️⃣3️⃣ Order Block (1H)':      { color: '#06b6d4', rating: 'A', wr: 'Новая' },
+  '1️⃣4️⃣ Whale Follow (15m)':    { color: '#0ea5e9', rating: 'A', wr: 'Новая' },
+  '1️⃣5️⃣ Liquidation Hunt (5m)': { color: '#f43f5e', rating: 'A', wr: 'Новая' },
 };
 
 // ── Хранилище в памяти (вместо ScriptProperties) ──────────
@@ -1501,6 +1505,68 @@ async function getOKXTakerFlow(ccy, period) {
 async function getCurrentPrice(instId) {
   const data = await httpGet(`https://www.okx.com/api/v5/market/ticker?instId=${instId}`);
   return data?.code === '0' ? parseFloat(data.data[0].last) : null;
+}
+
+// ============================================================
+//  S14 + S15 — данные о ликвидациях и китах
+// ============================================================
+
+// Кэш ликвидаций OKX (обновляем раз в 60 секунд)
+const liquidationCache = { data: null, ts: 0 };
+async function getOKXLiquidations() {
+  const now = Date.now();
+  if (liquidationCache.data && now - liquidationCache.ts < 60000) {
+    return liquidationCache.data;
+  }
+  try {
+    // OKX public endpoint: последние ликвидации топ-монет
+    const data = await httpGet('https://www.okx.com/api/v5/public/liquidation-orders?instType=SWAP&limit=100');
+    if (!data || data.code !== '0') return [];
+
+    // Группируем по символу — кто массово ликвидируется
+    const byCoin = {};
+    for (const order of (data.data || [])) {
+      for (const detail of (order.details || [])) {
+        const instId = detail.instId;
+        const side   = detail.side; // buy = шорты ликвидировались (long squeeze)
+        const sz     = parseFloat(detail.sz || 0);
+        const bkPx   = parseFloat(detail.bkPx || 0);
+        const valueUSD = sz * bkPx;
+        if (!byCoin[instId]) byCoin[instId] = { longLiq: 0, shortLiq: 0, count: 0, ts: now };
+        if (side === 'sell') byCoin[instId].longLiq += valueUSD;   // long позиция -> sell для закрытия
+        else                 byCoin[instId].shortLiq += valueUSD;
+        byCoin[instId].count++;
+      }
+    }
+    liquidationCache.data = byCoin;
+    liquidationCache.ts = now;
+    return byCoin;
+  } catch(e) {
+    console.error('[S15] getOKXLiquidations:', e.message);
+    return liquidationCache.data || {};
+  }
+}
+
+// Получить недавние крупные действия китов (через copytrader если есть)
+function getRecentWhaleActions() {
+  try {
+    if (typeof copytrader?.getRecentActions === 'function') {
+      return copytrader.getRecentActions(15) || []; // последние 15 минут
+    }
+    if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
+      const snap = copytrader.getTrackedWhalesSnapshot();
+      const positions = snap?.positions || [];
+      const now = Date.now();
+      // Фильтруем свежие позиции (открыты в последние 15 минут)
+      return positions.filter(p => {
+        const ts = p.openedAt || p.ts || p.timestamp || 0;
+        return ts > 0 && (now - ts) < 15 * 60 * 1000;
+      });
+    }
+  } catch(e) {
+    console.error('[S14] getRecentWhaleActions:', e.message);
+  }
+  return [];
 }
 
 
@@ -3842,6 +3908,106 @@ if (k1h.length >= 55) {
       }
     } catch(e) { console.error('S11 error:', e.message); }
 
+    // ════════════════════════════════════════════════════════
+    // S14 — Whale Follow (15m) — следуем за крупными трейдерами
+    // ════════════════════════════════════════════════════════
+    try {
+      const whaleActions = getRecentWhaleActions();
+      if (whaleActions.length > 0) {
+        // Какой символ нас интересует (без -USDT-SWAP)
+        const symbol = instId.replace('-USDT-SWAP', '').replace('-USDT', '');
+
+        // Ищем 2+ китов открывших одинаковое направление по этой монете
+        const matching = whaleActions.filter(a => {
+          const aSym = (a.symbol || a.coin || '').replace('-USDT-SWAP', '').replace('-USDT', '').replace('USDT', '');
+          return aSym.toUpperCase() === symbol.toUpperCase();
+        });
+
+        if (matching.length >= 2) {
+          // Считаем направление: сколько лонгов, сколько шортов
+          let longCnt = 0, shortCnt = 0, totalSize = 0;
+          for (const m of matching) {
+            const side = (m.side || m.direction || '').toLowerCase();
+            const size = parseFloat(m.size || m.notional || m.qty || 0);
+            if (side === 'long' || side === 'buy') { longCnt++; totalSize += size; }
+            else if (side === 'short' || side === 'sell') { shortCnt++; totalSize += size; }
+          }
+
+          // Минимум 2 кита и общий размер $500k+
+          if (totalSize >= 500000 && (longCnt >= 2 || shortCnt >= 2)) {
+            const dir = longCnt > shortCnt ? 'long' : 'short';
+            const sltp = calcSLTP(price, dir, '1️⃣4️⃣ Whale Follow (15m)');
+
+            // Confidence: больше китов и крупнее объём = выше уверенность
+            let conf = 65;
+            if (matching.length >= 3) conf += 8;
+            if (matching.length >= 5) conf += 5;
+            if (totalSize >= 1000000) conf += 5;
+            if (totalSize >= 5000000) conf += 7;
+
+            signals.push({
+              strategy:  '1️⃣4️⃣ Whale Follow (15m)',
+              instId, direction: dir,
+              signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+              price, confidence: Math.min(conf, 92),
+              metrics:   `${matching.length} китов · $${(totalSize/1e6).toFixed(2)}M · ${longCnt}L/${shortCnt}S`,
+              ...sltp,
+            });
+          }
+        }
+      }
+    } catch(e) { console.error('S14 error:', e.message); }
+
+    // ════════════════════════════════════════════════════════
+    // S15 — Liquidation Hunt (5m) — ловим каскады ликвидаций
+    // ════════════════════════════════════════════════════════
+    try {
+      const liqs = await getOKXLiquidations();
+      const liqData = liqs[instId];
+
+      if (liqData && liqData.count >= 5) {
+        const totalLiq = liqData.longLiq + liqData.shortLiq;
+        const longRatio = liqData.longLiq / totalLiq;
+
+        // Направление: если ликвидируются преимущественно longs (65%+) → шорт
+        // если преимущественно shorts → лонг (short squeeze)
+        let dir = null;
+        if (longRatio >= 0.7 && liqData.longLiq >= 500000) {
+          dir = 'short'; // longs cascading — продолжение падения
+        } else if (longRatio <= 0.3 && liqData.shortLiq >= 500000) {
+          dir = 'long';  // shorts cascading — short squeeze
+        }
+
+        if (dir) {
+          // Проверяем что цена двинулась в нужную сторону за последние 5m
+          const k5m = await getOKXKlinesCached(instId, '5m', 6);
+          if (k5m.length >= 5) {
+            const recentChange = (k5m[k5m.length - 1].close - k5m[k5m.length - 5].close) / k5m[k5m.length - 5].close * 100;
+            const directionAlign = (dir === 'long' && recentChange > 0.3) || (dir === 'short' && recentChange < -0.3);
+
+            if (directionAlign) {
+              const sltp = calcSLTP(price, dir, '1️⃣5️⃣ Liquidation Hunt (5m)');
+
+              let conf = 70;
+              if (liqData.count >= 10) conf += 6;
+              if (totalLiq >= 1000000)  conf += 5;
+              if (totalLiq >= 5000000)  conf += 7;
+              if (Math.abs(recentChange) > 1) conf += 4;
+
+              signals.push({
+                strategy:  '1️⃣5️⃣ Liquidation Hunt (5m)',
+                instId, direction: dir,
+                signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+                price, confidence: Math.min(conf, 92),
+                metrics:   `${liqData.count} ликв · $${(totalLiq/1e6).toFixed(2)}M · ${(longRatio*100).toFixed(0)}% longs · 5m: ${recentChange.toFixed(2)}%`,
+                ...sltp,
+              });
+            }
+          }
+        }
+      }
+    } catch(e) { console.error('S15 error:', e.message); }
+
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
 }
@@ -4762,11 +4928,11 @@ if (alreadyOpen) {
       if (!store.observeMode) {
         const allowedStrategies = (() => {
           if (adx > 25) {
-            return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott'];
+            return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           } else if (adx < 18) {
-            return ['RSI Диверг', 'Funding', 'Liquidity Sweep'];
+            return ['RSI Диверг', 'Funding', 'Liquidity Sweep', 'Whale Follow', 'Liquidation Hunt'];
           } else {
-            return ['RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott'];
+            return ['RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           }
         })();
 

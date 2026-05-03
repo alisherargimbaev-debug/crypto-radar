@@ -202,6 +202,269 @@ nav::-webkit-scrollbar{display:none;}
 .c-blue{color:var(--blue);}
 .c-yellow{color:var(--yellow);}
 .c-dim{color:var(--dim);}
+
+/* ══════════════════════════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════════════════════════ */
+
+/* Плавное появление страниц */
+.page.active {
+  animation: fadeInUp 0.4s ease forwards;
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Карточки — появление каскадом */
+.stat-card {
+  animation: cardIn 0.5s ease forwards;
+  opacity: 0;
+}
+.stat-card:nth-child(1) { animation-delay: 0.05s; }
+.stat-card:nth-child(2) { animation-delay: 0.10s; }
+.stat-card:nth-child(3) { animation-delay: 0.15s; }
+.stat-card:nth-child(4) { animation-delay: 0.20s; }
+.stat-card:nth-child(5) { animation-delay: 0.25s; }
+.stat-card:nth-child(6) { animation-delay: 0.30s; }
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Hover на карточках — лёгкий подъём */
+.stat-card {
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  cursor: default;
+}
+[data-theme="dark"] .stat-card:hover {
+  transform: translateY(-2px);
+  border-color: #3a3a3a;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+[data-theme="light"] .stat-card:hover {
+  transform: translateY(-2px);
+  border-color: #b8af9e;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+
+/* Панели — появление */
+.panel {
+  animation: panelIn 0.5s ease forwards;
+  opacity: 0;
+  animation-delay: 0.1s;
+}
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Строки таблицы — плавное появление */
+.tbl tbody tr {
+  animation: rowIn 0.3s ease forwards;
+  opacity: 0;
+}
+.tbl tbody tr:nth-child(1)  { animation-delay: 0.05s; }
+.tbl tbody tr:nth-child(2)  { animation-delay: 0.08s; }
+.tbl tbody tr:nth-child(3)  { animation-delay: 0.11s; }
+.tbl tbody tr:nth-child(4)  { animation-delay: 0.14s; }
+.tbl tbody tr:nth-child(5)  { animation-delay: 0.17s; }
+.tbl tbody tr:nth-child(6)  { animation-delay: 0.20s; }
+.tbl tbody tr:nth-child(7)  { animation-delay: 0.23s; }
+.tbl tbody tr:nth-child(8)  { animation-delay: 0.26s; }
+.tbl tbody tr:nth-child(9)  { animation-delay: 0.29s; }
+.tbl tbody tr:nth-child(10) { animation-delay: 0.32s; }
+@keyframes rowIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Sig rows тоже */
+.sig-row {
+  animation: sigIn 0.3s ease forwards;
+  opacity: 0;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.sig-row:nth-child(1) { animation-delay: 0.05s; }
+.sig-row:nth-child(2) { animation-delay: 0.10s; }
+.sig-row:nth-child(3) { animation-delay: 0.15s; }
+.sig-row:nth-child(4) { animation-delay: 0.20s; }
+.sig-row:nth-child(5) { animation-delay: 0.25s; }
+.sig-row:nth-child(6) { animation-delay: 0.30s; }
+@keyframes sigIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+[data-theme="dark"] .sig-row:hover {
+  background: rgba(255,255,255,0.04) !important;
+  transform: translateX(3px);
+}
+[data-theme="light"] .sig-row:hover {
+  background: rgba(0,0,0,0.03) !important;
+  transform: translateX(3px);
+}
+
+/* Живой dot — пульс */
+.live-dot {
+  position: relative;
+}
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--green);
+  animation: dotPulse 2s ease-out infinite;
+}
+@keyframes dotPulse {
+  0%   { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* Числа в stat-card — счётчик (через CSS) */
+.stat-value {
+  transition: color 0.3s ease;
+}
+
+/* Badge — лёгкий pop при появлении */
+.badge {
+  animation: badgePop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+@keyframes badgePop {
+  from { transform: scale(0.8); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* Progress bar — анимированное заполнение */
+.prog-fill {
+  animation: fillBar 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  transform-origin: left;
+}
+@keyframes fillBar {
+  from { width: 0% !important; }
+}
+
+/* Кнопки — hover эффект */
+.btn {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.btn:hover::after { opacity: 0.06; }
+.btn:active { transform: scale(0.97); }
+
+/* Nav кнопки */
+.nav-btn {
+  position: relative;
+  transition: color 0.2s ease;
+}
+.nav-btn::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 50%; right: 50%;
+  height: 2px;
+  background: var(--accent);
+  transition: left 0.2s ease, right 0.2s ease;
+}
+.nav-btn.active::after,
+.nav-btn:hover::after {
+  left: 0; right: 0;
+}
+[data-theme="dark"] .nav-btn.active::after { background: rgba(255,255,255,0.7); }
+[data-theme="light"] .nav-btn.active::after { background: var(--accent); }
+
+/* Ticker — плавная прокрутка уже есть, добавим fade на краях */
+.ticker-wrap {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 5%, black 95%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, black 5%, black 95%, transparent 100%);
+}
+
+/* Число в stat — появление снизу */
+@keyframes numberIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stat-value {
+  animation: numberIn 0.5s ease forwards;
+}
+
+/* Spinner для загрузки */
+.empty::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--dim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+/* Не показываем спиннер для статичных empty */
+.empty.no-spin::before { display: none; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Стратегии — карточки */
+.strat-card {
+  animation: cardIn 0.4s ease forwards;
+  opacity: 0;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.strat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border2);
+}
+.strat-card:nth-child(odd)  { animation-delay: 0.05s; }
+.strat-card:nth-child(even) { animation-delay: 0.10s; }
+
+/* Плавное переключение темы */
+*, *::before, *::after {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.15s ease;
+}
+/* Но не анимируем transform через этот transition */
+.stat-card, .panel, .btn, .nav-btn, .sig-row, .strat-card {
+  transition: transform 0.2s ease, border-color 0.3s ease, background-color 0.3s ease, box-shadow 0.2s ease, color 0.15s ease;
+}
+
+/* Инвестор hero — gradient animation */
+.inv-hero {
+  background: linear-gradient(135deg, var(--panel) 0%, var(--panel2) 50%, var(--panel) 100%);
+  background-size: 200% 200%;
+  animation: gradientShift 8s ease infinite;
+}
+@keyframes gradientShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* DCA progress bar glow */
+#dca-bar {
+  box-shadow: 0 0 8px rgba(232, 160, 32, 0.4);
+  animation: fillBar 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards, glowPulse 2s ease infinite 1.5s;
+}
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(232,160,32,0.4); }
+  50%       { box-shadow: 0 0 16px rgba(232,160,32,0.7); }
+}
+
+/* Scrollbar анимированный */
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dim2);
+}
+
 </style>
 </head>
 <body>
@@ -1217,6 +1480,60 @@ function calcPosition() {
   set('calc-profit', '+$' + profitUSD.toFixed(2));
   set('calc-loss', '-$' + lossUSD.toFixed(2));
 }
+
+
+// ── COUNTUP ANIMATION ───────────────────────────────────────
+function animateNumber(el, target, duration = 800, prefix = '', suffix = '') {
+  if (!el) return;
+  const isFloat = String(target).includes('.');
+  const decimals = isFloat ? (String(target).split('.')[1] || '').length : 0;
+  const start = 0;
+  const startTime = performance.now();
+  function update(currentTime) {
+    const elapsed = currentTime - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    // easeOutQuart
+    const eased = 1 - Math.pow(1 - progress, 4);
+    const current = start + (target - start) * eased;
+    el.textContent = prefix + (isFloat ? current.toFixed(decimals) : Math.round(current)) + suffix;
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+// Анимируем числа при загрузке страницы
+function animatePageNumbers() {
+  // Balance
+  animateNumber(document.getElementById('ov-open'), parseInt(document.getElementById('ov-open')?.textContent) || 0, 600);
+}
+
+// Intersection Observer для анимации элементов при скролле
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.style.animationPlayState = 'running';
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.1 });
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Наблюдаем за карточками
+  document.querySelectorAll('.stat-card, .panel, .strat-card').forEach(el => {
+    el.style.animationPlayState = 'paused';
+    observer.observe(el);
+  });
+});
+
+// Убираем спиннер из static empty блоков
+function markStaticEmpties() {
+  document.querySelectorAll('.empty').forEach(el => {
+    if (el.textContent.includes('NO ') || el.textContent.includes('UNAVAILABLE') || el.textContent.includes('COLLECTING')) {
+      el.classList.add('no-spin');
+    }
+  });
+}
+setInterval(markStaticEmpties, 2000);
 
 // ── INIT ──────────────────────────────────────────────────────
 loadPaper();

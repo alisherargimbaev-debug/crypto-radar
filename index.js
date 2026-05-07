@@ -194,21 +194,27 @@ function checkPortfolioRisk(sig) {
     }
   }
 
-  // ── ПРОП-РЕЖИМ: строгий whitelist по emoji-номеру ──────────
+  // ── ПРОП-РЕЖИМ: только S1 + S4 (на основе 200 paper trades) ──
+  // S1 Volume Spike: WR 85% на 40 сделках → без порога confidence
+  // S4 MA20/MA50:   WR 30% → порог 65% + строгие фильтры
   if (store.propMode) {
-    // Разрешены S5, S10 и S12. Проверка по emoji в начале названия.
-    const PROP_WHITELIST = ['5️⃣', '🔟', '1️⃣2️⃣'];
-    const isAllowed = PROP_WHITELIST.some(prefix => sig.strategy.startsWith(prefix));
-    if (!isAllowed) {
-      console.log(`[PROP BLOCK] ${sig.instId} — "${sig.strategy}" не в whitelist`);
-      return { allowed: false, reason: 'Проп-режим: только S5+S10+S12' };
+    const isS1 = sig.strategy.startsWith('1️⃣ ');
+    const isS4 = sig.strategy.startsWith('4️⃣ ');
+
+    if (!isS1 && !isS4) {
+      console.log(`[PROP BLOCK] ${sig.instId} — "${sig.strategy}" заблокирована (только S1+S4)`);
+      return { allowed: false, reason: 'Проп-режим: только S1 Volume Spike + S4 MA20/MA50' };
     }
-    const propMinConf = sig.strategy.startsWith('🔟') ? 80
-                      : sig.strategy.startsWith('1️⃣2️⃣') ? 82
-                      : 82;
-    if (sig.confidence < propMinConf) {
-      console.log(`[PROP CONF] ${sig.instId} — confidence ${sig.confidence}% < ${propMinConf}%`);
-      return { allowed: false, reason: `Низкая уверенность для проп: ${sig.confidence}% < ${propMinConf}%` };
+
+    // S1: без порога confidence — даже 50% давали WR 85%
+    if (isS1) {
+      console.log(`[PROP S1 ✅] ${sig.instId} — conf=${sig.confidence}% → пропускаем`);
+    }
+
+    // S4: порог 65% — только чёткие сигналы
+    if (isS4 && sig.confidence < 65) {
+      console.log(`[PROP S4 BLOCK] ${sig.instId} — conf=${sig.confidence}% < 65%`);
+      return { allowed: false, reason: `S4: низкий confidence ${sig.confidence}% < 65%` };
     }
   }
 

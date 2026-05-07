@@ -449,6 +449,7 @@ function loadSettings() {
 
 function saveSettings() {
   try {
+    // Сохраняем в файл (резерв)
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
       accountBalance: store.accountBalance,
       leverage:       store.leverage,
@@ -459,10 +460,60 @@ function saveSettings() {
       observeMode:    store.observeMode,
       peakBalance:    store.peakBalance,
     }, null, 2));
-  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
+
+  // Сохраняем в Supabase (персистентно между деплоями)
+  supabase.from('bot_settings').upsert({
+    id:             1,
+    account_balance: store.accountBalance,
+    leverage:       store.leverage,
+    risk_pct:       store.riskPct,
+    prop_mode:      store.propMode,
+    emergency_stop: store.emergencyStop,
+    block_weekends: store.blockWeekends,
+    observe_mode:   store.observeMode,
+    peak_balance:   store.peakBalance,
+    updated_at:     new Date().toISOString(),
+  }).then(({ error }) => {
+    if (error) console.error('[SETTINGS] Supabase save error:', error.message);
+    else console.log(`[SETTINGS] Сохранено: prop=${store.propMode} observe=${store.observeMode}`);
+  });
 }
 
+async function loadSettingsFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('bot_settings')
+      .select('*')
+      .eq('id', 1)
+      .single();
+
+    if (error || !data) {
+      console.log('[SETTINGS] Supabase: нет данных, используем файл');
+      loadSettings();
+      return;
+    }
+
+    // Применяем настройки из Supabase
+    if (typeof data.account_balance === 'number') store.accountBalance = data.account_balance;
+    if (typeof data.leverage        === 'number') store.leverage       = data.leverage;
+    if (typeof data.risk_pct        === 'number') store.riskPct        = data.risk_pct;
+    if (typeof data.prop_mode       === 'boolean') store.propMode      = data.prop_mode;
+    if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
+    if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
+    if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
+    if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
+
+    console.log(`[SETTINGS] Загружено из Supabase: balance=$${store.accountBalance}, prop=${store.propMode}, observe=${store.observeMode}`);
+  } catch(e) {
+    console.error('[SETTINGS] Supabase load error:', e.message);
+    loadSettings(); // fallback на файл
+  }
+}
+
+// Загружаем сначала из файла (быстро), потом из Supabase (актуально)
 loadSettings();
+loadSettingsFromSupabase().catch(e => console.error('[SETTINGS] init error:', e.message));
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {

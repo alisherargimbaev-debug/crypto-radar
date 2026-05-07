@@ -569,10 +569,27 @@ async function sendTelegram(text, module = null) {
 // ============================================================
 //  TELEGRAM КОМАНДЫ
 // ============================================================
+// Команды только для администратора (владельца бота)
+const ADMIN_ONLY_COMMANDS = [
+  '/prop', '/observe', '/emergency', '/resume', '/setrisk',
+  '/setbalance', '/setleverage', '/weekends', '/autoexec',
+  '/closeall', '/nightmode', '/audit', '/report', '/debrief',
+  '/psychologist', '/benchmark', '/weekly', '/versions', '/logs',
+  '/diag', '/stocks',
+];
+
 async function handleTelegramCommand(text, chatId) {
   const parts = text.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
   const args  = parts.slice(1);
+
+  // Проверка прав: управляющие команды только для владельца
+  const isAdmin = String(chatId) === String(process.env.CHAT_ID);
+  const isAdminCmd = ADMIN_ONLY_COMMANDS.some(c => cmd.startsWith(c));
+  if (isAdminCmd && !isAdmin) {
+    await sendTelegramTo(chatId, '⛔️ Эта команда доступна только администратору.');
+    return;
+  }
 
   if (cmd === '/status' || cmd === '/start') {
     const open = store.openTrades;

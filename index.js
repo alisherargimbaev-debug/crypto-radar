@@ -1378,6 +1378,21 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
+
+  // При старте — пропускаем все накопившиеся апдейты
+  // чтобы старый экземпляр не обрабатывал те же сообщения что и новый
+  try {
+    const init = await httpPost(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
+      { offset: -1, limit: 1, timeout: 0 },
+      { 'Content-Type': 'application/json' }
+    );
+    if (init?.result?.length) {
+      offset = init.result[init.result.length - 1].update_id + 1;
+      console.log(`[TG] Старт с offset=${offset} (пропущены старые апдейты)`);
+    }
+  } catch(e) { console.error('[TG] init offset error:', e.message); }
+
   const poll = async () => {
     try {
       const data = await httpPost(

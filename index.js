@@ -19,6 +19,18 @@ const supabase = createClient(
 
 // ── Copy Trading Tracker — подпроект (отдельный модуль) ────
 const copytrader = require('./copytrader');
+
+// === AutoExec — автоматическое исполнение на Bybit ===
+let autoExecSignals = null;
+if (process.env.AUTO_EXECUTE === 'true') {
+  try {
+    const ae = require('./autoexec');
+    autoExecSignals = ae.signals;
+    console.log('[AutoExec] Модуль загружен');
+  } catch(e) {
+    console.error('[AutoExec] Ошибка загрузки:', e.message);
+  }
+}
 // Подменяем sender в copytrader — он будет использовать нашу sendTelegram с учётом подписок
 copytrader.setSender((text) => sendTelegram(text, 'whales'));
 
@@ -1041,6 +1053,71 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/autoexec') {
+    if (!autoExecSignals) {
+      await sendTelegramTo(chatId,
+        `❌ AutoExec не загружен\n\n` +
+        `Проверь в Render:\n` +
+        `AUTO_EXECUTE = true\n\n` +
+        `И что файлы autoexec.js и bybit-client.js есть в репозитории.`
+      );
+    } else {
+      const arg = (args[0] || '').toLowerCase();
+      autoExecSignals.emit('telegram_command', {
+        command: '/autoexec',
+        args: arg ? [arg] : [],
+        replyFn: (text) => sendTelegramTo(chatId, text),
+      });
+    }
+  }
+
+  else if (cmd === '/positions') {
+    if (!autoExecSignals) {
+      await sendTelegramTo(chatId, `❌ AutoExec не загружен`);
+    } else {
+      autoExecSignals.emit('telegram_command', {
+        command: '/positions',
+        args: [],
+        replyFn: (text) => sendTelegramTo(chatId, text),
+      });
+    }
+  }
+
+  else if (cmd === '/closeall') {
+    if (!autoExecSignals) {
+      await sendTelegramTo(chatId, `❌ AutoExec не загружен`);
+    } else {
+      await sendTelegramTo(chatId, `⚠️ Закрываю все позиции на Bybit...`);
+      autoExecSignals.emit('telegram_command', {
+        command: '/closeall',
+        args: [],
+        replyFn: (text) => sendTelegramTo(chatId, text),
+      });
+    }
+  }
+
+  else if (cmd === '/nightmode') {
+    store.nightMode = !store.nightMode;
+    saveSettings();
+    if (store.nightMode) {
+      await sendTelegramTo(chatId,
+        `🌙 НОЧНОЙ РЕЖИМ ВКЛЮЧЁН\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Бот работает пока ты спишь:\n` +
+        `  Только S1 Volume Spike\n` +
+        `  Риск: 0.3%\n` +
+        `  Авто-стоп: 2 SL подряд\n\n` +
+        `Включи AutoExec: /autoexec on\n` +
+        `Выключить: /nightmode`
+      );
+    } else {
+      await sendTelegramTo(chatId,
+        `☀️ НОЧНОЙ РЕЖИМ ВЫКЛЮЧЕН\n` +
+        `Не забудь: /autoexec off`
+      );
+    }
+  }
+
   else if (cmd === '/setbalance') {
     const val = parseFloat(text.split(/\s+/)[1]);
     if (!val || val < 100) {
@@ -1111,6 +1188,9 @@ async function handleTelegramCommand(text, chatId) {
       `/whales       — 🐋 топ-5 трейдеров\n` +
       `/modules      — ⚙️ твои подписки\n` +
       `/guide        — инструкция по сигналам\n` +
+      `/autoexec     — 🤖 вкл/выкл автоторговлю Bybit\n` +
+      `/positions    — 📊 позиции на Bybit\n` +
+      `/closeall     — 🔴 закрыть все позиции Bybit\n` +
       `/prop         — 🏆 вкл/выкл проп-режим\n` +
       `/propstatus   — статус проп-режима\n` +
       `/account      — 💼 настройки аккаунта\n` +
@@ -5136,6 +5216,38 @@ if (alreadyOpen) {
       } else {
         saveOpenTrade(best);
       }
+
+      // === AutoExec: отправляем сигнал на Bybit ===
+      if (autoExecSignals && !store.observeMode) {
+        try {
+          // Конвертируем формат OKX → Bybit
+          const bybitSymbol = best.instId
+            .replace('-USDT-SWAP', 'USDT')
+            .replace('-USDT', 'USDT')
+            .replace(/-/g, '');
+
+          // Считаем SL% и TP% из абсолютных цен
+          const entryPrice = parseFloat(best.price);
+          const slPrice    = parseFloat(best.sl);
+          const tp1Price   = parseFloat(best.tp1);
+          const slPct  = Math.abs((slPrice - entryPrice) / entryPrice * 100);
+          const tp1Pct = Math.abs((tp1Price - entryPrice) / entryPrice * 100);
+
+          autoExecSignals.emit('trade_signal', {
+            symbol:     bybitSymbol,
+            side:       best.direction === 'long' ? 'Buy' : 'Sell',
+            confidence: best.confidence,
+            sl_pct:     parseFloat(slPct.toFixed(3)),
+            tp_pct:     parseFloat(tp1Pct.toFixed(3)),
+            reason:     best.strategy + ' | ' + (best.metrics || ''),
+            source:     'quantum-fund',
+          });
+
+          console.log(`[AutoExec] Сигнал отправлен: ${bybitSymbol} ${best.direction} conf=${best.confidence}%`);
+        } catch(e) {
+          console.error('[AutoExec] emit error:', e.message);
+        }
+      }
     }
   } finally {
     isRunning = false;
@@ -6685,6 +6797,24 @@ setTimeout(() => {
   } catch(e) { console.error('[TG] deleteWebhook error:', e.message); }
   pollTelegramUpdates();
 })();
+
+// === AutoExec: inject зависимостей + Telegram команды ===
+if (autoExecSignals) {
+  // Передаём зависимости в autoexec
+  autoExecSignals.emit('inject_deps', {
+    telegramBot:    null, // используем sendTelegram напрямую
+    telegramChatId: CHAT_ID,
+    supabaseClient: supabase,
+  });
+
+  // Переопределяем notify в autoexec через наш sendTelegram
+  // (autoexec сам отправит через свой notify после inject)
+
+  console.log('[AutoExec] Зависимости переданы');
+
+  // Telegram команды autoexec
+  // Добавляем в polling обработчик (см. handleCommand ниже)
+}
 
 // Загружаем подписки пользователей из Supabase (персональные on/off модулей)
 loadSubscriptions().catch(e => console.error('[SUBS] initial load error:', e.message));

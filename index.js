@@ -5132,10 +5132,12 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          // S1 базовый confidence = 65 (без бонусов)
-          // S4 базовый confidence = 55 (с бонусами до 85)
-          // Порог 65 для проп-режима чтобы не блокировать S1
-          const threshold = store.observeMode ? 50 : 65;
+          // S1: порог 50% — даже слабые сигналы давали WR 85%
+          // S4 и остальные: порог 65% — только чёткие сигналы
+          const isS1sig = s.strategy.startsWith('1️⃣ ');
+          const threshold = store.observeMode ? 50
+                          : isS1sig ? 50
+                          : 65;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];

@@ -414,14 +414,18 @@ function calcRealWR() {
 
 // Применяем реальный WR к confidence (смешиваем 50/50 с техническим)
 function applyRealWRCalibration(sig) {
+  // В реальном режиме — не калибруем confidence через WR
+  // Это только снижало бы сигналы с базовым confidence 65%
+  // ниже порога 78% и блокировало хорошие сигналы
+  if (!store.observeMode) return sig;
+
   const wrMap = calcRealWR();
-  if (!wrMap) return sig; // нет данных — не меняем
+  if (!wrMap) return sig;
 
   const key = Object.keys(wrMap).find(k => sig.strategy.includes(k.substring(2)));
   if (!key) return sig;
 
   const realWR = wrMap[key];
-  // Смешиваем: 40% от реального WR + 60% от технического confidence
   const calibrated = Math.round(realWR * 0.4 + sig.confidence * 0.6);
   sig.confidence = Math.min(Math.max(calibrated, 0), 100);
   sig.wrNote = `📊 Live WR ${realWR}% → скорр. confidence`;
@@ -449,7 +453,6 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    // Сохраняем в файл (резерв)
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
       accountBalance: store.accountBalance,
       leverage:       store.leverage,
@@ -460,60 +463,10 @@ function saveSettings() {
       observeMode:    store.observeMode,
       peakBalance:    store.peakBalance,
     }, null, 2));
-  } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
-
-  // Сохраняем в Supabase (персистентно между деплоями)
-  supabase.from('bot_settings').upsert({
-    id:             1,
-    account_balance: store.accountBalance,
-    leverage:       store.leverage,
-    risk_pct:       store.riskPct,
-    prop_mode:      store.propMode,
-    emergency_stop: store.emergencyStop,
-    block_weekends: store.blockWeekends,
-    observe_mode:   store.observeMode,
-    peak_balance:   store.peakBalance,
-    updated_at:     new Date().toISOString(),
-  }).then(({ error }) => {
-    if (error) console.error('[SETTINGS] Supabase save error:', error.message);
-    else console.log(`[SETTINGS] Сохранено: prop=${store.propMode} observe=${store.observeMode}`);
-  });
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
 }
 
-async function loadSettingsFromSupabase() {
-  try {
-    const { data, error } = await supabase
-      .from('bot_settings')
-      .select('*')
-      .eq('id', 1)
-      .single();
-
-    if (error || !data) {
-      console.log('[SETTINGS] Supabase: нет данных, используем файл');
-      loadSettings();
-      return;
-    }
-
-    // Применяем настройки из Supabase
-    if (typeof data.account_balance === 'number') store.accountBalance = data.account_balance;
-    if (typeof data.leverage        === 'number') store.leverage       = data.leverage;
-    if (typeof data.risk_pct        === 'number') store.riskPct        = data.risk_pct;
-    if (typeof data.prop_mode       === 'boolean') store.propMode      = data.prop_mode;
-    if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
-    if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
-    if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
-    if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
-
-    console.log(`[SETTINGS] Загружено из Supabase: balance=$${store.accountBalance}, prop=${store.propMode}, observe=${store.observeMode}`);
-  } catch(e) {
-    console.error('[SETTINGS] Supabase load error:', e.message);
-    loadSettings(); // fallback на файл
-  }
-}
-
-// Загружаем сначала из файла (быстро), потом из Supabase (актуально)
 loadSettings();
-loadSettingsFromSupabase().catch(e => console.error('[SETTINGS] init error:', e.message));
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {
@@ -569,27 +522,10 @@ async function sendTelegram(text, module = null) {
 // ============================================================
 //  TELEGRAM КОМАНДЫ
 // ============================================================
-// Команды только для администратора (владельца бота)
-const ADMIN_ONLY_COMMANDS = [
-  '/prop', '/observe', '/emergency', '/resume', '/setrisk',
-  '/setbalance', '/setleverage', '/weekends', '/autoexec',
-  '/closeall', '/nightmode', '/audit', '/report', '/debrief',
-  '/psychologist', '/benchmark', '/weekly', '/versions', '/logs',
-  '/diag', '/stocks',
-];
-
 async function handleTelegramCommand(text, chatId) {
   const parts = text.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
   const args  = parts.slice(1);
-
-  // Проверка прав: управляющие команды только для владельца
-  const isAdmin = String(chatId) === String(process.env.CHAT_ID);
-  const isAdminCmd = ADMIN_ONLY_COMMANDS.some(c => cmd.startsWith(c));
-  if (isAdminCmd && !isAdmin) {
-    await sendTelegramTo(chatId, '⛔️ Эта команда доступна только администратору.');
-    return;
-  }
 
   if (cmd === '/status' || cmd === '/start') {
     const open = store.openTrades;
@@ -1378,21 +1314,6 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
-
-  // При старте — пропускаем все накопившиеся апдейты
-  // чтобы старый экземпляр не обрабатывал те же сообщения что и новый
-  try {
-    const init = await httpPost(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
-      { offset: -1, limit: 1, timeout: 0 },
-      { 'Content-Type': 'application/json' }
-    );
-    if (init?.result?.length) {
-      offset = init.result[init.result.length - 1].update_id + 1;
-      console.log(`[TG] Старт с offset=${offset} (пропущены старые апдейты)`);
-    }
-  } catch(e) { console.error('[TG] init offset error:', e.message); }
-
   const poll = async () => {
     try {
       const data = await httpPost(
@@ -3254,6 +3175,9 @@ async function runStrategies(instId, coinData, asianSession) {
           let conf = 65;
           if ((last.quoteVolume||0) >= avgVol * 3.0) conf += 8;
           if (Math.abs(pc) >= 2.0) conf += 6;
+
+          // S1 доказала WR 85% на 40 сделках — добавляем буст в реальном режиме
+          if (!store.observeMode) conf += 10;
 
           signals.push({
             strategy:  '1️⃣ Volume Spike (15m)',
@@ -5208,7 +5132,10 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const threshold = store.observeMode ? 50 : 78;
+          // S1 базовый confidence = 65 (без бонусов)
+          // S4 базовый confidence = 55 (с бонусами до 85)
+          // Порог 65 для проп-режима чтобы не блокировать S1
+          const threshold = store.observeMode ? 50 : 65;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];

@@ -463,10 +463,48 @@ function saveSettings() {
       observeMode:    store.observeMode,
       peakBalance:    store.peakBalance,
     }, null, 2));
-  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
+
+  // Сохраняем в Supabase — персистентно между деплоями
+  supabase.from('bot_settings').upsert({
+    id:              1,
+    account_balance: store.accountBalance,
+    leverage:        store.leverage,
+    risk_pct:        store.riskPct,
+    prop_mode:       store.propMode,
+    emergency_stop:  store.emergencyStop,
+    block_weekends:  store.blockWeekends,
+    observe_mode:    store.observeMode,
+    peak_balance:    store.peakBalance,
+    updated_at:      new Date().toISOString(),
+  }).then(({ error }) => {
+    if (error) console.error('[SETTINGS] Supabase save error:', error.message);
+    else console.log(`[SETTINGS] Saved: prop=${store.propMode} observe=${store.observeMode}`);
+  });
+}
+
+async function loadSettingsFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('bot_settings')
+      .select('*')
+      .eq('id', 1)
+      .single();
+    if (error || !data) { console.log('[SETTINGS] Supabase: нет данных, используем файл'); return; }
+    if (typeof data.account_balance === 'number') store.accountBalance = data.account_balance;
+    if (typeof data.leverage        === 'number') store.leverage       = data.leverage;
+    if (typeof data.risk_pct        === 'number') store.riskPct        = data.risk_pct;
+    if (typeof data.prop_mode       === 'boolean') store.propMode      = data.prop_mode;
+    if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
+    if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
+    if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
+    if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
+    console.log(`[SETTINGS] Supabase: balance=$${store.accountBalance} prop=${store.propMode} observe=${store.observeMode}`);
+  } catch(e) { console.error('[SETTINGS] Supabase load error:', e.message); }
 }
 
 loadSettings();
+loadSettingsFromSupabase().catch(e => console.error('[SETTINGS] init error:', e.message));
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {
@@ -522,10 +560,27 @@ async function sendTelegram(text, module = null) {
 // ============================================================
 //  TELEGRAM КОМАНДЫ
 // ============================================================
+// Команды только для администратора
+const ADMIN_ONLY_COMMANDS = [
+  '/prop', '/observe', '/emergency', '/resume', '/setrisk',
+  '/setbalance', '/setleverage', '/weekends', '/autoexec',
+  '/closeall', '/nightmode', '/audit', '/report', '/debrief',
+  '/psychologist', '/benchmark', '/weekly', '/versions', '/logs',
+  '/diag', '/stocks',
+];
+
 async function handleTelegramCommand(text, chatId) {
   const parts = text.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
   const args  = parts.slice(1);
+
+  // Управляющие команды — только для владельца
+  const isAdmin    = String(chatId) === String(process.env.CHAT_ID);
+  const isAdminCmd = ADMIN_ONLY_COMMANDS.some(c => cmd === c);
+  if (isAdminCmd && !isAdmin) {
+    await sendTelegramTo(chatId, '⛔️ Эта команда доступна только администратору.');
+    return;
+  }
 
   if (cmd === '/status' || cmd === '/start') {
     const open = store.openTrades;
@@ -1314,6 +1369,20 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
+
+  // Пропускаем старые апдейты при старте — избегаем двойных ответов
+  try {
+    const init = await httpPost(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
+      { offset: -1, limit: 1, timeout: 0 },
+      { 'Content-Type': 'application/json' }
+    );
+    if (init?.result?.length) {
+      offset = init.result[init.result.length - 1].update_id + 1;
+      console.log(`[TG] Старт с offset=${offset}`);
+    }
+  } catch(e) { console.error('[TG] init offset error:', e.message); }
+
   const poll = async () => {
     try {
       const data = await httpPost(

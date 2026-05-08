@@ -414,18 +414,14 @@ function calcRealWR() {
 
 // Применяем реальный WR к confidence (смешиваем 50/50 с техническим)
 function applyRealWRCalibration(sig) {
-  // В реальном режиме — не калибруем confidence через WR
-  // Это только снижало бы сигналы с базовым confidence 65%
-  // ниже порога 78% и блокировало хорошие сигналы
-  if (!store.observeMode) return sig;
-
   const wrMap = calcRealWR();
-  if (!wrMap) return sig;
+  if (!wrMap) return sig; // нет данных — не меняем
 
   const key = Object.keys(wrMap).find(k => sig.strategy.includes(k.substring(2)));
   if (!key) return sig;
 
   const realWR = wrMap[key];
+  // Смешиваем: 40% от реального WR + 60% от технического confidence
   const calibrated = Math.round(realWR * 0.4 + sig.confidence * 0.6);
   sig.confidence = Math.min(Math.max(calibrated, 0), 100);
   sig.wrNote = `📊 Live WR ${realWR}% → скорр. confidence`;
@@ -463,48 +459,10 @@ function saveSettings() {
       observeMode:    store.observeMode,
       peakBalance:    store.peakBalance,
     }, null, 2));
-  } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
-
-  // Сохраняем в Supabase — персистентно между деплоями
-  supabase.from('bot_settings').upsert({
-    id:              1,
-    account_balance: store.accountBalance,
-    leverage:        store.leverage,
-    risk_pct:        store.riskPct,
-    prop_mode:       store.propMode,
-    emergency_stop:  store.emergencyStop,
-    block_weekends:  store.blockWeekends,
-    observe_mode:    store.observeMode,
-    peak_balance:    store.peakBalance,
-    updated_at:      new Date().toISOString(),
-  }).then(({ error }) => {
-    if (error) console.error('[SETTINGS] Supabase save error:', error.message);
-    else console.log(`[SETTINGS] Saved: prop=${store.propMode} observe=${store.observeMode}`);
-  });
-}
-
-async function loadSettingsFromSupabase() {
-  try {
-    const { data, error } = await supabase
-      .from('bot_settings')
-      .select('*')
-      .eq('id', 1)
-      .single();
-    if (error || !data) { console.log('[SETTINGS] Supabase: нет данных, используем файл'); return; }
-    if (typeof data.account_balance === 'number') store.accountBalance = data.account_balance;
-    if (typeof data.leverage        === 'number') store.leverage       = data.leverage;
-    if (typeof data.risk_pct        === 'number') store.riskPct        = data.risk_pct;
-    if (typeof data.prop_mode       === 'boolean') store.propMode      = data.prop_mode;
-    if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
-    if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
-    if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
-    if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
-    console.log(`[SETTINGS] Supabase: balance=$${store.accountBalance} prop=${store.propMode} observe=${store.observeMode}`);
-  } catch(e) { console.error('[SETTINGS] Supabase load error:', e.message); }
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
 }
 
 loadSettings();
-loadSettingsFromSupabase().catch(e => console.error('[SETTINGS] init error:', e.message));
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {
@@ -560,27 +518,10 @@ async function sendTelegram(text, module = null) {
 // ============================================================
 //  TELEGRAM КОМАНДЫ
 // ============================================================
-// Команды только для администратора
-const ADMIN_ONLY_COMMANDS = [
-  '/prop', '/observe', '/emergency', '/resume', '/setrisk',
-  '/setbalance', '/setleverage', '/weekends', '/autoexec',
-  '/closeall', '/nightmode', '/audit', '/report', '/debrief',
-  '/psychologist', '/benchmark', '/weekly', '/versions', '/logs',
-  '/diag', '/stocks',
-];
-
 async function handleTelegramCommand(text, chatId) {
   const parts = text.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
   const args  = parts.slice(1);
-
-  // Управляющие команды — только для владельца
-  const isAdmin    = String(chatId) === String(process.env.CHAT_ID);
-  const isAdminCmd = ADMIN_ONLY_COMMANDS.some(c => cmd === c);
-  if (isAdminCmd && !isAdmin) {
-    await sendTelegramTo(chatId, '⛔️ Эта команда доступна только администратору.');
-    return;
-  }
 
   if (cmd === '/status' || cmd === '/start') {
     const open = store.openTrades;
@@ -1369,20 +1310,6 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
-
-  // Пропускаем старые апдейты при старте — избегаем двойных ответов
-  try {
-    const init = await httpPost(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
-      { offset: -1, limit: 1, timeout: 0 },
-      { 'Content-Type': 'application/json' }
-    );
-    if (init?.result?.length) {
-      offset = init.result[init.result.length - 1].update_id + 1;
-      console.log(`[TG] Старт с offset=${offset}`);
-    }
-  } catch(e) { console.error('[TG] init offset error:', e.message); }
-
   const poll = async () => {
     try {
       const data = await httpPost(
@@ -3245,9 +3172,6 @@ async function runStrategies(instId, coinData, asianSession) {
           if ((last.quoteVolume||0) >= avgVol * 3.0) conf += 8;
           if (Math.abs(pc) >= 2.0) conf += 6;
 
-          // S1 доказала WR 85% на 40 сделках — добавляем буст в реальном режиме
-          if (!store.observeMode) conf += 10;
-
           signals.push({
             strategy:  '1️⃣ Volume Spike (15m)',
             instId, direction: dir,
@@ -5091,14 +5015,13 @@ if (alreadyOpen) {
 
       if (!store.observeMode) {
         const allowedStrategies = (() => {
-          // S1 и S4 всегда разрешены в проп-режиме (доказанные стратегии)
-          const base = ['Volume Spike', 'MA20'];
+          // S1 Volume Spike и S4 MA20 всегда разрешены (доказаны на 200 сигналах)
           if (adx > 25) {
-            return [...base, '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
+            return ['Volume Spike', 'MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           } else if (adx < 18) {
-            return [...base, 'RSI Диверг', 'Funding', 'Liquidity Sweep', 'Whale Follow', 'Liquidation Hunt'];
+            return ['Volume Spike', 'MA20', 'RSI Диверг', 'Funding', 'Liquidity Sweep', 'Whale Follow', 'Liquidation Hunt'];
           } else {
-            return [...base, 'RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
+            return ['Volume Spike', 'MA20', 'RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           }
         })();
 
@@ -5141,36 +5064,23 @@ if (alreadyOpen) {
         // 4. MACD MOMENTUM — против импульса не входим
         if (k1h_pipe.length >= 35) {
           const macd = calcMACD(k1h_pipe);
-          // S1 не снижаем через MACD — у неё своя объёмная логика
-          const isS1macd = sig.strategy.startsWith('1️⃣ ');
-          if (!isS1macd) {
-            if (sig.direction === 'long' && macd.hist < 0) {
-              sig.confidence = Math.max(sig.confidence - 12, 0);
-              sig.macdNote   = `📉 MACD медвежий → -12%`;
-            } else if (sig.direction === 'short' && macd.hist > 0) {
-              sig.confidence = Math.max(sig.confidence - 12, 0);
-              sig.macdNote   = `📈 MACD бычий → -12%`;
-            } else {
-              sig.confidence = Math.min(sig.confidence + 6, 100);
-              sig.macdNote   = `✅ MACD подтверждает → +6%`;
-            }
+          if (sig.direction === 'long' && macd.hist < 0) {
+            sig.confidence = Math.max(sig.confidence - 12, 0);
+            sig.macdNote   = `📉 MACD медвежий → -12%`;
+          } else if (sig.direction === 'short' && macd.hist > 0) {
+            sig.confidence = Math.max(sig.confidence - 12, 0);
+            sig.macdNote   = `📈 MACD бычий → -12%`;
           } else {
-            // S1: MACD только информационно
-            sig.macdNote = macd.hist > 0 ? `✅ MACD бычий` : `📉 MACD медвежий`;
+            sig.confidence = Math.min(sig.confidence + 6, 100);
+            sig.macdNote   = `✅ MACD подтверждает → +6%`;
           }
         }
 
         // 5. VOLUME — объём должен подтверждать движение
-        // S1 уже проверила объём внутри себя — не снижаем повторно
-        if (!sig.strategy.startsWith('1️⃣ ')) {
-          sig = applyVolumeProfile(sig, k1h_pipe);
-        }
+        sig = applyVolumeProfile(sig, k1h_pipe);
 
         // 6. VWAP — институциональный уровень
-        // S1 не зависит от VWAP — объёмная аномалия важнее
-        if (!sig.strategy.startsWith('1️⃣ ')) {
-          sig = applyVWAP(sig, k1h_pipe);
-        }
+        sig = applyVWAP(sig, k1h_pipe);
 
         // 7. MACRO — блок перед FOMC/CPI
         sig = applyMacroFilter(sig, macroEvent);
@@ -5216,12 +5126,7 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          // S1: порог 50% — даже слабые сигналы давали WR 85%
-          // S4 и остальные: порог 65% — только чёткие сигналы
-          const isS1sig = s.strategy.startsWith('1️⃣ ');
-          const threshold = store.observeMode ? 50
-                          : isS1sig ? 50
-                          : 65;
+          const threshold = store.observeMode ? 50 : 78;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];

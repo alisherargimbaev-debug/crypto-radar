@@ -5091,12 +5091,14 @@ if (alreadyOpen) {
 
       if (!store.observeMode) {
         const allowedStrategies = (() => {
+          // S1 и S4 всегда разрешены в проп-режиме (доказанные стратегии)
+          const base = ['Volume Spike', 'MA20'];
           if (adx > 25) {
-            return ['MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
+            return [...base, '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           } else if (adx < 18) {
-            return ['RSI Диверг', 'Funding', 'Liquidity Sweep', 'Whale Follow', 'Liquidation Hunt'];
+            return [...base, 'RSI Диверг', 'Funding', 'Liquidity Sweep', 'Whale Follow', 'Liquidation Hunt'];
           } else {
-            return ['RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
+            return [...base, 'RSI Диверг', 'Liquidity Sweep', 'Funding', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           }
         })();
 
@@ -5139,23 +5141,36 @@ if (alreadyOpen) {
         // 4. MACD MOMENTUM — против импульса не входим
         if (k1h_pipe.length >= 35) {
           const macd = calcMACD(k1h_pipe);
-          if (sig.direction === 'long' && macd.hist < 0) {
-            sig.confidence = Math.max(sig.confidence - 12, 0);
-            sig.macdNote   = `📉 MACD медвежий → -12%`;
-          } else if (sig.direction === 'short' && macd.hist > 0) {
-            sig.confidence = Math.max(sig.confidence - 12, 0);
-            sig.macdNote   = `📈 MACD бычий → -12%`;
+          // S1 не снижаем через MACD — у неё своя объёмная логика
+          const isS1macd = sig.strategy.startsWith('1️⃣ ');
+          if (!isS1macd) {
+            if (sig.direction === 'long' && macd.hist < 0) {
+              sig.confidence = Math.max(sig.confidence - 12, 0);
+              sig.macdNote   = `📉 MACD медвежий → -12%`;
+            } else if (sig.direction === 'short' && macd.hist > 0) {
+              sig.confidence = Math.max(sig.confidence - 12, 0);
+              sig.macdNote   = `📈 MACD бычий → -12%`;
+            } else {
+              sig.confidence = Math.min(sig.confidence + 6, 100);
+              sig.macdNote   = `✅ MACD подтверждает → +6%`;
+            }
           } else {
-            sig.confidence = Math.min(sig.confidence + 6, 100);
-            sig.macdNote   = `✅ MACD подтверждает → +6%`;
+            // S1: MACD только информационно
+            sig.macdNote = macd.hist > 0 ? `✅ MACD бычий` : `📉 MACD медвежий`;
           }
         }
 
         // 5. VOLUME — объём должен подтверждать движение
-        sig = applyVolumeProfile(sig, k1h_pipe);
+        // S1 уже проверила объём внутри себя — не снижаем повторно
+        if (!sig.strategy.startsWith('1️⃣ ')) {
+          sig = applyVolumeProfile(sig, k1h_pipe);
+        }
 
         // 6. VWAP — институциональный уровень
-        sig = applyVWAP(sig, k1h_pipe);
+        // S1 не зависит от VWAP — объёмная аномалия важнее
+        if (!sig.strategy.startsWith('1️⃣ ')) {
+          sig = applyVWAP(sig, k1h_pipe);
+        }
 
         // 7. MACRO — блок перед FOMC/CPI
         sig = applyMacroFilter(sig, macroEvent);

@@ -1310,6 +1310,20 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
+
+  // Пропускаем старые апдейты при старте — убираем двойные ответы
+  try {
+    const init = await httpPost(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
+      { offset: -1, limit: 1, timeout: 0 },
+      { 'Content-Type': 'application/json' }
+    );
+    if (init?.result?.length) {
+      offset = init.result[init.result.length - 1].update_id + 1;
+      console.log(`[TG] Старт с offset=${offset} (старые апдейты пропущены)`);
+    }
+  } catch(e) { console.error('[TG] init offset error:', e.message); }
+
   const poll = async () => {
     try {
       const data = await httpPost(

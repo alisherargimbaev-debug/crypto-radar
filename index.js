@@ -459,44 +459,10 @@ function saveSettings() {
       observeMode:    store.observeMode,
       peakBalance:    store.peakBalance,
     }, null, 2));
-  } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
-
-  // Supabase — сохраняем между деплоями
-  supabase.from('bot_settings').upsert({
-    id:              1,
-    account_balance: store.accountBalance,
-    leverage:        store.leverage,
-    risk_pct:        store.riskPct,
-    prop_mode:       store.propMode,
-    emergency_stop:  store.emergencyStop,
-    block_weekends:  store.blockWeekends,
-    observe_mode:    store.observeMode,
-    peak_balance:    store.peakBalance,
-    updated_at:      new Date().toISOString(),
-  }).then(({ error }) => {
-    if (error) console.error('[SETTINGS] Supabase error:', error.message);
-  });
-}
-
-async function loadSettingsFromSupabase() {
-  try {
-    const { data, error } = await supabase
-      .from('bot_settings').select('*').eq('id', 1).single();
-    if (error || !data) { loadSettings(); return; }
-    if (typeof data.account_balance === 'number') store.accountBalance = data.account_balance;
-    if (typeof data.leverage        === 'number') store.leverage       = data.leverage;
-    if (typeof data.risk_pct        === 'number') store.riskPct        = data.risk_pct;
-    if (typeof data.prop_mode       === 'boolean') store.propMode      = data.prop_mode;
-    if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
-    if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
-    if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
-    if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
-    console.log(`[SETTINGS] Supabase: balance=$${store.accountBalance} prop=${store.propMode} observe=${store.observeMode}`);
-  } catch(e) { console.error('[SETTINGS] Supabase load error:', e.message); loadSettings(); }
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
 }
 
 loadSettings();
-loadSettingsFromSupabase().catch(() => {});
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {
@@ -5049,7 +5015,6 @@ if (alreadyOpen) {
 
       if (!store.observeMode) {
         const allowedStrategies = (() => {
-          // S1 Volume Spike и S4 MA20 всегда разрешены (доказаны на 200 сигналах)
           if (adx > 25) {
             return ['Volume Spike', 'MA20', '4H Range', 'Pullback', 'Funding', 'Liquidity Sweep', 'Elliott', 'Whale Follow', 'Liquidation Hunt'];
           } else if (adx < 18) {

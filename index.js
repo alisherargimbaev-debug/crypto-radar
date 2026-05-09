@@ -334,7 +334,7 @@ const store = {
   riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
   emergencyStop:  false, // аварийная остановка (kill switch)
   blockWeekends:  true,  // не торговать в субботу-воскресенье
-  observeMode:    true,  // режим наблюдения — сигналы приходят но не открываются (DEFAULT для сбора данных)
+  observeMode:    false, // режим наблюдения — по умолчанию ВЫКЛ (реальная торговля)
   peakBalance:    0,     // макс баланс для расчёта drawdown
 };
 
@@ -5139,7 +5139,10 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const threshold = store.observeMode ? 50 : 78;
+          // S1: порог 50% — WR 85% даже на слабых сигналах (доказано на 200 trades)
+          // S4 и остальные: порог 65%
+          const isS1sig = s.strategy.startsWith('1️⃣ ');
+          const threshold = store.observeMode ? 50 : isS1sig ? 50 : 65;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];

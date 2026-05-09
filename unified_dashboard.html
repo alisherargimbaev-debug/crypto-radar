@@ -555,6 +555,15 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- PAPER -->
 <div class="page" id="page-paper">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:14px;background:var(--panel);border:1px solid var(--border)">
+    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Период:</div>
+    <input type="date" id="date-from" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:'DM Mono',monospace;font-size:.6rem;outline:none;cursor:pointer">
+    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim)">—</div>
+    <input type="date" id="date-to" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:'DM Mono',monospace;font-size:.6rem;outline:none;cursor:pointer">
+    <button class="btn" onclick="applyDateFilter()" style="padding:6px 14px">ПРИМЕНИТЬ</button>
+    <button class="btn" onclick="resetDateFilter()" style="padding:6px 14px;border-color:var(--dim);color:var(--dim)">СБРОС</button>
+    <div id="filter-info" style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--green);margin-left:auto"></div>
+  </div>
   <div class="stats-row" id="paper-stats"></div>
   <div class="grid-2">
     <div class="panel">
@@ -883,8 +892,66 @@ async function safeFetch(url, fallback={}) {
 }
 
 // ── PAPER API ────────────────────────────────────────────────
+// Глобальные фильтры дат
+let filterFrom = null;
+let filterTo = null;
+
+function applyDateFilter() {
+  const from = document.getElementById('date-from')?.value;
+  const to = document.getElementById('date-to')?.value;
+  filterFrom = from ? new Date(from).getTime() : null;
+  filterTo = to ? new Date(to + 'T23:59:59').getTime() : null;
+  const info = document.getElementById('filter-info');
+  if (info && (filterFrom || filterTo)) {
+    info.textContent = `Фильтр: ${from || '...'} — ${to || '...'}`;
+  }
+  loadPaper();
+}
+
+function resetDateFilter() {
+  filterFrom = null;
+  filterTo = null;
+  const df = document.getElementById('date-from');
+  const dt = document.getElementById('date-to');
+  if (df) df.value = '';
+  if (dt) dt.value = '';
+  const info = document.getElementById('filter-info');
+  if (info) info.textContent = '';
+  loadPaper();
+}
+
+function filterByDate(trades) {
+  if (!filterFrom && !filterTo) return trades;
+  return trades.filter(t => {
+    const ts = t.closedAt || t.ts || 0;
+    if (filterFrom && ts < filterFrom) return false;
+    if (filterTo && ts > filterTo) return false;
+    return true;
+  });
+}
+
 async function loadPaper() {
   const d = await safeFetch('/api/paper', { open:[], closed:[], stats:null });
+  // Применяем фильтр дат к закрытым сделкам
+  if (filterFrom || filterTo) {
+    d.closed = filterByDate(d.closed || []);
+    // Пересчитываем stats для отфильтрованных данных
+    const wins = d.closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses = d.closed.filter(t => t.outcome === 'sl');
+    const expired = d.closed.filter(t => t.outcome === 'expired');
+    const totalPnl = d.closed.reduce((s, t) => s + (t.pnl || 0), 0);
+    const wr = d.closed.length ? Math.round(wins.length / d.closed.length * 100) : 0;
+    const byStrat = {};
+    for (const t of d.closed) {
+      const key = (t.strategy || '?').substring(0, 30);
+      if (!byStrat[key]) byStrat[key] = { wins: 0, losses: 0, expired: 0, pnl: 0 };
+      if (t.outcome === 'tp1' || t.outcome === 'tp2') byStrat[key].wins++;
+      else if (t.outcome === 'sl') byStrat[key].losses++;
+      else byStrat[key].expired++;
+      byStrat[key].pnl += t.pnl || 0;
+    }
+    d.stats = d.closed.length ? { total: d.closed.length, wins: wins.length, losses: losses.length, expired: expired.length, wr, totalPnl: parseFloat(totalPnl.toFixed(2)), byStrat } : null;
+  }
   renderOverview(d);
   renderPaperPage(d);
   renderRadar(d);
@@ -950,12 +1017,16 @@ function renderPaperPage(d) {
   if (s) {
     const pc = s.totalPnl >= 0 ? 'green' : 'red';
     const wc = s.wr >= 55 ? 'green' : s.wr >= 40 ? 'yellow' : 'red';
+    // PnL в долларах: риск $47 (0.5% от ~$9,371), RR 1:2
+    const riskUSD = 47;
+    const pnlUSD = s.wins * riskUSD * 2 - s.losses * riskUSD;
+    const pnlUSDStr = (pnlUSD >= 0 ? '+$' : '-$') + Math.abs(pnlUSD).toFixed(0);
     se.innerHTML = `
       <div class="stat-card blue"><div class="stat-label">Total Closed</div><div class="stat-value">${s.total}</div></div>
       <div class="stat-card ${wc}"><div class="stat-label">Win Rate</div><div class="stat-value">${s.wr}%</div></div>
       <div class="stat-card green"><div class="stat-label">Wins</div><div class="stat-value">${s.wins}</div></div>
       <div class="stat-card red"><div class="stat-label">Losses</div><div class="stat-value">${s.losses}</div></div>
-      <div class="stat-card ${pc}"><div class="stat-label">Total PnL</div><div class="stat-value">${s.totalPnl >= 0 ? '+' : ''}${s.totalPnl}%</div></div>`;
+      <div class="stat-card ${pc}"><div class="stat-label">Total PnL</div><div class="stat-value">${s.totalPnl >= 0 ? '+' : ''}${s.totalPnl}%</div><div class="stat-sub">${pnlUSDStr}</div></div>`;
   } else {
     se.innerHTML = '<div class="empty">OBSERVE MODE ACTIVE — COLLECTING DATA</div>';
   }

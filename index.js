@@ -4205,6 +4205,11 @@ function buildOutcomeAlert(trade) {
   const o   = map[trade.outcome] || { e:'❓', t: trade.outcome };
   const age = Math.round((trade.closedAt - trade.ts) / 60000);
   const pnl = trade.pnl >= 0 ? `+${trade.pnl}%` : `${trade.pnl}%`;
+  // Считаем доллары: риск $47 при 0.5%, RR 1:2 = $94 прибыль
+  const riskUSD = store.accountBalance * store.riskPct / 100;
+  const pnlUSD  = trade.pnl >= 0
+    ? `+$${(riskUSD * 2).toFixed(0)}`   // TP = 2R
+    : `-$${riskUSD.toFixed(0)}`;         // SL = 1R
   const meta = STRATEGY_META[trade.strategy] || { rating: '?', wr: '?' };
   const ratingEmoji = meta.rating === 'A' ? '🟢' : meta.rating === 'B' ? '🟡' : '🔴';
   return (
@@ -4214,7 +4219,7 @@ function buildOutcomeAlert(trade) {
     `${ratingEmoji} Рейтинг: ${meta.rating} | Win Rate: ${meta.wr}\n` +
     `💰 Вход: $${trade.price}\n` +
     `${trade.closePrice ? `📍 Выход: $${trade.closePrice}\n` : ''}` +
-    `💵 PnL: ${pnl}\n` +
+    `💵 PnL: ${pnl} (${pnlUSD})\n` +
     `⏱ В сделке: ${age} мин\n` +
     `📊 Уверенность: ${trade.confidence}%`
   );

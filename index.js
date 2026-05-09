@@ -6254,12 +6254,12 @@ async function checkRSSNews() {
 // ============================================================
 async function psychologistAgent() {
   try {
+    // Смотрим ТОЛЬКО на реальные сделки, не paper trades
     const history  = store.tradeHistory.slice(-20);
-    const paper    = (global.paperTrades || []).filter(t => t.outcome).slice(-20);
-    const allTrades = [...history, ...paper];
-    if (allTrades.length < 3) return;
+    if (history.length < 3) return; // мало реальных сделок — не беспокоим
 
-    // Анализируем паттерны
+    // Анализируем паттерны только реальных сделок
+    const allTrades  = history;
     const recentSL   = allTrades.slice(-5).filter(t => t.outcome === 'sl').length;
     const totalSL    = allTrades.filter(t => t.outcome === 'sl').length;
     const totalWins  = allTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;

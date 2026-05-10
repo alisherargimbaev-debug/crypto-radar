@@ -5064,13 +5064,21 @@ if (alreadyOpen) {
         // В observe mode — НИКАКИХ жёстких блоков, только мягкие корректировки
         // Цель: собрать максимум сырых данных для анализа
         if (!store.observeMode) {
-          // 1. MARKET REGIME — жёсткие блоки (только в реальной торговле)
-          sig = applyMarketRegime(sig, regime);
-          if (sig.confidence === 0) { filtered.push(sig); continue; }
+          const isS1S4 = sig.strategy.startsWith('1️⃣ ') || sig.strategy.startsWith('4️⃣ ');
 
-          // 2. SESSION — торговое время
+          // 1. MARKET REGIME
+          sig = applyMarketRegime(sig, regime);
+          if (sig.confidence === 0) {
+            if (isS1S4) sig.confidence = 50; // S1/S4 не блокируем — как в observe
+            else { filtered.push(sig); continue; }
+          }
+
+          // 2. SESSION
           sig = applySessionFilter(sig, session);
-          if (sig.confidence === 0) { filtered.push(sig); continue; }
+          if (sig.confidence === 0) {
+            if (isS1S4) sig.confidence = 45; // S1/S4 не блокируем — как в observe
+            else { filtered.push(sig); continue; }
+          }
         } else {
           // В observe — только мягкая корректировка confidence (информационно)
           sig = applyMarketRegime(sig, regime);
@@ -5148,7 +5156,8 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const threshold = store.observeMode ? 50 : 78;
+          const isS1sig = s.strategy.startsWith('1️⃣ ');
+          const threshold = store.observeMode ? 50 : isS1sig ? 50 : 65;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];

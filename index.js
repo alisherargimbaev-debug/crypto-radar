@@ -20,17 +20,15 @@ const supabase = createClient(
 // ── Copy Trading Tracker — подпроект (отдельный модуль) ────
 const copytrader = require('./copytrader');
 
-// === AutoExec — автоматическое исполнение на Bybit ===
+// AutoExec — автоматическое исполнение на Bybit
 let autoExecSignals = null;
 if (process.env.AUTO_EXECUTE === 'true') {
   try {
-    const ae = require('./autoexec');
-    autoExecSignals = ae.signals;
+    autoExecSignals = require('./autoexec').signals;
     console.log('[AutoExec] Модуль загружен');
-  } catch(e) {
-    console.error('[AutoExec] Ошибка загрузки:', e.message);
-  }
+  } catch(e) { console.error('[AutoExec] Ошибка:', e.message); }
 }
+
 // Подменяем sender в copytrader — он будет использовать нашу sendTelegram с учётом подписок
 copytrader.setSender((text) => sendTelegram(text, 'whales'));
 
@@ -334,7 +332,7 @@ const store = {
   riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
   emergencyStop:  false, // аварийная остановка (kill switch)
   blockWeekends:  true,  // не торговать в субботу-воскресенье
-  observeMode:    false, // режим наблюдения — по умолчанию ВЫКЛ (реальная торговля)
+  observeMode:    false, // реальная торговля по умолчанию
   peakBalance:    0,     // макс баланс для расчёта drawdown
 };
 
@@ -1051,6 +1049,31 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
+  else if (cmd === '/autoexec') {
+    if (!autoExecSignals) {
+      await sendTelegramTo(chatId, '❌ AutoExec не загружен. Проверь AUTO_EXECUTE=true в Render.');
+    } else {
+      const arg = (text.trim().split(/\s+/)[1] || '').toLowerCase();
+      autoExecSignals.emit('telegram_command', {
+        command: '/autoexec', args: arg ? [arg] : [],
+        replyFn: (t) => sendTelegramTo(chatId, t),
+      });
+    }
+  }
+
+  else if (cmd === '/positions') {
+    if (!autoExecSignals) { await sendTelegramTo(chatId, '❌ AutoExec не загружен'); }
+    else { autoExecSignals.emit('telegram_command', { command: '/positions', args: [], replyFn: (t) => sendTelegramTo(chatId, t) }); }
+  }
+
+  else if (cmd === '/closeall') {
+    if (!autoExecSignals) { await sendTelegramTo(chatId, '❌ AutoExec не загружен'); }
+    else {
+      await sendTelegramTo(chatId, '⚠️ Закрываю все позиции на Bybit...');
+      autoExecSignals.emit('telegram_command', { command: '/closeall', args: [], replyFn: (t) => sendTelegramTo(chatId, t) });
+    }
+  }
+
   else if (cmd === '/weekends') {
     store.blockWeekends = !store.blockWeekends;
     saveSettings();
@@ -1310,20 +1333,6 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
-
-  // Пропускаем старые апдейты при старте — убираем двойные ответы
-  try {
-    const init = await httpPost(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
-      { offset: -1, limit: 1, timeout: 0 },
-      { 'Content-Type': 'application/json' }
-    );
-    if (init?.result?.length) {
-      offset = init.result[init.result.length - 1].update_id + 1;
-      console.log(`[TG] Старт с offset=${offset} (старые апдейты пропущены)`);
-    }
-  } catch(e) { console.error('[TG] init offset error:', e.message); }
-
   const poll = async () => {
     try {
       const data = await httpPost(
@@ -1985,8 +1994,18 @@ function isAsianSession() {
 }
 
 function applySessionFilter(sig, session) {
-  // Только мягкие корректировки как в observe mode
-  // S1 и S4 доказали WR 85% в любое время суток — жёстких блоков нет
+  // В проп-режиме — жёсткий блок вне рабочих часов
+  // Нерабочие часы = низкая ликвидность = фейковые пробои
+  if (store.propMode && !store.observeMode) {
+    const hour = new Date().getUTCHours();
+    // Разрешены: Лондон (07-16 UTC) + NY (13-21 UTC) = 07:00-21:00 UTC
+    if (hour < 7 || hour >= 21) {
+      sig.confidence  = 0;
+      sig.sessionNote = `❌ Проп: вне торговых часов (${hour}:xx UTC, нужно 07-21)`;
+      return sig;
+    }
+  }
+
   if (['USA', 'Europe', 'US+EU'].includes(session)) {
     sig.confidence = Math.min(sig.confidence + 5, 100);
     sig.sessionNote = `🇺🇸🇪🇺 ${session} → +5%`;
@@ -3031,11 +3050,24 @@ function applyMarketRegime(sig, regime) {
     }
   }
 
-  // 2. МЕДВЕЖИЙ РЫНОК — мягкое снижение как в observe mode
-  // S1 и S4 доказали WR 85% в любых рыночных условиях
+  // 2. МЕДВЕЖИЙ РЫНОК — ЛОНГИ полностью блокируются
+  // Исключение: S5 RSI Дивергенция (ловит локальные отскоки)
   if (regime.isBearMkt && sig.direction === 'long') {
-    sig.confidence = Math.max(sig.confidence - 10, 0);
-    sig.regimeNote = `⚠️ Медвежий рынок → -10%`;
+    const isS5 = sig.strategy.includes('RSI Диверг');
+    if (!isS5) {
+      if (store.observeMode) {
+        sig.confidence  = Math.max(sig.confidence - 10, 0);
+        sig.regimeNote  = `⚠️ Медвежий рынок — observe → -10%`;
+      } else {
+        sig.confidence  = 0;
+        sig.regimeNote  = `❌ Медвежий рынок (ниже MA200) — LONG заблокирован`;
+        return sig;
+      }
+    } else {
+      // S5 в медвежьем — разрешаем но требуем уверенности
+      sig.confidence  = Math.max(sig.confidence - 12, 0);
+      sig.regimeNote  = `⚠️ Медвежий рынок — S5 осторожно → -12%`;
+    }
   }
 
   // 3. ЭКСТРЕМАЛЬНЫЙ СТРАХ (FNG < 25) — только шорты
@@ -4182,11 +4214,6 @@ function buildOutcomeAlert(trade) {
   const o   = map[trade.outcome] || { e:'❓', t: trade.outcome };
   const age = Math.round((trade.closedAt - trade.ts) / 60000);
   const pnl = trade.pnl >= 0 ? `+${trade.pnl}%` : `${trade.pnl}%`;
-  // Считаем доллары: риск $47 при 0.5%, RR 1:2 = $94 прибыль
-  const riskUSD = store.accountBalance * store.riskPct / 100;
-  const pnlUSD  = trade.pnl >= 0
-    ? `+$${(riskUSD * 2).toFixed(0)}`   // TP = 2R
-    : `-$${riskUSD.toFixed(0)}`;         // SL = 1R
   const meta = STRATEGY_META[trade.strategy] || { rating: '?', wr: '?' };
   const ratingEmoji = meta.rating === 'A' ? '🟢' : meta.rating === 'B' ? '🟡' : '🔴';
   return (
@@ -4196,7 +4223,7 @@ function buildOutcomeAlert(trade) {
     `${ratingEmoji} Рейтинг: ${meta.rating} | Win Rate: ${meta.wr}\n` +
     `💰 Вход: $${trade.price}\n` +
     `${trade.closePrice ? `📍 Выход: $${trade.closePrice}\n` : ''}` +
-    `💵 PnL: ${pnl} (${pnlUSD})\n` +
+    `💵 PnL: ${pnl}\n` +
     `⏱ В сделке: ${age} мин\n` +
     `📊 Уверенность: ${trade.confidence}%`
   );
@@ -5037,21 +5064,13 @@ if (alreadyOpen) {
         // В observe mode — НИКАКИХ жёстких блоков, только мягкие корректировки
         // Цель: собрать максимум сырых данных для анализа
         if (!store.observeMode) {
-          const isS1orS4 = sig.strategy.startsWith('1️⃣ ') || sig.strategy.startsWith('4️⃣ ');
-
-          // 1. MARKET REGIME
+          // 1. MARKET REGIME — жёсткие блоки (только в реальной торговле)
           sig = applyMarketRegime(sig, regime);
-          if (sig.confidence === 0) {
-            if (isS1orS4) sig.confidence = 50; // S1/S4 не блокируем жёстко
-            else { filtered.push(sig); continue; }
-          }
+          if (sig.confidence === 0) { filtered.push(sig); continue; }
 
-          // 2. SESSION
+          // 2. SESSION — торговое время
           sig = applySessionFilter(sig, session);
-          if (sig.confidence === 0) {
-            if (isS1orS4) sig.confidence = 45; // S1/S4 не блокируем жёстко
-            else { filtered.push(sig); continue; }
-          }
+          if (sig.confidence === 0) { filtered.push(sig); continue; }
         } else {
           // В observe — только мягкая корректировка confidence (информационно)
           sig = applyMarketRegime(sig, regime);
@@ -5119,15 +5138,6 @@ if (alreadyOpen) {
         filtered.push(sig);
       }
 
-      // ── ГАРАНТИЯ ДЛЯ S1 ──────────────────────────────────────
-      // S1 доказала WR 85% на 200 сделках в любых условиях
-      // Гарантируем минимум 50% confidence чтобы она всегда проходила порог
-      for (let i = 0; i < filtered.length; i++) {
-        if (filtered[i].strategy.startsWith('1️⃣ ') && filtered[i].confidence < 50) {
-          filtered[i].confidence = 50;
-        }
-      }
-
       // ── КАЛИБРОВКА CONFIDENCE ─────────────────────────────────
       for (let i = 0; i < filtered.length; i++) {
         filtered[i] = applyRealWRCalibration(filtered[i]);
@@ -5138,10 +5148,7 @@ if (alreadyOpen) {
       const best = filtered
         .filter(s => {
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          // S1: порог 50% — WR 85% даже на слабых сигналах (доказано на 200 trades)
-          // S4 и остальные: порог 65%
-          const isS1sig = s.strategy.startsWith('1️⃣ ');
-          const threshold = store.observeMode ? 50 : isS1sig ? 50 : 65;
+          const threshold = store.observeMode ? 50 : 78;
           return s.confidence >= threshold;
         })
         .sort((a, b) => b.confidence - a.confidence)[0];
@@ -5236,9 +5243,23 @@ if (alreadyOpen) {
       setCoinCooldown(coin.instId);
       logSignal(best);
       if (store.observeMode) {
-        savePaperTrade(best); // paper trading — запись виртуальной сделки
+        savePaperTrade(best);
       } else {
         saveOpenTrade(best);
+        // AutoExec — открываем сделку на Bybit
+        if (autoExecSignals) {
+          try {
+            const sym = best.instId.replace('-USDT-SWAP','USDT').replace(/-/g,'');
+            const ep  = parseFloat(best.price);
+            const slp = Math.abs((parseFloat(best.sl) - ep) / ep * 100);
+            const tpp = Math.abs((parseFloat(best.tp1) - ep) / ep * 100);
+            autoExecSignals.emit('trade_signal', {
+              symbol: sym, side: best.direction === 'long' ? 'Buy' : 'Sell',
+              confidence: best.confidence, sl_pct: +slp.toFixed(3),
+              tp_pct: +tpp.toFixed(3), reason: best.strategy, source: 'quantum-fund',
+            });
+          } catch(e) { console.error('[AutoExec] emit error:', e.message); }
+        }
       }
 
       // === AutoExec: отправляем сигнал на Bybit ===
@@ -6270,12 +6291,11 @@ async function checkRSSNews() {
 // ============================================================
 async function psychologistAgent() {
   try {
-    // Смотрим ТОЛЬКО на реальные сделки, не paper trades
     const history  = store.tradeHistory.slice(-20);
-    if (history.length < 3) return; // мало реальных сделок — не беспокоим
+    if (history.length < 3) return; // только реальные сделки
+    const allTrades = history;
 
-    // Анализируем паттерны только реальных сделок
-    const allTrades  = history;
+    // Анализируем паттерны
     const recentSL   = allTrades.slice(-5).filter(t => t.outcome === 'sl').length;
     const totalSL    = allTrades.filter(t => t.outcome === 'sl').length;
     const totalWins  = allTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
@@ -6814,13 +6834,18 @@ setTimeout(() => {
   try {
     await httpPost(
       `https://api.telegram.org/bot${TELEGRAM_TOKEN}/deleteWebhook`,
-      { drop_pending_updates: false },
+      { drop_pending_updates: true },
       { 'Content-Type': 'application/json' }
     );
     console.log('[TG] Webhook удалён, запускаю polling...');
   } catch(e) { console.error('[TG] deleteWebhook error:', e.message); }
+  await new Promise(r => setTimeout(r, 2000));
   pollTelegramUpdates();
 })();
+
+if (autoExecSignals) {
+  autoExecSignals.emit('inject_deps', { telegramBot: null, telegramChatId: CHAT_ID, supabaseClient: supabase });
+}
 
 // === AutoExec: inject зависимостей + Telegram команды ===
 if (autoExecSignals) {

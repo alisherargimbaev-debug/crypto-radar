@@ -1985,18 +1985,8 @@ function isAsianSession() {
 }
 
 function applySessionFilter(sig, session) {
-  // В проп-режиме — жёсткий блок вне рабочих часов
-  // Нерабочие часы = низкая ликвидность = фейковые пробои
-  if (store.propMode && !store.observeMode) {
-    const hour = new Date().getUTCHours();
-    // Разрешены: Лондон (07-16 UTC) + NY (13-21 UTC) = 07:00-21:00 UTC
-    if (hour < 7 || hour >= 21) {
-      sig.confidence  = 0;
-      sig.sessionNote = `❌ Проп: вне торговых часов (${hour}:xx UTC, нужно 07-21)`;
-      return sig;
-    }
-  }
-
+  // Только мягкие корректировки как в observe mode
+  // S1 и S4 доказали WR 85% в любое время суток — жёстких блоков нет
   if (['USA', 'Europe', 'US+EU'].includes(session)) {
     sig.confidence = Math.min(sig.confidence + 5, 100);
     sig.sessionNote = `🇺🇸🇪🇺 ${session} → +5%`;
@@ -3041,24 +3031,11 @@ function applyMarketRegime(sig, regime) {
     }
   }
 
-  // 2. МЕДВЕЖИЙ РЫНОК — ЛОНГИ полностью блокируются
-  // Исключение: S5 RSI Дивергенция (ловит локальные отскоки)
+  // 2. МЕДВЕЖИЙ РЫНОК — мягкое снижение как в observe mode
+  // S1 и S4 доказали WR 85% в любых рыночных условиях
   if (regime.isBearMkt && sig.direction === 'long') {
-    const isS5 = sig.strategy.includes('RSI Диверг');
-    if (!isS5) {
-      if (store.observeMode) {
-        sig.confidence  = Math.max(sig.confidence - 10, 0);
-        sig.regimeNote  = `⚠️ Медвежий рынок — observe → -10%`;
-      } else {
-        sig.confidence  = 0;
-        sig.regimeNote  = `❌ Медвежий рынок (ниже MA200) — LONG заблокирован`;
-        return sig;
-      }
-    } else {
-      // S5 в медвежьем — разрешаем но требуем уверенности
-      sig.confidence  = Math.max(sig.confidence - 12, 0);
-      sig.regimeNote  = `⚠️ Медвежий рынок — S5 осторожно → -12%`;
-    }
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.regimeNote = `⚠️ Медвежий рынок → -10%`;
   }
 
   // 3. ЭКСТРЕМАЛЬНЫЙ СТРАХ (FNG < 25) — только шорты
@@ -5060,13 +5037,21 @@ if (alreadyOpen) {
         // В observe mode — НИКАКИХ жёстких блоков, только мягкие корректировки
         // Цель: собрать максимум сырых данных для анализа
         if (!store.observeMode) {
-          // 1. MARKET REGIME — жёсткие блоки (только в реальной торговле)
-          sig = applyMarketRegime(sig, regime);
-          if (sig.confidence === 0) { filtered.push(sig); continue; }
+          const isS1orS4 = sig.strategy.startsWith('1️⃣ ') || sig.strategy.startsWith('4️⃣ ');
 
-          // 2. SESSION — торговое время
+          // 1. MARKET REGIME
+          sig = applyMarketRegime(sig, regime);
+          if (sig.confidence === 0) {
+            if (isS1orS4) sig.confidence = 50; // S1/S4 не блокируем жёстко
+            else { filtered.push(sig); continue; }
+          }
+
+          // 2. SESSION
           sig = applySessionFilter(sig, session);
-          if (sig.confidence === 0) { filtered.push(sig); continue; }
+          if (sig.confidence === 0) {
+            if (isS1orS4) sig.confidence = 45; // S1/S4 не блокируем жёстко
+            else { filtered.push(sig); continue; }
+          }
         } else {
           // В observe — только мягкая корректировка confidence (информационно)
           sig = applyMarketRegime(sig, regime);
@@ -5132,6 +5117,15 @@ if (alreadyOpen) {
         } catch(e) { /* FVG не критичен */ }
 
         filtered.push(sig);
+      }
+
+      // ── ГАРАНТИЯ ДЛЯ S1 ──────────────────────────────────────
+      // S1 доказала WR 85% на 200 сделках в любых условиях
+      // Гарантируем минимум 50% confidence чтобы она всегда проходила порог
+      for (let i = 0; i < filtered.length; i++) {
+        if (filtered[i].strategy.startsWith('1️⃣ ') && filtered[i].confidence < 50) {
+          filtered[i].confidence = 50;
+        }
       }
 
       // ── КАЛИБРОВКА CONFIDENCE ─────────────────────────────────

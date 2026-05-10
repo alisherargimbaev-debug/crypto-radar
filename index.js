@@ -4997,7 +4997,7 @@ async function checkSignals() {
     console.log(`[${getAlmatyTime()}] checkSignals запущен`);
 
     const candidates   = await getOKXCandidates();
-    if (!candidates.length) { console.log('Нет кандидатов'); return; }
+    if (!candidates.length) { console.log('Нет кандидатов'); isRunning = false; return; }
 
     const fng          = await getFearAndGreed();
     const session      = getCurrentSession();

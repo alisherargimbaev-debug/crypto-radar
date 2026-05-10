@@ -5152,7 +5152,9 @@ if (alreadyOpen) {
       if (!best) continue;
 
       const news = await checkNews(coin.symbol);
-      if (news.blocked) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
+      // S1 Volume Spike — сам является реакцией на новость, блокировать не нужно
+      const isS1best = best.strategy.startsWith('1️⃣ ');
+      if (news.blocked && !isS1best) { console.log(`[NEWS BLOCK] ${coin.instId}`); continue; }
       if (news.note) best.newsNote = news.note;
 
       best.ts      = Date.now();

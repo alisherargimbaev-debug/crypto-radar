@@ -5180,7 +5180,9 @@ if (alreadyOpen) {
       }
 
       // В observe mode пропускаем AI валидацию — собираем сырые данные
-      if (!store.observeMode) {
+      // S1 и S4 тоже пропускаем — они доказали WR 85% без AI фильтра
+      const isS1orS4 = best.strategy.startsWith('1️⃣ ') || best.strategy.startsWith('4️⃣ ');
+      if (!store.observeMode && !isS1orS4) {
         const aiResult = await validateSignalWithAI(best, fng, session);
         if (!aiResult.approved) {
           console.log(`[AI REJECT] ${coin.instId} → ${aiResult.reason}`);

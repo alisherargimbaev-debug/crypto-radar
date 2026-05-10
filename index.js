@@ -1626,36 +1626,14 @@ async function getCurrentPrice(instId) {
 const liquidationCache = { data: null, ts: 0 };
 async function getOKXLiquidations() {
   const now = Date.now();
-  if (liquidationCache.data && now - liquidationCache.ts < 60000) {
-    return liquidationCache.data;
+  if (liquidationCache.data && now - liquidationCache.ts < 300000) {
+    return liquidationCache.data; // кэш 5 минут
   }
-  try {
-    // OKX public endpoint: последние ликвидации топ-монет
-    const data = await httpGet('https://www.okx.com/api/v5/public/liquidation-orders?instType=SWAP&limit=100');
-    if (!data || data.code !== '0') return [];
-
-    // Группируем по символу — кто массово ликвидируется
-    const byCoin = {};
-    for (const order of (data.data || [])) {
-      for (const detail of (order.details || [])) {
-        const instId = detail.instId;
-        const side   = detail.side; // buy = шорты ликвидировались (long squeeze)
-        const sz     = parseFloat(detail.sz || 0);
-        const bkPx   = parseFloat(detail.bkPx || 0);
-        const valueUSD = sz * bkPx;
-        if (!byCoin[instId]) byCoin[instId] = { longLiq: 0, shortLiq: 0, count: 0, ts: now };
-        if (side === 'sell') byCoin[instId].longLiq += valueUSD;   // long позиция -> sell для закрытия
-        else                 byCoin[instId].shortLiq += valueUSD;
-        byCoin[instId].count++;
-      }
-    }
-    liquidationCache.data = byCoin;
-    liquidationCache.ts = now;
-    return byCoin;
-  } catch(e) {
-    console.error('[S15] getOKXLiquidations:', e.message);
-    return liquidationCache.data || {};
-  }
+  // API не работает — возвращаем пустой кэш без запроса
+  console.log('[S15] liquidation-orders API недоступен — S15 пропущена');
+  liquidationCache.data = {};
+  liquidationCache.ts = now;
+  return {};
 }
 
 // Получить недавние крупные действия китов (через copytrader если есть)
@@ -5160,7 +5138,16 @@ if (alreadyOpen) {
           const threshold = store.observeMode ? 50 : isS1sig ? 50 : 65;
           return s.confidence >= threshold;
         })
-        .sort((a, b) => b.confidence - a.confidence)[0];
+        .sort((a, b) => {
+          // В проп-режиме — S1 и S4 приоритет над остальными
+          if (store.propMode && !store.observeMode) {
+            const aIsProp = a.strategy.startsWith('1️⃣ ') || a.strategy.startsWith('4️⃣ ');
+            const bIsProp = b.strategy.startsWith('1️⃣ ') || b.strategy.startsWith('4️⃣ ');
+            if (aIsProp && !bIsProp) return -1;
+            if (!aIsProp && bIsProp) return 1;
+          }
+          return b.confidence - a.confidence;
+        })[0];
 
       if (!best) continue;
 

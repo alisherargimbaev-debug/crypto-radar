@@ -247,7 +247,7 @@ function checkPortfolioRisk(sig) {
   }
 
   // Лимит сделок (проп: 1, обычный: 3)
-  const maxTrades = store.propMode ? 1 : MAX_OPEN_TRADES;
+  const maxTrades = store.propMode ? 2 : MAX_OPEN_TRADES;
   if (open.length >= maxTrades) {
     console.log(`[PORTFOLIO] Лимит сделок (${open.length}/${maxTrades})`);
     return { allowed: false, reason: store.propMode ? 'Проп: уже 1 сделка открыта' : 'Лимит открытых сделок' };

@@ -533,7 +533,41 @@ async function handleTelegramCommand(text, chatId) {
       return `${dir} ${t.symbol}/USDT\n  💰 Вход: $${t.price}\n  🛡 SL: $${t.sl} | 🎯 TP1: $${t.tp1}\n  ⏱ ${age} мин назад`;
     }).join('\n\n');
     await sendTelegramTo(chatId,
-      `📊 ОТКРЫТЫЕ СДЕЛКИ (${open.length})\n━━━━━━━━━━━━━━━━━━━━━━\n${lines}`
+      `📊 ОТКРЫТЫЕ СДЕЛКИ (${open.length})\n━━━━━━━━━━━━━━━━━━━━━━\n${lines}\n\n` +
+      `Закрыть все: /closeall`
+    );
+  }
+
+  else if (cmd === '/closeall') {
+    const open = store.openTrades;
+    if (!open.length) {
+      await sendTelegramTo(chatId, '📊 Нет открытых сделок для закрытия.');
+      return;
+    }
+    const count = open.length;
+    // Закрываем на Bybit через AutoExec
+    if (autoExecSignals) {
+      autoExecSignals.emit('telegram_command', {
+        command: '/closeall', args: [],
+        replyFn: (t) => sendTelegramTo(chatId, t),
+      });
+    }
+    // Закрываем в store бота
+    for (const trade of open) {
+      const closedTrade = {
+        ...trade,
+        outcome: 'manual',
+        pnl: 0,
+        closedAt: Date.now(),
+        closePrice: trade.price,
+      };
+      pushTradeHistory(closedTrade);
+    }
+    store.openTrades = [];
+    await sendTelegramTo(chatId,
+      `🔴 ЗАКРЫТО ВРУЧНУЮ\n━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `Закрыто сделок: ${count}\n` +
+      `Позиции на Bybit тоже закрываются.`
     );
   }
 
@@ -5246,20 +5280,6 @@ if (alreadyOpen) {
         savePaperTrade(best);
       } else {
         saveOpenTrade(best);
-        // AutoExec — открываем сделку на Bybit
-        if (autoExecSignals) {
-          try {
-            const sym = best.instId.replace('-USDT-SWAP','USDT').replace(/-/g,'');
-            const ep  = parseFloat(best.price);
-            const slp = Math.abs((parseFloat(best.sl) - ep) / ep * 100);
-            const tpp = Math.abs((parseFloat(best.tp1) - ep) / ep * 100);
-            autoExecSignals.emit('trade_signal', {
-              symbol: sym, side: best.direction === 'long' ? 'Buy' : 'Sell',
-              confidence: best.confidence, sl_pct: +slp.toFixed(3),
-              tp_pct: +tpp.toFixed(3), reason: best.strategy, source: 'quantum-fund',
-            });
-          } catch(e) { console.error('[AutoExec] emit error:', e.message); }
-        }
       }
 
       // === AutoExec: отправляем сигнал на Bybit ===

@@ -496,6 +496,7 @@ nav::-webkit-scrollbar{display:none;}
   <div class="nav-inner">
     <button class="nav-btn active" onclick="showPage('overview',this)">Overview</button>
     <button class="nav-btn" onclick="showPage('radar',this)">Radar</button>
+    <button class="nav-btn" onclick="showPage('live',this)">Live</button>
     <button class="nav-btn" onclick="showPage('paper',this)">Paper</button>
     <button class="nav-btn" onclick="showPage('metrics',this)">Metrics</button>
     <button class="nav-btn" onclick="showPage('trackrecord',this)">Track Record</button>
@@ -512,20 +513,20 @@ nav::-webkit-scrollbar{display:none;}
 <!-- OVERVIEW -->
 <div class="page active" id="page-overview">
   <div class="stats-row" id="ov-stats">
-    <div class="stat-card blue"><div class="stat-label">Portfolio</div><div class="stat-value">$9,379</div><div class="stat-sub">PROP ACCOUNT</div></div>
-    <div class="stat-card" id="ov-pnl-card"><div class="stat-label">Total PnL</div><div class="stat-value" id="ov-pnl">—</div><div class="stat-sub">PAPER TRADING</div></div>
-    <div class="stat-card" id="ov-wr-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="ov-wr">—</div><div class="stat-sub">OBSERVE MODE</div></div>
-    <div class="stat-card blue"><div class="stat-label">Open</div><div class="stat-value" id="ov-open">0</div><div class="stat-sub">VIRTUAL POSITIONS</div></div>
-    <div class="stat-card yellow"><div class="stat-label">Strategies</div><div class="stat-value">13</div><div class="stat-sub">ACTIVE</div></div>
-    <div class="stat-card" id="ov-pf-card"><div class="stat-label">Profit Factor</div><div class="stat-value" id="ov-pf">—</div><div class="stat-sub">TARGET >1.5</div></div>
+    <div class="stat-card" id="ov-pnl-card"><div class="stat-label">Live PnL</div><div class="stat-value" id="ov-pnl">—</div><div class="stat-sub" id="ov-pnl-usd">LIVE BOT</div></div>
+    <div class="stat-card" id="ov-wr-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="ov-wr">—</div><div class="stat-sub">LIVE BOT</div></div>
+    <div class="stat-card blue"><div class="stat-label">Total Trades</div><div class="stat-value" id="ov-total">0</div><div class="stat-sub">LIVE BOT</div></div>
+    <div class="stat-card blue"><div class="stat-label">Open Now</div><div class="stat-value" id="ov-open">0</div><div class="stat-sub">LIVE POSITIONS</div></div>
+    <div class="stat-card green"><div class="stat-label">Wins</div><div class="stat-value" id="ov-wins">0</div><div class="stat-sub">LIVE BOT</div></div>
+    <div class="stat-card red"><div class="stat-label">Losses</div><div class="stat-value" id="ov-losses">0</div><div class="stat-sub">LIVE BOT</div></div>
   </div>
   <div class="grid-2">
     <div class="panel">
-      <div class="sec-title">Recent Signals</div>
-      <div id="ov-signals"><div class="empty">LOADING...</div></div>
+      <div class="sec-title">Recent Live Trades</div>
+      <div id="ov-signals"><div class="empty">NO LIVE TRADES YET</div></div>
     </div>
     <div class="panel">
-      <div class="sec-title">Strategy Performance</div>
+      <div class="sec-title">Strategy Performance (Live)</div>
       <div id="ov-strats"><div class="empty">COLLECTING DATA...</div></div>
     </div>
   </div>
@@ -550,6 +551,25 @@ nav::-webkit-scrollbar{display:none;}
   <div class="panel">
     <div class="sec-title">Recent Signals (Paper Trading)</div>
     <div id="radar-signals"><div class="empty">NO SIGNALS YET</div></div>
+  </div>
+</div>
+
+<!-- LIVE TRADING -->
+<div class="page" id="page-live">
+  <div class="stats-row" id="live-stats"></div>
+  <div class="grid-2">
+    <div class="panel">
+      <div class="sec-title">Open Positions (Live)</div>
+      <div id="live-open"><div class="empty">NO OPEN POSITIONS</div></div>
+    </div>
+    <div class="panel">
+      <div class="sec-title">Recent Closed (Live)</div>
+      <div id="live-closed"><div class="empty">NO LIVE TRADES YET</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="sec-title">By Strategy (Live)</div>
+    <div id="live-strats"><div class="empty">COLLECTING DATA...</div></div>
   </div>
 </div>
 
@@ -607,6 +627,12 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- TRACK RECORD -->
 <div class="page" id="page-trackrecord">
+  <div style="display:flex;gap:8px;margin-bottom:16px">
+    <button class="btn" id="tr-btn-all" onclick="setTrackFilter('all')" style="opacity:1">All</button>
+    <button class="btn" id="tr-btn-live" onclick="setTrackFilter('live')" style="opacity:0.5">Live Bot</button>
+    <button class="btn" id="tr-btn-paper" onclick="setTrackFilter('paper')" style="opacity:0.5">Paper</button>
+    <div id="tr-filter-label" style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);align-self:center;margin-left:8px">ALL TRADES</div>
+  </div>
   <div class="panel" style="margin-bottom:16px">
     <div class="sec-title">Equity Curve</div>
     <div class="chart-wrap" style="height:280px"><canvas id="equityChart"></canvas></div>
@@ -873,7 +899,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   if (btn) btn.classList.add('active');
-  const loaders = { paper: loadPaper, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadPaper };
+  const loaders = { paper: loadPaper, live: loadLive, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadOverview };
   if (loaders[id]) loaders[id]();
 }
 
@@ -1606,12 +1632,187 @@ function markStaticEmpties() {
 }
 setInterval(markStaticEmpties, 2000);
 
-// ── INIT ──────────────────────────────────────────────────────
+// ── LIVE TRADING ────────────────────────────────────────────────
+async function loadLive() {
+  const d = await safeFetch('/api/trades', { open:[], closed:[], stats:null });
+  renderLive(d);
+}
+
+function renderLive(d) {
+  const closed = d.closed || [];
+  const open   = d.open   || [];
+
+  // Stats
+  const se = document.getElementById('live-stats');
+  if (se && closed.length > 0) {
+    const wins   = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = closed.filter(t => t.outcome === 'sl').length;
+    const wr     = Math.round(wins / closed.length * 100);
+    const pnl    = closed.reduce((s, t) => s + (t.pnl || 0), 0);
+    const riskUSD = 47;
+    const pnlUSD  = wins * riskUSD * 2 - losses * riskUSD;
+    const pc = pnl >= 0 ? 'green' : 'red';
+    const wc = wr >= 55 ? 'green' : wr >= 40 ? 'yellow' : 'red';
+    se.innerHTML = `
+      <div class="stat-card blue"><div class="stat-label">Total</div><div class="stat-value">${closed.length}</div><div class="stat-sub">LIVE TRADES</div></div>
+      <div class="stat-card ${wc}"><div class="stat-label">Win Rate</div><div class="stat-value">${wr}%</div><div class="stat-sub">LIVE BOT</div></div>
+      <div class="stat-card green"><div class="stat-label">Wins</div><div class="stat-value">${wins}</div></div>
+      <div class="stat-card red"><div class="stat-label">Losses</div><div class="stat-value">${losses}</div></div>
+      <div class="stat-card ${pc}"><div class="stat-label">PnL</div><div class="stat-value">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</div><div class="stat-sub">${pnlUSD >= 0 ? '+$' : '-$'}${Math.abs(pnlUSD).toFixed(0)}</div></div>`;
+  } else if (se) {
+    se.innerHTML = '<div class="stat-card blue"><div class="stat-label">Live Trades</div><div class="stat-value">0</div><div class="stat-sub">NO DATA YET</div></div>';
+  }
+
+  // Open positions
+  const oe = document.getElementById('live-open');
+  if (oe) {
+    if (!open.length) { oe.innerHTML = '<div class="empty">NO OPEN POSITIONS</div>'; }
+    else oe.innerHTML = open.map(t => {
+      const dir = t.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+      const age = Math.round((Date.now() - t.ts) / 60000);
+      return `<div class="sig-row"><div class="sig-coin">${(t.symbol||t.instId||'').replace('-USDT-SWAP','')}</div><div>${dir}</div><div>$${t.price}</div><div>${age}m ago</div></div>`;
+    }).join('');
+  }
+
+  // Closed trades
+  const ce = document.getElementById('live-closed');
+  if (ce) {
+    if (!closed.length) { ce.innerHTML = '<div class="empty">NO LIVE TRADES YET</div>'; }
+    else ce.innerHTML = closed.slice(0, 8).map(t => {
+      const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+      const pnl = t.pnl != null ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) + '%' : '';
+      const pnlCls = (t.pnl||0) >= 0 ? 'c-green' : 'c-red';
+      return `<div class="sig-row">
+        <div class="sig-coin">${(t.symbol||t.instId||'').replace('-USDT-SWAP','')}</div>
+        <div class="sig-strat">${(t.strategy||'').split(' ').slice(0,2).join(' ')}</div>
+        <div>${icon}</div>
+        <div class="sig-conf ${pnlCls}">${pnl}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // By Strategy
+  const ste = document.getElementById('live-strats');
+  if (ste && closed.length) {
+    const byS = {};
+    for (const t of closed) {
+      const k = (t.strategy||'?').substring(0,30);
+      if (!byS[k]) byS[k] = {wins:0,total:0,pnl:0};
+      byS[k].total++;
+      if (t.outcome==='tp1'||t.outcome==='tp2') byS[k].wins++;
+      byS[k].pnl += t.pnl||0;
+    }
+    ste.innerHTML = Object.entries(byS).map(([n,v]) => {
+      const wr = Math.round(v.wins/v.total*100);
+      const wc = wr>=55?'green':wr>=40?'yellow':'red';
+      return `<div class="sig-row"><div class="sig-strat" style="flex:1">${n}</div><div>${v.total} trades</div><div class="sig-conf ${wc}">${wr}% WR</div><div class="sig-conf ${v.pnl>=0?'c-green':'c-red'}">${v.pnl>=0?'+':''}${v.pnl.toFixed(2)}%</div></div>`;
+    }).join('');
+  } else if (ste) {
+    ste.innerHTML = '<div class="empty">COLLECTING DATA...</div>';
+  }
+}
+
+// ── OVERVIEW (Live stats) ────────────────────────────────────────
+async function loadOverview() {
+  const [live, paper] = await Promise.all([
+    safeFetch('/api/trades', { open:[], closed:[], stats:null }),
+    safeFetch('/api/paper',  { open:[], closed:[], stats:null }),
+  ]);
+
+  const liveClosed = live.closed || [];
+  const liveOpen   = live.open   || [];
+
+  // Update overview stats from LIVE data
+  document.getElementById('ov-open').textContent = liveOpen.length;
+  document.getElementById('ov-total').textContent = liveClosed.length;
+
+  if (liveClosed.length > 0) {
+    const wins   = liveClosed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = liveClosed.filter(t => t.outcome === 'sl').length;
+    const wr     = Math.round(wins / liveClosed.length * 100);
+    const pnl    = liveClosed.reduce((s, t) => s + (t.pnl || 0), 0);
+    const riskUSD = 47;
+    const pnlUSD  = wins * riskUSD * 2 - losses * riskUSD;
+
+    document.getElementById('ov-wins').textContent = wins;
+    document.getElementById('ov-losses').textContent = losses;
+
+    const pe = document.getElementById('ov-pnl');
+    pe.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+    pe.closest('.stat-card').className = 'stat-card ' + (pnl >= 0 ? 'green' : 'red');
+    document.getElementById('ov-pnl-usd').textContent = (pnlUSD >= 0 ? '+$' : '-$') + Math.abs(pnlUSD).toFixed(0) + ' LIVE BOT';
+
+    const we = document.getElementById('ov-wr');
+    we.textContent = wr + '%';
+    we.closest('.stat-card').className = 'stat-card ' + (wr >= 55 ? 'green' : wr >= 40 ? 'yellow' : 'red');
+  }
+
+  // Recent live signals
+  const el = document.getElementById('ov-signals');
+  const rec = liveClosed.slice(0, 6);
+  if (!rec.length) { el.innerHTML = '<div class="empty">NO LIVE TRADES YET — BOT IS WORKING</div>'; }
+  else el.innerHTML = rec.map(t => {
+    const coin = (t.symbol||t.instId||'').replace('-USDT-SWAP','');
+    const dirCls = t.direction === 'long' ? 'b-green' : 'b-red';
+    const dirTxt = t.direction === 'long' ? 'LONG' : 'SHORT';
+    const pnl = t.pnl != null ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) + '%' : '';
+    const pnlCls = (t.pnl||0) >= 0 ? 'c-green' : 'c-red';
+    const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+    return `<div class="sig-row">
+      <div class="sig-coin">${coin}</div>
+      <span class="badge ${dirCls}">${dirTxt}</span>
+      <div class="sig-strat">${(t.strategy||'').split(' ').slice(0,2).join(' ')}</div>
+      <div>${icon}</div>
+      <div class="sig-conf ${pnlCls}">${pnl}</div>
+    </div>`;
+  }).join('');
+
+  // Strategy performance from live
+  const se = document.getElementById('ov-strats');
+  if (liveClosed.length === 0) {
+    se.innerHTML = '<div class="empty">COLLECTING LIVE DATA...</div>';
+    return;
+  }
+  const byS = {};
+  for (const t of liveClosed) {
+    const k = (t.strategy||'?').substring(0,30);
+    if (!byS[k]) byS[k] = {wins:0,total:0,pnl:0};
+    byS[k].total++;
+    if (t.outcome==='tp1'||t.outcome==='tp2') byS[k].wins++;
+    byS[k].pnl += t.pnl||0;
+  }
+  se.innerHTML = Object.entries(byS)
+    .sort((a,b) => b[1].total - a[1].total)
+    .map(([n,v]) => {
+      const wr = Math.round(v.wins/v.total*100);
+      const wc = wr>=55?'green':wr>=40?'yellow':'red';
+      return `<div class="sig-row"><div class="sig-strat" style="flex:1">${n}</div><div>${v.total}t</div><div class="sig-conf ${wc}">${wr}%WR</div><div class="sig-conf ${v.pnl>=0?'c-green':'c-red'}">${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</div></div>`;
+    }).join('');
+}
+
+// ── TRACK RECORD FILTER ─────────────────────────────────────────
+let trackFilter = 'all';
+function setTrackFilter(f) {
+  trackFilter = f;
+  ['all','live','paper'].forEach(k => {
+    const btn = document.getElementById('tr-btn-' + k);
+    if (btn) btn.style.opacity = k === f ? '1' : '0.5';
+  });
+  const labels = {all:'ALL TRADES', live:'LIVE BOT ONLY', paper:'PAPER ONLY'};
+  const el = document.getElementById('tr-filter-label');
+  if (el) el.textContent = labels[f] || '';
+  loadTrackRecord();
+}
+
+loadOverview();
 loadPaper();
+loadLive();
 loadRadarFull();
 loadTicker();
-setInterval(loadPaper,30000);
-setInterval(loadTicker,60000);
+setInterval(loadOverview, 30000);
+setInterval(loadPaper, 30000);
+setInterval(loadLive, 30000);
+setInterval(loadTicker, 60000);
 </script>
 </body>
 </html>

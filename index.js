@@ -246,11 +246,12 @@ function checkPortfolioRisk(sig) {
     }
   }
 
-  // Лимит сделок (проп: 1, обычный: 3)
+  // Лимит сделок — считаем только крипто сделки (не акции из Stocks модуля)
+  const cryptoTrades = open.filter(t => t.instId && t.instId.includes('-USDT-SWAP'));
   const maxTrades = store.propMode ? 2 : MAX_OPEN_TRADES;
-  if (open.length >= maxTrades) {
-    console.log(`[PORTFOLIO] Лимит сделок (${open.length}/${maxTrades})`);
-    return { allowed: false, reason: store.propMode ? 'Проп: уже 1 сделка открыта' : 'Лимит открытых сделок' };
+  if (cryptoTrades.length >= maxTrades) {
+    console.log(`[PORTFOLIO] Лимит крипто сделок (${cryptoTrades.length}/${maxTrades})`);
+    return { allowed: false, reason: `Проп: уже ${cryptoTrades.length} крипто сделки открыты` };
   }
 
   // 2. Проверка корреляции по сектору
@@ -533,41 +534,7 @@ async function handleTelegramCommand(text, chatId) {
       return `${dir} ${t.symbol}/USDT\n  💰 Вход: $${t.price}\n  🛡 SL: $${t.sl} | 🎯 TP1: $${t.tp1}\n  ⏱ ${age} мин назад`;
     }).join('\n\n');
     await sendTelegramTo(chatId,
-      `📊 ОТКРЫТЫЕ СДЕЛКИ (${open.length})\n━━━━━━━━━━━━━━━━━━━━━━\n${lines}\n\n` +
-      `Закрыть все: /closeall`
-    );
-  }
-
-  else if (cmd === '/closeall') {
-    const open = store.openTrades;
-    if (!open.length) {
-      await sendTelegramTo(chatId, '📊 Нет открытых сделок для закрытия.');
-      return;
-    }
-    const count = open.length;
-    // Закрываем на Bybit через AutoExec
-    if (autoExecSignals) {
-      autoExecSignals.emit('telegram_command', {
-        command: '/closeall', args: [],
-        replyFn: (t) => sendTelegramTo(chatId, t),
-      });
-    }
-    // Закрываем в store бота
-    for (const trade of open) {
-      const closedTrade = {
-        ...trade,
-        outcome: 'manual',
-        pnl: 0,
-        closedAt: Date.now(),
-        closePrice: trade.price,
-      };
-      pushTradeHistory(closedTrade);
-    }
-    store.openTrades = [];
-    await sendTelegramTo(chatId,
-      `🔴 ЗАКРЫТО ВРУЧНУЮ\n━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `Закрыто сделок: ${count}\n` +
-      `Позиции на Bybit тоже закрываются.`
+      `📊 ОТКРЫТЫЕ СДЕЛКИ (${open.length})\n━━━━━━━━━━━━━━━━━━━━━━\n${lines}`
     );
   }
 
@@ -4395,6 +4362,25 @@ app.get('/api/paper', async (req, res) => {
   }
 });
 
+app.get('/api/trades', (req, res) => {
+  // Реальные сделки бота (не paper) — из store.tradeHistory и store.openTrades
+  try {
+    const open   = store.openTrades || [];
+    const closed = store.tradeHistory || [];
+    const wins   = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses = closed.filter(t => t.outcome === 'sl');
+    const wr     = closed.length ? Math.round(wins.length / closed.length * 100) : 0;
+    const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
+    res.json({
+      open:   open.slice(-20),
+      closed: closed.slice(-100).reverse(),
+      stats:  closed.length ? { total: closed.length, wins: wins.length, losses: losses.length, wr, totalPnl: parseFloat(totalPnl.toFixed(2)) } : null,
+    });
+  } catch(e) {
+    res.json({ open: [], closed: [], stats: null });
+  }
+});
+
 app.get('/api/radar', async (req, res) => {
   try {
     const candidates = await getOKXCandidates();
@@ -5280,6 +5266,20 @@ if (alreadyOpen) {
         savePaperTrade(best);
       } else {
         saveOpenTrade(best);
+        // AutoExec — открываем сделку на Bybit
+        if (autoExecSignals) {
+          try {
+            const sym = best.instId.replace('-USDT-SWAP','USDT').replace(/-/g,'');
+            const ep  = parseFloat(best.price);
+            const slp = Math.abs((parseFloat(best.sl) - ep) / ep * 100);
+            const tpp = Math.abs((parseFloat(best.tp1) - ep) / ep * 100);
+            autoExecSignals.emit('trade_signal', {
+              symbol: sym, side: best.direction === 'long' ? 'Buy' : 'Sell',
+              confidence: best.confidence, sl_pct: +slp.toFixed(3),
+              tp_pct: +tpp.toFixed(3), reason: best.strategy, source: 'quantum-fund',
+            });
+          } catch(e) { console.error('[AutoExec] emit error:', e.message); }
+        }
       }
 
       // === AutoExec: отправляем сигнал на Bybit ===

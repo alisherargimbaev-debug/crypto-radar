@@ -8,15 +8,17 @@ const { RestClientV5 } = require('bybit-api');
 class BybitClient {
   constructor() {
     const testnet = process.env.BYBIT_TESTNET === 'true';
+    const demo    = process.env.BYBIT_DEMO === 'true';
 
     this.client = new RestClientV5({
-      key: process.env.BYBIT_API_KEY,
+      key:    process.env.BYBIT_API_KEY,
       secret: process.env.BYBIT_API_SECRET,
       testnet,
+      demoTrading: demo,
       recv_window: 5000,
     });
 
-    this.env = testnet ? 'TESTNET' : 'LIVE';
+    this.env = testnet ? 'TESTNET' : demo ? 'DEMO' : 'LIVE';
     console.log(`[BybitClient] Initialized on ${this.env}`);
   }
 

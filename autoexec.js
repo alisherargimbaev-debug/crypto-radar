@@ -314,6 +314,33 @@ function startMonitor() {
             }
           }
         }
+
+        // ── Trailing stop: после breakeven двигаем SL вслед за ценой ──
+        if (tracked.breakevenSet && tracked.signal?.sl_pct) {
+          const slPct    = tracked.signal.sl_pct;
+          const curPnl   = parseFloat(pnlPct);
+          const trailSL  = tracked.trailSL || tracked.entryPrice;
+
+          if (curPnl > 0) {
+            // Новый SL = текущая цена минус дистанция SL
+            const side = tracked.side === 'Buy' ? 1 : -1;
+            const newSL = livePos.markPrice * (1 - side * slPct / 100);
+            const improvement = side === 1
+              ? newSL > trailSL + 0.0001
+              : newSL < trailSL - 0.0001;
+
+            if (improvement) {
+              const result = await bybit.setTradingStop({
+                symbol,
+                stopLoss: String(parseFloat(newSL.toFixed(6))),
+              });
+              if (result) {
+                tracked.trailSL = newSL;
+                console.log(`[AutoExec][Trail] ${symbol} SL → ${newSL.toFixed(6)} (PnL: ${curPnl.toFixed(2)}%)`);
+              }
+            }
+          }
+        }
       }
     } catch (err) {
       console.error('[AutoExec] Monitor error:', err.message);

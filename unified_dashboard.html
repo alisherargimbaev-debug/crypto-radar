@@ -79,6 +79,27 @@ nav{border-bottom:1px solid var(--border);margin-bottom:24px;overflow-x:auto;}
 nav::-webkit-scrollbar{display:none;}
 .nav-inner{display:flex;gap:0;}
 .nav-btn{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);padding:10px 14px;font-family:'Sora',sans-serif;font-size:0.6rem;font-weight:500;cursor:pointer;transition:all .2s;letter-spacing:.5px;margin-bottom:-1px;text-transform:uppercase;white-space:nowrap;}
+.nav-group-label{font-family:'DM Mono',monospace;font-size:0.42rem;color:var(--dim);letter-spacing:2px;text-transform:uppercase;padding:0 8px;opacity:0.4;align-self:center;}
+.nav-sep{width:1px;height:16px;background:var(--border);margin:0 6px;align-self:center;}
+
+/* Dropdown nav */
+.nav-dropdown{position:relative;}
+.nav-dropdown-btn{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);padding:12px 18px;font-family:'Sora',sans-serif;font-size:0.65rem;font-weight:500;cursor:pointer;transition:all .2s;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;display:flex;align-items:center;gap:6px;}
+.nav-dropdown-btn:hover,.nav-dropdown-btn.active{color:var(--text);}
+.nav-dropdown-btn.active{border-bottom-color:var(--accent);}
+[data-theme="dark"] .nav-dropdown-btn.active{color:#fff;border-bottom-color:rgba(255,255,255,.7);}
+.nav-dd-arrow{font-size:0.5rem;opacity:0.5;transition:transform .2s;}
+.nav-dropdown.open .nav-dd-arrow{transform:rotate(180deg);}
+.nav-dropdown-menu{display:none;position:absolute;top:100%;left:0;background:var(--panel);border:1px solid var(--border);min-width:160px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,0.4);}
+.nav-dropdown.open .nav-dropdown-menu{display:block;}
+.nav-dd-item{display:block;width:100%;background:transparent;border:none;color:var(--dim);padding:10px 16px;font-family:'DM Mono',monospace;font-size:0.55rem;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;text-align:left;transition:all .15s;}
+.nav-dd-item:hover{color:var(--text);background:var(--panel2);}
+.nav-dd-item.active-page{color:var(--green);}
+.risk-meter{position:relative;height:4px;background:var(--border);border-radius:2px;overflow:hidden;}
+.risk-fill{height:100%;border-radius:2px;transition:width .5s ease;}
+.strat-bar{height:2px;background:var(--border);border-radius:1px;margin-top:4px;overflow:hidden;}
+.strat-bar-fill{height:100%;border-radius:1px;transition:width .8s ease;}
+.pulse-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(34,204,102,0.1);border:1px solid rgba(34,204,102,0.3);padding:3px 10px;border-radius:20px;font-family:'DM Mono',monospace;font-size:0.48rem;color:var(--green);letter-spacing:1px;}
 .nav-btn:hover{color:var(--text);}
 [data-theme="dark"] .nav-btn.active{color:#fff;border-bottom-color:rgba(255,255,255,.7);}
 [data-theme="light"] .nav-btn.active{color:var(--text);border-bottom-color:var(--accent);}
@@ -494,19 +515,39 @@ nav::-webkit-scrollbar{display:none;}
 <!-- NAV -->
 <nav>
   <div class="nav-inner">
-    <button class="nav-btn active" onclick="showPage('overview',this)">Overview</button>
-    <button class="nav-btn" onclick="showPage('radar',this)">Radar</button>
-    <button class="nav-btn" onclick="showPage('live',this)">Live</button>
-    <button class="nav-btn" onclick="showPage('paper',this)">Paper</button>
-    <button class="nav-btn" onclick="showPage('metrics',this)">Metrics</button>
-    <button class="nav-btn" onclick="showPage('trackrecord',this)">Track Record</button>
-    <button class="nav-btn" onclick="showPage('strategies',this)">Strategies</button>
-    <button class="nav-btn" onclick="showPage('dca',this)">DCA Vault</button>
-    <button class="nav-btn" onclick="showPage('calc',this)">Calculator</button>
-    <button class="nav-btn" onclick="showPage('whales',this)">Whales</button>
-    <button class="nav-btn" onclick="showPage('news',this)">News</button>
-    <button class="nav-btn" onclick="showPage('media',this)">Media</button>
-    <button class="nav-btn" onclick="showPage('investor',this)">Investor</button>
+    <div class="nav-dropdown" id="dd-trading">
+      <button class="nav-dropdown-btn active" onclick="toggleDropdown('trading')">
+        Trading <span class="nav-dd-arrow">▾</span>
+      </button>
+      <div class="nav-dropdown-menu" id="dd-menu-trading">
+        <button class="nav-dd-item" onclick="showPage('overview',this);closeDropdowns()">Overview</button>
+        <button class="nav-dd-item" onclick="showPage('live',this);closeDropdowns()">Live Bot</button>
+        <button class="nav-dd-item" onclick="showPage('paper',this);closeDropdowns()">Paper</button>
+        <button class="nav-dd-item" onclick="showPage('strategies',this);closeDropdowns()">Strategies</button>
+      </div>
+    </div>
+    <div class="nav-dropdown" id="dd-analysis">
+      <button class="nav-dropdown-btn" onclick="toggleDropdown('analysis')">
+        Analysis <span class="nav-dd-arrow">▾</span>
+      </button>
+      <div class="nav-dropdown-menu" id="dd-menu-analysis">
+        <button class="nav-dd-item" onclick="showPage('metrics',this);closeDropdowns()">Metrics</button>
+        <button class="nav-dd-item" onclick="showPage('trackrecord',this);closeDropdowns()">Track Record</button>
+        <button class="nav-dd-item" onclick="showPage('radar',this);closeDropdowns()">Radar</button>
+        <button class="nav-dd-item" onclick="showPage('whales',this);closeDropdowns()">Whales</button>
+      </div>
+    </div>
+    <div class="nav-dropdown" id="dd-tools">
+      <button class="nav-dropdown-btn" onclick="toggleDropdown('tools')">
+        Tools <span class="nav-dd-arrow">▾</span>
+      </button>
+      <div class="nav-dropdown-menu" id="dd-menu-tools">
+        <button class="nav-dd-item" onclick="showPage('calc',this);closeDropdowns()">Calculator</button>
+        <button class="nav-dd-item" onclick="showPage('news',this);closeDropdowns()">News</button>
+        <button class="nav-dd-item" onclick="showPage('dca',this);closeDropdowns()">DCA</button>
+        <button class="nav-dd-item" onclick="showPage('investor',this);closeDropdowns()">Investor</button>
+      </div>
+    </div>
   </div>
 </nav>
 
@@ -520,14 +561,59 @@ nav::-webkit-scrollbar{display:none;}
     <div class="stat-card green"><div class="stat-label">Wins</div><div class="stat-value" id="ov-wins">0</div><div class="stat-sub">LIVE BOT</div></div>
     <div class="stat-card red"><div class="stat-label">Losses</div><div class="stat-value" id="ov-losses">0</div><div class="stat-sub">LIVE BOT</div></div>
   </div>
+
+  <div class="grid-2" style="margin-bottom:16px">
+    <!-- Risk Monitor -->
+    <div class="panel">
+      <div class="sec-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Risk Monitor</span>
+        <span class="pulse-badge"><span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block"></span>LIVE</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:0.48rem;color:var(--dim);letter-spacing:1.5px;margin-bottom:6px">DAILY EXPOSURE</div>
+          <div class="risk-meter"><div class="risk-fill" id="risk-daily-bar" style="width:0%;background:var(--green)"></div></div>
+          <div style="font-family:'DM Mono',monospace;font-size:0.52rem;color:var(--text);margin-top:4px" id="risk-daily-val">0% / 3%</div>
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:0.48rem;color:var(--dim);letter-spacing:1.5px;margin-bottom:6px">MARGIN USED</div>
+          <div class="risk-meter"><div class="risk-fill" id="risk-margin-bar" style="width:0%;background:#e8a020"></div></div>
+          <div style="font-family:'DM Mono',monospace;font-size:0.52rem;color:var(--text);margin-top:4px" id="risk-margin-val">$0 / $937</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-family:'DM Mono',monospace;font-size:0.48rem;color:var(--dim);letter-spacing:1.5px;margin-bottom:8px">AUTOEXEC STATUS</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap" id="autoexec-badges">
+          <span style="font-family:'DM Mono',monospace;font-size:0.48rem;padding:3px 10px;border:1px solid var(--border);color:var(--dim)">LOADING...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Strategy Performance -->
+    <div class="panel">
+      <div class="sec-title">Strategy Performance</div>
+      <div style="margin-top:12px" id="ov-strat-bars">
+        <div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-family:'DM Mono',monospace;font-size:0.52rem;color:var(--text)">S1 Volume Spike</span>
+            <span style="font-family:'DM Mono',monospace;font-size:0.52rem;color:var(--green)">85% WR</span>
+          </div>
+          <div class="strat-bar"><div class="strat-bar-fill" style="width:85%;background:var(--green)"></div></div>
+          <div style="font-family:'DM Mono',monospace;font-size:0.45rem;color:var(--dim);margin-top:3px">40 trades · paper mode</div>
+        </div>
+        <div id="ov-live-strats"></div>
+      </div>
+    </div>
+  </div>
+
   <div class="grid-2">
     <div class="panel">
       <div class="sec-title">Recent Live Trades</div>
       <div id="ov-signals"><div class="empty">NO LIVE TRADES YET</div></div>
     </div>
     <div class="panel">
-      <div class="sec-title">Strategy Performance (Live)</div>
-      <div id="ov-strats"><div class="empty">COLLECTING DATA...</div></div>
+      <div class="sec-title">Today's Summary</div>
+      <div id="ov-today"><div class="empty">LOADING...</div></div>
     </div>
   </div>
 </div>
@@ -1788,9 +1874,124 @@ async function loadOverview() {
       const wc = wr>=55?'green':wr>=40?'yellow':'red';
       return `<div class="sig-row"><div class="sig-strat" style="flex:1">${n}</div><div>${v.total}t</div><div class="sig-conf ${wc}">${wr}%WR</div><div class="sig-conf ${v.pnl>=0?'c-green':'c-red'}">${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</div></div>`;
     }).join('');
+
+  // Risk meter
+  const openCrypto = (live.open||[]).filter(t => t.instId && t.instId.includes('-USDT-SWAP'));
+  const marginUsed = openCrypto.length * 312; // ~$312 per position
+  const maxMargin  = 937; // ~10% of $9,371
+  const marginPct  = Math.min(marginUsed / maxMargin * 100, 100);
+  const bar = document.getElementById('risk-daily-bar');
+  const mbar = document.getElementById('risk-margin-bar');
+  const mval = document.getElementById('risk-margin-val');
+  if (bar) { bar.style.width = Math.min((liveOpen.length / 2) * 100, 100) + '%'; bar.style.background = liveOpen.length >= 2 ? '#e84040' : 'var(--green)'; }
+  if (mbar) { mbar.style.width = marginPct + '%'; mbar.style.background = marginPct > 70 ? '#e84040' : '#e8a020'; }
+  if (mval) mval.textContent = `$${marginUsed} / $${maxMargin}`;
+  const dv = document.getElementById('risk-daily-val');
+  if (dv) dv.textContent = `${liveOpen.length}/2 positions`;
+
+  // AutoExec badges
+  const ab = document.getElementById('autoexec-badges');
+  if (ab) ab.innerHTML = `
+    <span style="font-family:'DM Mono',monospace;font-size:0.48rem;padding:3px 10px;background:rgba(34,204,102,0.1);border:1px solid rgba(34,204,102,0.3);color:var(--green)">DEMO MODE</span>
+    <span style="font-family:'DM Mono',monospace;font-size:0.48rem;padding:3px 10px;border:1px solid var(--border);color:var(--dim)">0.5% RISK</span>
+    <span style="font-family:'DM Mono',monospace;font-size:0.48rem;padding:3px 10px;border:1px solid var(--border);color:var(--dim)">10x LEVERAGE</span>
+    <span style="font-family:'DM Mono',monospace;font-size:0.48rem;padding:3px 10px;border:1px solid var(--border);color:var(--dim)">S1 + S4</span>`;
+
+  // Live strategy bars
+  const lsb = document.getElementById('ov-live-strats');
+  if (lsb && liveClosed.length > 0) {
+    const bySl = {};
+    for (const t of liveClosed) {
+      const k = (t.strategy||'?').substring(0,25);
+      if (!bySl[k]) bySl[k] = {wins:0,total:0,pnl:0};
+      bySl[k].total++;
+      if (t.outcome==='tp1'||t.outcome==='tp2') bySl[k].wins++;
+      bySl[k].pnl += t.pnl||0;
+    }
+    lsb.innerHTML = Object.entries(bySl).slice(0,3).map(([n,v]) => {
+      const wr = Math.round(v.wins/v.total*100);
+      const col = wr>=55?'var(--green)':wr>=40?'#e8a020':'#e84040';
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-family:'DM Mono',monospace;font-size:0.52rem;color:var(--text)">${n}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:0.52rem;color:${col}">${wr}% WR</span>
+        </div>
+        <div class="strat-bar"><div class="strat-bar-fill" style="width:${wr}%;background:${col}"></div></div>
+        <div style="font-family:'DM Mono',monospace;font-size:0.45rem;color:var(--dim);margin-top:3px">${v.total} live trades · ${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Today's summary
+  const tod = document.getElementById('ov-today');
+  if (tod) {
+    const today = new Date().toISOString().split('T')[0];
+    const todayT = liveClosed.filter(t => {
+      const d = new Date(t.closedAt||t.ts||0).toISOString().split('T')[0];
+      return d === today;
+    });
+    const tw = todayT.filter(t => t.outcome==='tp1'||t.outcome==='tp2').length;
+    const tl = todayT.filter(t => t.outcome==='sl').length;
+    const riskUSD = 47;
+    const tpnl = tw * riskUSD * 2 - tl * riskUSD;
+    if (!todayT.length) {
+      tod.innerHTML = '<div class="empty">NO TRADES TODAY YET</div>';
+    } else {
+      tod.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center">
+          <div><div style="font-family:'DM Mono',monospace;font-size:0.45rem;color:var(--dim);letter-spacing:1.5px">TRADES</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:var(--text)">${todayT.length}</div></div>
+          <div><div style="font-family:'DM Mono',monospace;font-size:0.45rem;color:var(--dim);letter-spacing:1.5px">WR</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:${tw/todayT.length>=0.55?'var(--green)':'#e84040'}">${Math.round(tw/todayT.length*100)}%</div></div>
+          <div><div style="font-family:'DM Mono',monospace;font-size:0.45rem;color:var(--dim);letter-spacing:1.5px">P&L</div><div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:${tpnl>=0?'var(--green)':'#e84040'}">${tpnl>=0?'+':''}$${Math.abs(tpnl)}</div></div>
+        </div>`;
+    }
+  }
 }
 
-// ── TRACK RECORD FILTER ─────────────────────────────────────────
+// ── DROPDOWN NAV ─────────────────────────────────────────────────
+function toggleDropdown(name) {
+  const dd = document.getElementById('dd-' + name);
+  const isOpen = dd.classList.contains('open');
+  closeDropdowns();
+  if (!isOpen) dd.classList.add('open');
+}
+
+function closeDropdowns() {
+  document.querySelectorAll('.nav-dropdown').forEach(d => d.classList.remove('open'));
+}
+
+// Закрывать при клике вне меню
+document.addEventListener('click', e => {
+  if (!e.target.closest('.nav-dropdown')) closeDropdowns();
+});
+
+// Переопределяем showPage чтобы обновлять активный dropdown
+const _origShowPage = typeof showPage === 'function' ? showPage : null;
+
+function showPageWithDropdown(pageId, btn) {
+  // Убираем active-page со всех пунктов
+  document.querySelectorAll('.nav-dd-item').forEach(i => i.classList.remove('active-page'));
+  document.querySelectorAll('.nav-dropdown-btn').forEach(b => b.classList.remove('active'));
+
+  if (btn) btn.classList.add('active-page');
+
+  // Определяем какой dropdown активен
+  const groups = {
+    trading: ['overview','live','paper','strategies'],
+    analysis: ['metrics','trackrecord','radar','whales'],
+    tools: ['calc','news','dca','investor'],
+  };
+  for (const [group, pages] of Object.entries(groups)) {
+    if (pages.includes(pageId)) {
+      const btn = document.querySelector(`#dd-${group} .nav-dropdown-btn`);
+      if (btn) btn.classList.add('active');
+      break;
+    }
+  }
+
+  showPage(pageId, btn);
+}
+
+// ── INIT ──────────────────────────────────────────────────────
 let trackFilter = 'all';
 function setTrackFilter(f) {
   trackFilter = f;

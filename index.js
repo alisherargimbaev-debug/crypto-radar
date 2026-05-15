@@ -1118,6 +1118,43 @@ async function handleTelegramCommand(text, chatId) {
     else { autoExecSignals.emit('telegram_command', { command: '/positions', args: [], replyFn: (t) => sendTelegramTo(chatId, t) }); }
   }
 
+  else if (cmd === '/today') {
+    const today = new Date().toISOString().split('T')[0];
+    const todayTrades = store.tradeHistory.filter(t => {
+      const d = new Date(t.closedAt || t.ts).toISOString().split('T')[0];
+      return d === today;
+    });
+    const wins   = todayTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = todayTrades.filter(t => t.outcome === 'sl').length;
+    const be     = todayTrades.filter(t => t.outcome === 'breakeven').length;
+    const riskUSD = store.accountBalance * store.riskPct / 100;
+    const pnlUSD  = wins * riskUSD * 2 - losses * riskUSD;
+    const openTrades = (store.openTrades || []).filter(t => t.instId && t.instId.includes('-USDT-SWAP'));
+
+    await sendTelegramTo(chatId,
+      `📅 ИТОГ ЗА СЕГОДНЯ
+` +
+      `━━━━━━━━━━━━━━━━━━━━━━
+
+` +
+      `📊 Сделок: ${todayTrades.length}
+` +
+      `✅ Побед: ${wins}
+` +
+      `❌ Потерь: ${losses}
+` +
+      `🛡 Безубыток: ${be}
+
+` +
+      `💵 P&L: ${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(0)}
+` +
+      `📈 Открытых: ${openTrades.length}
+
+` +
+      `${todayTrades.length === 0 ? 'Сделок сегодня не было.' : ''}`
+    );
+  }
+
   else if (cmd === '/closeall') {
     if (!autoExecSignals) { await sendTelegramTo(chatId, '❌ AutoExec не загружен'); }
     else {
@@ -1164,6 +1201,43 @@ async function handleTelegramCommand(text, chatId) {
         replyFn: (text) => sendTelegramTo(chatId, text),
       });
     }
+  }
+
+  else if (cmd === '/today') {
+    const today = new Date().toISOString().split('T')[0];
+    const todayTrades = store.tradeHistory.filter(t => {
+      const d = new Date(t.closedAt || t.ts).toISOString().split('T')[0];
+      return d === today;
+    });
+    const wins   = todayTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = todayTrades.filter(t => t.outcome === 'sl').length;
+    const be     = todayTrades.filter(t => t.outcome === 'breakeven').length;
+    const riskUSD = store.accountBalance * store.riskPct / 100;
+    const pnlUSD  = wins * riskUSD * 2 - losses * riskUSD;
+    const openTrades = (store.openTrades || []).filter(t => t.instId && t.instId.includes('-USDT-SWAP'));
+
+    await sendTelegramTo(chatId,
+      `📅 ИТОГ ЗА СЕГОДНЯ
+` +
+      `━━━━━━━━━━━━━━━━━━━━━━
+
+` +
+      `📊 Сделок: ${todayTrades.length}
+` +
+      `✅ Побед: ${wins}
+` +
+      `❌ Потерь: ${losses}
+` +
+      `🛡 Безубыток: ${be}
+
+` +
+      `💵 P&L: ${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(0)}
+` +
+      `📈 Открытых: ${openTrades.length}
+
+` +
+      `${todayTrades.length === 0 ? 'Сделок сегодня не было.' : ''}`
+    );
   }
 
   else if (cmd === '/closeall') {
@@ -1303,6 +1377,7 @@ async function handleTelegramCommand(text, chatId) {
       `/setrisk      — установить риск %\n` +
       `/setleverage  — установить плечо\n` +
       `🚨 АВАРИЙНЫЕ:\n` +
+      `/today        — 📅 итог за сегодня\n` +
       `/emergency    — экстренный стоп\n` +
       `/resume       — возобновить\n` +
       `/weekends     — вкл/выкл выходные\n` +
@@ -6819,6 +6894,32 @@ cron.schedule('*/30 * * * *', () => { checkRSSNews().catch(e => console.error('R
 
 // Каждый час (в 00 минут)
 cron.schedule('0 */2 * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });
+
+// Ежедневный отчёт в 21:00 Алматы (16:00 UTC)
+cron.schedule('0 16 * * *', async () => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const todayTrades = store.tradeHistory.filter(t => {
+      const d = new Date(t.closedAt || t.ts).toISOString().split('T')[0];
+      return d === today;
+    });
+    const wins   = todayTrades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = todayTrades.filter(t => t.outcome === 'sl').length;
+    const riskUSD = store.accountBalance * store.riskPct / 100;
+    const pnlUSD  = wins * riskUSD * 2 - losses * riskUSD;
+    await sendTelegram(
+      `📅 ДНЕВНОЙ ИТОГ — ${today}
+` +
+      `━━━━━━━━━━━━━━━━━━━━━━
+` +
+      `Сделок: ${todayTrades.length} | ✅${wins} ❌${losses}
+` +
+      `P&L: ${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(0)}
+` +
+      `Баланс бота: $${store.accountBalance.toLocaleString()}`
+    );
+  } catch(e) { console.error('daily report error:', e.message); }
+});
 
 // Каждые 2 часа — whale активность
 cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('checkWhales error:', e.message)); });

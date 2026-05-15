@@ -299,19 +299,18 @@ function startMonitor() {
 
         console.log(`[AutoExec][Monitor] ${symbol} PnL: ${livePos.unrealisedPnl} (${pnlPct}%)`);
 
-        // ── Breakeven: когда достигли +1R → двигаем SL на Bybit ──
-        if (!tracked.breakevenSet && tracked.signal?.sl_pct) {
-          const slPct = tracked.signal.sl_pct;
-          const oneR  = slPct; // +1R = дистанция SL
-          if (parseFloat(pnlPct) >= oneR) {
-            console.log(`[AutoExec][Breakeven] ${symbol} достиг +${oneR}% → SL в безубыток`);
+        // ── Breakeven: когда достигли 50% от TP1 → SL в безубыток ──
+        if (!tracked.breakevenSet && tracked.signal?.tp_pct) {
+          const halfTP = tracked.signal.tp_pct * 0.5; // половина пути до TP1
+          if (parseFloat(pnlPct) >= halfTP) {
+            console.log(`[AutoExec][Breakeven] ${symbol} достиг ${halfTP.toFixed(2)}% (50% TP) → SL в безубыток`);
             const beResult = await bybit.setTradingStop({
               symbol,
               stopLoss: String(tracked.entryPrice),
             });
             if (beResult) {
               tracked.breakevenSet = true;
-              await notify(`🛡 ${symbol} — SL передвинут в безубыток на Bybit (+1R достигнут). Сделка безрисковая.`);
+              await notify(`🛡 ${symbol} — SL в безубыток (50% TP достигнут). Сделка безрисковая.`);
             }
           }
         }

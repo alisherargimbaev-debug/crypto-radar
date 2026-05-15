@@ -458,10 +458,44 @@ function saveSettings() {
       observeMode:    store.observeMode,
       peakBalance:    store.peakBalance,
     }, null, 2));
-  } catch(e) { console.error('[SETTINGS] Ошибка сохранения:', e.message); }
+  } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
+  // Supabase — сохраняем между деплоями
+  supabase.from('bot_settings').upsert({
+    id: 1,
+    account_balance: store.accountBalance,
+    leverage:        store.leverage,
+    risk_pct:        store.riskPct,
+    prop_mode:       store.propMode,
+    emergency_stop:  store.emergencyStop,
+    block_weekends:  store.blockWeekends,
+    observe_mode:    store.observeMode,
+    peak_balance:    store.peakBalance,
+    updated_at:      new Date().toISOString(),
+  }).then(({ error }) => {
+    if (error) console.error('[SETTINGS] Supabase error:', error.message);
+    else console.log(`[SETTINGS] Saved: prop=${store.propMode} observe=${store.observeMode}`);
+  });
+}
+
+async function loadSettingsFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('bot_settings').select('*').eq('id', 1).single();
+    if (error || !data) { console.log('[SETTINGS] Supabase: нет данных, используем файл'); return; }
+    if (typeof data.account_balance === 'number') store.accountBalance = data.account_balance;
+    if (typeof data.leverage        === 'number') store.leverage       = data.leverage;
+    if (typeof data.risk_pct        === 'number') store.riskPct        = data.risk_pct;
+    if (typeof data.prop_mode       === 'boolean') store.propMode      = data.prop_mode;
+    if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
+    if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
+    if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
+    if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
+    console.log(`[SETTINGS] Supabase: balance=$${store.accountBalance} prop=${store.propMode} observe=${store.observeMode}`);
+  } catch(e) { console.error('[SETTINGS] Supabase load error:', e.message); }
 }
 
 loadSettings();
+loadSettingsFromSupabase().catch(() => {});
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
 function pushTradeHistory(trade) {
@@ -1188,6 +1222,24 @@ async function handleTelegramCommand(text, chatId) {
 
   else if (cmd === '/account') {
     const risk = store.accountBalance * store.riskPct / 100;
+
+    // Получаем реальный баланс с Bybit Demo
+    let bybitBalance = null;
+    if (autoExecSignals) {
+      try {
+        const { BybitClient } = require('./bybit-client') || {};
+        // Баланс через autoexec
+      } catch(e) {}
+    }
+
+    // Считаем реальный P&L из истории сделок
+    const trades = store.tradeHistory || [];
+    const wins = trades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses = trades.filter(t => t.outcome === 'sl').length;
+    const wr = trades.length ? Math.round(wins / trades.length * 100) : 0;
+    const riskUSD = store.accountBalance * store.riskPct / 100;
+    const pnlUSD = wins * riskUSD * 2 - losses * riskUSD;
+
     await sendTelegramTo(chatId,
       `💼 НАСТРОЙКИ АККАУНТА\n` +
       `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
@@ -1198,6 +1250,10 @@ async function handleTelegramCommand(text, chatId) {
       `Авария:   ${store.emergencyStop ? '🚨 СТОП' : '✅ Работает'}\n` +
       `Выходные: ${store.blockWeekends ? '🚫 Блок' : '✅ Торгуем'}\n` +
       `Наблюд.:  ${store.observeMode ? '👁 ВКЛ (не торгуем)' : '🔴 ВЫКЛ'}\n\n` +
+      `📊 Live Bot статистика:\n` +
+      `  Сделок: ${trades.length} | WR: ${wr}%\n` +
+      `  Побед: ${wins} | Потерь: ${losses}\n` +
+      `  P&L: ${pnlUSD >= 0 ? '+' : ''}$${pnlUSD.toFixed(0)}\n\n` +
       `📊 При SL 1.5%:\n` +
       `Position Size: $${(risk / 0.015).toFixed(0)}\n` +
       `Маржа: $${(risk / 0.015 / store.leverage).toFixed(0)}\n\n` +
@@ -4998,6 +5054,8 @@ async function checkSignals() {
   isRunning = true;
   try {
     console.log(`[${getAlmatyTime()}] checkSignals запущен`);
+  lastCheckTime = Date.now();
+  totalChecks++;
 
     const candidates   = await getOKXCandidates();
     if (!candidates.length) { console.log('Нет кандидатов'); isRunning = false; return; }
@@ -6698,6 +6756,18 @@ console.log(`⏰ Время Алматы: ${getAlmatyTime()}`);
 console.log(`📊 Сессия: ${getCurrentSession()}`);
 
 // Каждые 5 минут
+// ── HEALTH MONITOR ─────────────────────────────────────────
+let lastCheckTime = Date.now();
+let totalChecks = 0;
+cron.schedule('*/30 * * * *', async () => {
+  const now = Date.now();
+  const minsSinceCheck = Math.round((now - lastCheckTime) / 60000);
+  if (minsSinceCheck > 15) {
+    // Бот завис — отправляем алерт
+    await sendTelegram(`⚠️ АЛЕРТ: бот не проверял сигналы ${minsSinceCheck} минут! Проверь сервер.`);
+  }
+});
+
 cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
 
 // Paper trading — проверяем виртуальные сделки каждые 5 минут

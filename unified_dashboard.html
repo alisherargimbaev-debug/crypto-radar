@@ -520,10 +520,10 @@ nav::-webkit-scrollbar{display:none;}
         Trading <span class="nav-dd-arrow">▾</span>
       </button>
       <div class="nav-dropdown-menu" id="dd-menu-trading">
-        <button class="nav-dd-item" onclick="showPage('overview',this);closeDropdowns()">Overview</button>
-        <button class="nav-dd-item" onclick="showPage('live',this);closeDropdowns()">Live Bot</button>
-        <button class="nav-dd-item" onclick="showPage('paper',this);closeDropdowns()">Paper</button>
-        <button class="nav-dd-item" onclick="showPage('strategies',this);closeDropdowns()">Strategies</button>
+        <button class="nav-dd-item active-page" onclick="showPageDD('overview')">Overview</button>
+        <button class="nav-dd-item" onclick="showPageDD('live')">Live Bot</button>
+        <button class="nav-dd-item" onclick="showPageDD('paper')">Paper</button>
+        <button class="nav-dd-item" onclick="showPageDD('strategies')">Strategies</button>
       </div>
     </div>
     <div class="nav-dropdown" id="dd-analysis">
@@ -531,10 +531,10 @@ nav::-webkit-scrollbar{display:none;}
         Analysis <span class="nav-dd-arrow">▾</span>
       </button>
       <div class="nav-dropdown-menu" id="dd-menu-analysis">
-        <button class="nav-dd-item" onclick="showPage('metrics',this);closeDropdowns()">Metrics</button>
-        <button class="nav-dd-item" onclick="showPage('trackrecord',this);closeDropdowns()">Track Record</button>
-        <button class="nav-dd-item" onclick="showPage('radar',this);closeDropdowns()">Radar</button>
-        <button class="nav-dd-item" onclick="showPage('whales',this);closeDropdowns()">Whales</button>
+        <button class="nav-dd-item" onclick="showPageDD('metrics')">Metrics</button>
+        <button class="nav-dd-item" onclick="showPageDD('trackrecord')">Track Record</button>
+        <button class="nav-dd-item" onclick="showPageDD('radar')">Radar</button>
+        <button class="nav-dd-item" onclick="showPageDD('whales')">Whales</button>
       </div>
     </div>
     <div class="nav-dropdown" id="dd-tools">
@@ -542,10 +542,10 @@ nav::-webkit-scrollbar{display:none;}
         Tools <span class="nav-dd-arrow">▾</span>
       </button>
       <div class="nav-dropdown-menu" id="dd-menu-tools">
-        <button class="nav-dd-item" onclick="showPage('calc',this);closeDropdowns()">Calculator</button>
-        <button class="nav-dd-item" onclick="showPage('news',this);closeDropdowns()">News</button>
-        <button class="nav-dd-item" onclick="showPage('dca',this);closeDropdowns()">DCA</button>
-        <button class="nav-dd-item" onclick="showPage('investor',this);closeDropdowns()">Investor</button>
+        <button class="nav-dd-item" onclick="showPageDD('calc')">Calculator</button>
+        <button class="nav-dd-item" onclick="showPageDD('news')">News</button>
+        <button class="nav-dd-item" onclick="showPageDD('dca')">DCA</button>
+        <button class="nav-dd-item" onclick="showPageDD('investor')">Investor</button>
       </div>
     </div>
   </div>
@@ -1959,22 +1959,17 @@ function closeDropdowns() {
   document.querySelectorAll('.nav-dropdown').forEach(d => d.classList.remove('open'));
 }
 
-// Закрывать при клике вне меню
-document.addEventListener('click', e => {
+document.addEventListener('click', function(e) {
   if (!e.target.closest('.nav-dropdown')) closeDropdowns();
 });
 
-// Переопределяем showPage чтобы обновлять активный dropdown
-const _origShowPage = typeof showPage === 'function' ? showPage : null;
-
-function showPageWithDropdown(pageId, btn) {
-  // Убираем active-page со всех пунктов
+function showPageDD(pageId) {
+  closeDropdowns();
+  // Убираем active-page
   document.querySelectorAll('.nav-dd-item').forEach(i => i.classList.remove('active-page'));
   document.querySelectorAll('.nav-dropdown-btn').forEach(b => b.classList.remove('active'));
 
-  if (btn) btn.classList.add('active-page');
-
-  // Определяем какой dropdown активен
+  // Подсвечиваем нужную группу
   const groups = {
     trading: ['overview','live','paper','strategies'],
     analysis: ['metrics','trackrecord','radar','whales'],
@@ -1982,16 +1977,15 @@ function showPageWithDropdown(pageId, btn) {
   };
   for (const [group, pages] of Object.entries(groups)) {
     if (pages.includes(pageId)) {
-      const btn = document.querySelector(`#dd-${group} .nav-dropdown-btn`);
+      const btn = document.querySelector('#dd-' + group + ' .nav-dropdown-btn');
       if (btn) btn.classList.add('active');
       break;
     }
   }
-
-  showPage(pageId, btn);
+  showPage(pageId);
 }
 
-// ── INIT ──────────────────────────────────────────────────────
+// ── TRACK RECORD FILTER ─────────────────────────────────────────
 let trackFilter = 'all';
 function setTrackFilter(f) {
   trackFilter = f;

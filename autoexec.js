@@ -298,6 +298,23 @@ function startMonitor() {
           (tracked.side === 'Buy' ? 1 : -1)).toFixed(2);
 
         console.log(`[AutoExec][Monitor] ${symbol} PnL: ${livePos.unrealisedPnl} (${pnlPct}%)`);
+
+        // ── Breakeven: когда достигли +1R → двигаем SL на Bybit ──
+        if (!tracked.breakevenSet && tracked.signal?.sl_pct) {
+          const slPct = tracked.signal.sl_pct;
+          const oneR  = slPct; // +1R = дистанция SL
+          if (parseFloat(pnlPct) >= oneR) {
+            console.log(`[AutoExec][Breakeven] ${symbol} достиг +${oneR}% → SL в безубыток`);
+            const beResult = await bybit.setTradingStop({
+              symbol,
+              stopLoss: String(tracked.entryPrice),
+            });
+            if (beResult) {
+              tracked.breakevenSet = true;
+              await notify(`🛡 ${symbol} — SL передвинут в безубыток на Bybit (+1R достигнут). Сделка безрисковая.`);
+            }
+          }
+        }
       }
     } catch (err) {
       console.error('[AutoExec] Monitor error:', err.message);

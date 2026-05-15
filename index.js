@@ -5260,14 +5260,17 @@ if (alreadyOpen) {
         } catch(e) { /* если нет данных, пропускаем проверку */ }
       }
 
-      await sendTelegram(buildSignalAlert(best));
       setCoinCooldown(coin.instId);
       logSignal(best);
+
       if (store.observeMode) {
+        // В observe mode — просто сохраняем paper trade и уведомляем
         savePaperTrade(best);
+        await sendTelegram(buildSignalAlert(best));
       } else {
         saveOpenTrade(best);
-        // AutoExec — открываем сделку на Bybit
+
+        // AutoExec emit — ПЕРВЫМ, до Telegram (экономим 1-2 сек)
         if (autoExecSignals) {
           try {
             const sym = best.instId.replace('-USDT-SWAP','USDT').replace(/-/g,'');
@@ -5279,40 +5282,12 @@ if (alreadyOpen) {
               confidence: best.confidence, sl_pct: +slp.toFixed(3),
               tp_pct: +tpp.toFixed(3), reason: best.strategy, source: 'quantum-fund',
             });
+            console.log(`[AutoExec] Сигнал отправлен: ${sym} ${best.direction} conf=${best.confidence}%`);
           } catch(e) { console.error('[AutoExec] emit error:', e.message); }
         }
-      }
 
-      // === AutoExec: отправляем сигнал на Bybit ===
-      if (autoExecSignals && !store.observeMode) {
-        try {
-          // Конвертируем формат OKX → Bybit
-          const bybitSymbol = best.instId
-            .replace('-USDT-SWAP', 'USDT')
-            .replace('-USDT', 'USDT')
-            .replace(/-/g, '');
-
-          // Считаем SL% и TP% из абсолютных цен
-          const entryPrice = parseFloat(best.price);
-          const slPrice    = parseFloat(best.sl);
-          const tp1Price   = parseFloat(best.tp1);
-          const slPct  = Math.abs((slPrice - entryPrice) / entryPrice * 100);
-          const tp1Pct = Math.abs((tp1Price - entryPrice) / entryPrice * 100);
-
-          autoExecSignals.emit('trade_signal', {
-            symbol:     bybitSymbol,
-            side:       best.direction === 'long' ? 'Buy' : 'Sell',
-            confidence: best.confidence,
-            sl_pct:     parseFloat(slPct.toFixed(3)),
-            tp_pct:     parseFloat(tp1Pct.toFixed(3)),
-            reason:     best.strategy + ' | ' + (best.metrics || ''),
-            source:     'quantum-fund',
-          });
-
-          console.log(`[AutoExec] Сигнал отправлен: ${bybitSymbol} ${best.direction} conf=${best.confidence}%`);
-        } catch(e) {
-          console.error('[AutoExec] emit error:', e.message);
-        }
+        // Telegram — параллельно с emit (не ждём)
+        sendTelegram(buildSignalAlert(best)).catch(e => console.error('[TG] signal alert error:', e.message));
       }
     }
   } finally {
@@ -6075,7 +6050,9 @@ async function checkOutcomes() {
     if (!price) { stillOpen.push(trade); continue; }
 
     // ── Breakeven: при +1R передвигаем SL в безубыток ────────
-    if (!trade.trailingActive) {
+    // Пропускаем если AutoExec управляет позицией на Bybit
+    // (AutoExec сам следит за реальной позицией по правильной цене входа)
+    if (!trade.trailingActive && !autoExecSignals) {
       const entry = parseFloat(trade.price);
       const slOrig = parseFloat(trade.sl);
       const slDist = Math.abs(entry - slOrig);

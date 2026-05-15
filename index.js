@@ -551,10 +551,27 @@ async function sendTelegram(text, module = null) {
 // ============================================================
 //  TELEGRAM КОМАНДЫ
 // ============================================================
+// Команды только для администратора
+const ADMIN_ONLY_COMMANDS = [
+  '/prop', '/observe', '/emergency', '/resume', '/setrisk',
+  '/setbalance', '/setleverage', '/weekends', '/autoexec',
+  '/closeall', '/nightmode', '/audit', '/report', '/debrief',
+  '/psychologist', '/benchmark', '/weekly', '/versions', '/logs',
+  '/diag', '/stocks',
+];
+
 async function handleTelegramCommand(text, chatId) {
   const parts = text.trim().split(/\s+/);
   const cmd   = parts[0].toLowerCase();
   const args  = parts.slice(1);
+
+  // Управляющие команды — только для владельца
+  const isAdmin    = String(chatId) === String(process.env.CHAT_ID);
+  const isAdminCmd = ADMIN_ONLY_COMMANDS.some(c => cmd === c);
+  if (isAdminCmd && !isAdmin) {
+    await sendTelegramTo(chatId, '⛔️ Эта команда доступна только администратору.');
+    return;
+  }
 
   if (cmd === '/status' || cmd === '/start') {
     const open = store.openTrades;
@@ -1390,6 +1407,20 @@ async function editModulesPanel(chatId, messageId) {
 
 async function pollTelegramUpdates() {
   let offset = 0;
+
+  // Пропускаем старые апдейты при старте — убираем двойные ответы
+  try {
+    const init = await httpPost(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates`,
+      { offset: -1, limit: 1, timeout: 0 },
+      { 'Content-Type': 'application/json' }
+    );
+    if (init?.result?.length) {
+      offset = init.result[init.result.length - 1].update_id + 1;
+      console.log(`[TG] Старт с offset=${offset} (старые апдейты пропущены)`);
+    }
+  } catch(e) { console.error('[TG] init offset error:', e.message); }
+
   const poll = async () => {
     try {
       const data = await httpPost(

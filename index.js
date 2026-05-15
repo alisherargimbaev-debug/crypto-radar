@@ -4185,10 +4185,11 @@ function buildSignalAlert(sig) {
 
 function buildOutcomeAlert(trade) {
   const map = {
-    tp1:     { e:'✅', t:'ТП1 достигнут' },
-    tp2:     { e:'🏆', t:'ТП2 достигнут' },
-    sl:      { e:'❌', t:'Стоп-лосс' },
-    expired: { e:'⏰', t:'Истёк' }
+    tp1:       { e:'✅', t:'ТП1 достигнут' },
+    tp2:       { e:'🏆', t:'ТП2 достигнут' },
+    sl:        { e:'❌', t:'Стоп-лосс' },
+    breakeven: { e:'🛡', t:'Безубыток (SL в BE)' },
+    expired:   { e:'⏰', t:'Истёк' }
   };
   const o   = map[trade.outcome] || { e:'❓', t: trade.outcome };
   const age = Math.round((trade.closedAt - trade.ts) / 60000);
@@ -6100,14 +6101,14 @@ async function checkOutcomes() {
     let outcome = null;
     if (trade.direction === 'long') {
       if (price <= parseFloat(trade.sl)) {
-        // Если trailing был активен — это фиксация прибыли а не стоп
-        outcome = trade.trailingActive ? 'tp1' : 'sl';
+        // Если trailing был активен — закрылся по безубытку (не tp1 и не sl)
+        outcome = trade.trailingActive ? 'breakeven' : 'sl';
       }
       else if (price >= parseFloat(trade.tp2)) outcome = 'tp2';
       else if (price >= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
     } else {
       if (price >= parseFloat(trade.sl)) {
-        outcome = trade.trailingActive ? 'tp1' : 'sl';
+        outcome = trade.trailingActive ? 'breakeven' : 'sl';
       }
       else if (price <= parseFloat(trade.tp2)) outcome = 'tp2';
       else if (price <= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';

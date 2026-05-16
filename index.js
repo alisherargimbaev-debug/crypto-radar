@@ -6868,8 +6868,8 @@ let totalChecks = 0;
 cron.schedule('*/30 * * * *', async () => {
   const now = Date.now();
   const minsSinceCheck = Math.round((now - lastCheckTime) / 60000);
-  if (minsSinceCheck > 15) {
-    // Бот завис — отправляем алерт
+  if (minsSinceCheck > 35) {
+    // Бот завис — отправляем алерт (checkSignals занимает до 20 минут)
     await sendTelegram(`⚠️ АЛЕРТ: бот не проверял сигналы ${minsSinceCheck} минут! Проверь сервер.`);
   }
 });

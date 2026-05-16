@@ -225,24 +225,43 @@ async function handleSignal(signal) {
       return;
     }
 
-    // ── Сохраняем в трекер ──
+    // ── Получаем реальную цену входа с биржи ──
+    let realEntry = price;
+    try {
+      await new Promise(r => setTimeout(r, 800)); // ждём чтобы биржа обновила позицию
+      const positions = await bybit.getPositions(signal.symbol);
+      const pos = positions?.find(p => p.symbol === signal.symbol && parseFloat(p.size) > 0);
+      if (pos && parseFloat(pos.avgPrice) > 0) {
+        realEntry = parseFloat(pos.avgPrice);
+      }
+    } catch(e) { console.error(`${tag} getPositions error:`, e.message); }
+
+    // ── Сохраняем в трекер с реальной ценой ──
     activePositions.set(signal.symbol, {
       signal,
-      orderId: order.orderId,
+      orderId:     order.orderId,
       orderLinkId: linkId,
-      side: signal.side,
+      side:        signal.side,
       qty,
-      entryPrice: price,
+      entryPrice:  realEntry,
       slPrice,
       tpPrice,
-      openedAt: new Date(),
+      openedAt:    new Date(),
     });
 
+    // ── Уведомляем с реальными данными ──
+    const coin = signal.symbol.replace('USDT', '');
+    const dir  = signal.side === 'Buy' ? '🟢 LONG' : '🔴 SHORT';
     await notify(
       `✅ Позиция открыта!\n` +
-      `${signal.side === 'Buy' ? '🟢' : '🔴'} ${signal.side} ${signal.symbol}\n` +
-      `Order ID: ${order.orderId}\n` +
-      `Кол-во: ${qty} | Плечо: ${leverage}x`
+      `━━━━━━━━━━━━━━━━━━━\n` +
+      `${dir} ${coin}/USDT\n` +
+      `💰 Вход: $${realEntry}\n` +
+      `🛡 SL: $${slPrice} (-${slPct}%)\n` +
+      `🎯 TP: $${tpPrice} (+${tpPct}%)\n` +
+      `📦 Размер: ${qty} (~$${(qty * realEntry).toFixed(0)})\n` +
+      `⚡️ Плечо: ${leverage}x\n` +
+      `📊 Уверенность: ${signal.confidence}%`
     );
 
     // ── Запись в Supabase ──

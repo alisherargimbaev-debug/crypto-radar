@@ -5442,9 +5442,15 @@ if (alreadyOpen) {
             const slp = Math.abs((parseFloat(best.sl) - ep) / ep * 100);
             const tpp = Math.abs((parseFloat(best.tp1) - ep) / ep * 100);
             autoExecSignals.emit('trade_signal', {
-              symbol: sym, side: best.direction === 'long' ? 'Buy' : 'Sell',
-              confidence: best.confidence, sl_pct: +slp.toFixed(3),
-              tp_pct: +tpp.toFixed(3), reason: best.strategy, source: 'quantum-fund',
+              symbol:     sym,
+              side:       best.direction === 'long' ? 'Buy' : 'Sell',
+              confidence: best.confidence,
+              sl_pct:     +slp.toFixed(3),
+              tp_pct:     +tpp.toFixed(3),
+              sl_price:   best.sl,
+              tp_price:   best.tp1,
+              reason:     best.strategy,
+              source:     'quantum-fund',
             });
             console.log(`[AutoExec] Сигнал отправлен: ${sym} ${best.direction} conf=${best.confidence}%`);
           } catch(e) { console.error('[AutoExec] emit error:', e.message); }

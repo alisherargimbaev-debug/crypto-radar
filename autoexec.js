@@ -365,18 +365,21 @@ async function handlePositionClosed(symbol, tracked) {
     const pnlPct = balance ? (pnl / balance.total * 100) : 0;
     dailyPnl += pnlPct;
 
-    const emoji = pnl >= 0 ? '💰' : '📉';
+    const emoji    = pnl >= 0 ? '✅' : '❌';
+    const outcome  = pnl >= 0 ? 'ПРИБЫЛЬ' : 'УБЫТОК';
+    const dir      = tracked.side === 'Buy' ? '🟢 LONG' : '🔴 SHORT';
     const duration = formatDuration(new Date() - tracked.openedAt);
+    const coin     = symbol.replace('USDT','');
 
     await notify(
-      `${emoji} Позиция закрыта: ${symbol}\n` +
-      `Направление: ${tracked.side}\n` +
-      `Вход: ${tracked.entryPrice}\n` +
-      `Выход: ${exitPrice}\n` +
-      `PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)\n` +
-      `Длительность: ${duration}\n` +
-      `Дневной PnL: ${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}%\n` +
-      `${TESTNET ? '⚠️ TESTNET' : ''}`
+      `${emoji} ${coin}/USDT — ${outcome}\n` +
+      `━━━━━━━━━━━━━━━━━━━\n` +
+      `${dir}\n` +
+      `💰 Вход: $${tracked.entryPrice}\n` +
+      `📍 Выход: $${exitPrice}\n` +
+      `💵 PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\n` +
+      `⏱ В сделке: ${duration}\n` +
+      `📊 Дневной P&L: ${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}%`
     );
 
     // Запись в Supabase
@@ -492,13 +495,30 @@ async function handleTelegramCommand({ command, args, replyFn }) {
 
 // ─── Утилиты ─────────────────────────────────────────────────
 
-// Уведомление в Telegram
+// Уведомление в Telegram — напрямую через HTTP (bot может быть null)
 async function notify(text) {
   try {
-    if (bot && chatId) {
-      await bot.sendMessage(chatId, `🤖 *AutoExec*\n${text}`, { parse_mode: 'Markdown' });
-    }
+    const fullText = `🤖 *AutoExec*\n${text}`;
     console.log(`[AutoExec] Notify: ${text.substring(0, 80)}...`);
+
+    if (bot && chatId) {
+      await bot.sendMessage(chatId, fullText, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    // Fallback — прямой HTTP запрос
+    if (chatId && process.env.TELEGRAM_TOKEN) {
+      const url = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: fullText,
+          parse_mode: 'Markdown',
+        }),
+      });
+    }
   } catch (err) {
     console.error('[AutoExec] Notify error:', err.message);
   }

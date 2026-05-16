@@ -6273,7 +6273,10 @@ async function checkOutcomes() {
       trade.pnl = parseFloat(trade.pnl.toFixed(2));
       updateDailyPnl(trade.pnl || 0, outcome);
       closed.push(trade);
-      await sendTelegram(buildOutcomeAlert(trade));
+      // Уведомление только если AutoExec выключен — иначе он сам уже уведомил
+      if (!autoExecSignals) {
+        await sendTelegram(buildOutcomeAlert(trade));
+      }
     } else { stillOpen.push(trade); }
   }
 
@@ -7051,6 +7054,37 @@ setTimeout(() => {
 
 if (autoExecSignals) {
   autoExecSignals.emit('inject_deps', { telegramBot: null, telegramChatId: CHAT_ID, supabaseClient: supabase });
+
+  // Слушаем реальные закрытия с Bybit — обновляем store реальными данными
+  autoExecSignals.on('position_closed', (data) => {
+    try {
+      // Убираем из openTrades
+      store.openTrades = store.openTrades.filter(t =>
+        t.instId !== data.instId && t.symbol !== data.symbol.replace('USDT','')
+      );
+
+      // Добавляем в историю с реальными данными Bybit
+      const trade = {
+        instId:     data.instId,
+        symbol:     data.symbol.replace('USDT',''),
+        direction:  data.side === 'Buy' ? 'long' : 'short',
+        price:      data.entryPrice,
+        closePrice: data.exitPrice,
+        sl:         null,
+        tp1:        null,
+        outcome:    data.outcome,
+        pnl:        parseFloat((data.pnlPct || 0).toFixed(2)),
+        pnlUSD:     parseFloat((data.pnl || 0).toFixed(2)),
+        strategy:   data.strategy,
+        confidence: data.confidence,
+        ts:         data.openedAt ? new Date(data.openedAt).getTime() : Date.now(),
+        closedAt:   data.closedAt ? new Date(data.closedAt).getTime() : Date.now(),
+        source:     'bybit_real',
+      };
+      pushTradeHistory(trade);
+      console.log(`[AutoExec→Store] ${data.symbol} закрыт: ${data.outcome} PnL=$${data.pnl?.toFixed(2)}`);
+    } catch(e) { console.error('[AutoExec→Store] error:', e.message); }
+  });
 }
 
 // === AutoExec: inject зависимостей + Telegram команды ===

@@ -401,6 +401,23 @@ async function handlePositionClosed(symbol, tracked) {
       `📊 Дневной P&L: ${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}%`
     );
 
+    // Уведомляем index.js о реальном закрытии — он обновит store
+    signals.emit('position_closed', {
+      symbol,
+      instId:     symbol.replace('USDT', '-USDT-SWAP'),
+      entryPrice: tracked.entryPrice,
+      exitPrice,
+      pnl,
+      pnlPct,
+      side:       tracked.side,
+      outcome:    pnl >= 0 ? 'tp1' : 'sl',
+      duration:   formatDuration(new Date() - tracked.openedAt),
+      openedAt:   tracked.openedAt,
+      closedAt:   new Date(),
+      strategy:   tracked.signal?.reason || '',
+      confidence: tracked.signal?.confidence || 0,
+    });
+
     // Запись в Supabase
     await saveTrade({
       symbol,

@@ -7063,6 +7063,16 @@ if (autoExecSignals) {
         t.instId !== data.instId && t.symbol !== data.symbol.replace('USDT','')
       );
 
+      // Синхронизируем реальный баланс Bybit → store
+      if (data.realBalance && data.realBalance > 0) {
+        const oldBalance = store.accountBalance;
+        store.accountBalance = Math.round(data.realBalance);
+        if (Math.abs(oldBalance - store.accountBalance) > 1) {
+          console.log(`[AutoExec→Store] Баланс обновлён: $${oldBalance} → $${store.accountBalance}`);
+          saveSettings();
+        }
+      }
+
       // Добавляем в историю с реальными данными Bybit
       const trade = {
         instId:     data.instId,

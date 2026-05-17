@@ -372,11 +372,17 @@ function startMonitor() {
 // ─── Обработка закрытой позиции ──────────────────────────────
 async function handlePositionClosed(symbol, tracked) {
   try {
-    // Получаем данные о закрытом PnL с биржи
-    const closedPnlList = await bybit.getClosedPnl(symbol, 1);
-    const closedPnl = closedPnlList?.[0];
+    // Получаем данные о закрытом PnL — ищем совпадение по времени открытия
+    const closedPnlList = await bybit.getClosedPnl(symbol, 5);
+    
+    // Ищем сделку которая открылась после нашего входа
+    const openedTs = tracked.openedAt ? new Date(tracked.openedAt).getTime() : 0;
+    const closedPnl = closedPnlList?.find(p => {
+      const createdTs = parseFloat(p.createdTime || p.updatedTime || 0);
+      return createdTs > openedTs - 60000; // в пределах 1 минуты от открытия
+    }) || closedPnlList?.[0];
 
-    const pnl = closedPnl ? parseFloat(closedPnl.closedPnl) : 0;
+    const pnl       = closedPnl ? parseFloat(closedPnl.closedPnl) : 0;
     const exitPrice = closedPnl ? parseFloat(closedPnl.avgExitPrice) : 0;
 
     // Обновляем дневной PnL
@@ -404,18 +410,19 @@ async function handlePositionClosed(symbol, tracked) {
     // Уведомляем index.js о реальном закрытии — он обновит store
     signals.emit('position_closed', {
       symbol,
-      instId:     symbol.replace('USDT', '-USDT-SWAP'),
-      entryPrice: tracked.entryPrice,
+      instId:      symbol.replace('USDT', '-USDT-SWAP'),
+      entryPrice:  tracked.entryPrice,
       exitPrice,
       pnl,
       pnlPct,
-      side:       tracked.side,
-      outcome:    pnl >= 0 ? 'tp1' : 'sl',
-      duration:   formatDuration(new Date() - tracked.openedAt),
-      openedAt:   tracked.openedAt,
-      closedAt:   new Date(),
-      strategy:   tracked.signal?.reason || '',
-      confidence: tracked.signal?.confidence || 0,
+      side:        tracked.side,
+      outcome:     pnl >= 0 ? 'tp1' : 'sl',
+      duration:    formatDuration(new Date() - tracked.openedAt),
+      openedAt:    tracked.openedAt,
+      closedAt:    new Date(),
+      strategy:    tracked.signal?.reason || '',
+      confidence:  tracked.signal?.confidence || 0,
+      realBalance: balance?.total || null, // реальный баланс Bybit для синхронизации
     });
 
     // Запись в Supabase

@@ -3211,9 +3211,9 @@ function applyMarketRegime(sig, regime) {
     }
   }
 
-  // 3. ЭКСТРЕМАЛЬНЫЙ СТРАХ (FNG < 25) — только шорты
+  // 3. СИЛЬНЫЙ СТРАХ (FNG < 30) — только шорты
   // При панике лонги — ловля падающего ножа
-  if (sig.fng?.value < 25 && sig.direction === 'long') {
+  if (sig.fng?.value < 30 && sig.direction === 'long') {
     const isS5 = sig.strategy.includes('RSI Диверг');
     if (!isS5) {
       if (store.observeMode) {
@@ -3221,7 +3221,7 @@ function applyMarketRegime(sig, regime) {
         sig.regimeNote  = (sig.regimeNote || '') + ` ⚠️ Паника FNG:${sig.fng.value} → -8%`;
       } else {
         sig.confidence  = 0;
-        sig.regimeNote  = `❌ Паника (FNG:${sig.fng.value}<25) — LONG заблокирован`;
+        sig.regimeNote  = `❌ Паника (FNG:${sig.fng.value}<30) — LONG заблокирован`;
         return sig;
       }
     }

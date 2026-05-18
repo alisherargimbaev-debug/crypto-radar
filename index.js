@@ -104,6 +104,7 @@ const STRATEGY_SL = {
   '1️⃣2️⃣ Liquidity Sweep (15m)':    { sl: 1.5, tp1: 3.75, tp2: 6.0 }, // RR 1:2.5/1:4
   '1️⃣3️⃣ Order Block (1H)':          { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3
   '1️⃣4️⃣ Whale Follow (15m)':        { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3 (быстрая реакция)
+  '1️⃣8️⃣ News Trading':               { sl: 1.0, tp1: 3.0,  tp2: 5.0 }, // быстрый выход на новостях
   '1️⃣5️⃣ Liquidation Hunt (5m)':     { sl: 1.0, tp1: 2.5,  tp2: 4.0 }, // RR 1:2.5/1:4 (тугой SL — каскад быстрый)
 };
 
@@ -4012,7 +4013,9 @@ if (k1h.length >= 55) {
     // ────────────────────────────────────────────────────────
     // S11: Elliott+Fib+SMA — УДАЛЕНА (сложная, редко срабатывает)
 
-    // S14 — Whale Follow (15m) — следуем за крупными трейдерами
+    // ════════════════════════════════════════════════════════
+    // S14 — Whale Follow (15m) — PAPER ONLY (сбор данных)
+    // Следуем за крупными трейдерами с Hyperliquid
     // ════════════════════════════════════════════════════════
     try {
       const whaleActions = getRecentWhaleActions();
@@ -4054,6 +4057,7 @@ if (k1h.length >= 55) {
               signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
               price, confidence: Math.min(conf, 92),
               metrics:   `${matching.length} китов · $${(totalSize/1e6).toFixed(2)}M · ${longCnt}L/${shortCnt}S`,
+              paperOnly: true, // paper-only пока нет достаточно данных
               ...sltp,
             });
           }
@@ -4063,6 +4067,42 @@ if (k1h.length >= 55) {
 
     // ════════════════════════════════════════════════════════
     // S15: Liquidation Hunt — УДАЛЕНА (OKX API недоступен)
+
+    // ════════════════════════════════════════════════════════
+    // S18: News/Listing Trading — PAPER ONLY (сбор данных)
+    // Торгует на анонсах листингов и важных новостях
+    // ════════════════════════════════════════════════════════
+    try {
+      const recentNews = global.recentNewsSignals || [];
+      const coinBase   = instId.replace('-USDT-SWAP', '');
+
+      // Ищем свежие позитивные/негативные новости по монете (последние 30 минут)
+      const relevantNews = recentNews.filter(n => {
+        const age = Date.now() - n.ts;
+        return age < 30 * 60 * 1000 && // не старше 30 минут
+          (n.coin === coinBase || n.keywords?.includes(coinBase.toLowerCase()));
+      });
+
+      if (relevantNews.length > 0) {
+        const news    = relevantNews[0];
+        const k15_s18 = await getOKXKlinesCached(instId, '15m', 10);
+        if (k15_s18.length >= 5) {
+          const price_s18 = k15_s18[k15_s18.length-1].close;
+          const atr_s18   = calcATR(k15_s18, 5);
+          const dir = news.sentiment === 'bullish' ? 'long' : 'short';
+          const conf = Math.min(55 + news.score * 10, 88);
+          signals.push({
+            instId, direction: dir,
+            strategy: '1️⃣8️⃣ News Trading',
+            confidence: Math.round(conf),
+            price: price_s18,
+            paperOnly: true,
+            ...calcSLTP(price_s18, dir, '1️⃣8️⃣ News Trading', atr_s18),
+            metrics: `${news.title?.substring(0, 40)}...`,
+          });
+        }
+      }
+    } catch(e) { console.error('S18 error:', e.message); }
 
     // ════════════════════════════════════════════════════════
     // S16: VWAP Deviation (1H) — PAPER ONLY (сбор данных)

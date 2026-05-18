@@ -3669,39 +3669,7 @@ if (k1h.length >= 55) {
 
     // конец S7
 
-    // S8: Basis Farming — разница фьючерс/спот
-    try {
-      const spotData = await httpGet(`https://www.okx.com/api/v5/market/ticker?instId=${coinData.symbol}-USDT`);
-      if (spotData?.code === '0' && spotData.data?.length) {
-        const spotPrice    = parseFloat(spotData.data[0].last);
-        const futurePrice  = price;
-        const basis        = (futurePrice - spotPrice) / spotPrice * 100;
-        const rsi1h        = calcRSI(k1h, 14);
-        const atr          = calcATR(k1h, 14);
-
-        // Сильное контанго → шортисты будут закрываться → SHORT
-        if (basis > 0.8 && rsi1h > 55 && atr) { // порог 0.3%→0.8% убираем шум
-          signals.push({
-            strategy:  '8️⃣ Basis Farming (1h)',
-            instId, direction: 'short',
-            signal:    '🔴 SHORT', price, confidence: 60,
-            metrics:   `Basis:+${basis.toFixed(3)}% (фьюч дороже спота) RSI:${rsi1h}`,
-            ...calcSLTP(price, 'short', '8️⃣ Basis Farming (1h)', atr)
-          });
-        }
-
-        // Сильная бэквордация → лонгисты будут закрываться → LONG
-        if (basis < -0.8 && rsi1h < 45 && atr) { // порог 0.3%→0.8% убираем шум
-          signals.push({
-            strategy:  '8️⃣ Basis Farming (1h)',
-            instId, direction: 'long',
-            signal:    '🟢 LONG', price, confidence: 60,
-            metrics:   `Basis:${basis.toFixed(3)}% (фьюч дешевле спота) RSI:${rsi1h}`,
-            ...calcSLTP(price, 'long', '8️⃣ Basis Farming (1h)', atr)
-          });
-        }
-      }
-    } catch(e) { console.error('S8 error:', e.message); }
+    // S8: Basis Farming — УДАЛЕНА (мало данных, нет сделок)
 
     // S9: Pullback в тренде (1H/4H + M15)
     // Логика: глобальный тренд по SMA200 на 4H,
@@ -3935,94 +3903,8 @@ if (k1h.length >= 55) {
     } catch(e) { console.error('S10 error:', e.message); }
 
     // ────────────────────────────────────────────────────────
-    // S12: Liquidity Sweep Reversal (15m)
-    // Smart money setup: цена пробивает локальный экстремум,
-    // забирает стопы ликвидности, и быстро разворачивается
-    // ────────────────────────────────────────────────────────
-    try {
-      const k15m_s12 = await getOKXKlinesCached(instId, '15m', 60);
-      const k1h_s12  = await getOKXKlinesCached(instId, '1H', 24);
+    // S12: Liquidity Sweep — УДАЛЕНА (дублирует S1)
 
-      if (k15m_s12.length >= 30 && k1h_s12.length >= 14) {
-        // Находим локальные high/low за последние ~10 часов (40 свечей 15m)
-        const lookback = k15m_s12.slice(-40, -3); // исключаем последние 3 свечи
-        if (lookback.length >= 20) {
-          const localHigh = Math.max(...lookback.map(c => c.high));
-          const localLow  = Math.min(...lookback.map(c => c.low));
-
-          const c1 = k15m_s12[k15m_s12.length - 3]; // sweep candle
-          const c2 = k15m_s12[k15m_s12.length - 2]; // reversal candle
-          const c3 = k15m_s12[k15m_s12.length - 1]; // confirmation
-
-          const avgVol = lookback.reduce((a,b) => a + (b.quoteVolume||1), 0) / lookback.length;
-          const rsi1h_s12 = calcRSI(k1h_s12, 14);
-          const ma200_s12 = calcSMA(k15m_s12, Math.min(200, k15m_s12.length));
-
-          // ── SHORT: пробой вверх + сильное отвержение ────────
-          // c1: high пробил localHigh
-          // c2: закрылась НИЖЕ localHigh (отвержение)
-          // c3: продолжение вниз (close < c2.close)
-          const sweepUp = c1.high > localHigh && c2.close < localHigh && c3.close < c2.close;
-          if (sweepUp) {
-            const wickRatio = (c1.high - Math.max(c1.open, c1.close)) / (c1.high - c1.low);
-            const volumeOk  = (c1.quoteVolume||1) >= avgVol * 1.5;
-            const rsiOk     = rsi1h_s12 > 55; // на стороне шорта
-            const trendOk   = price < ma200_s12 * 1.02; // не глубоко в аптренде
-
-            if (wickRatio > 0.5 && volumeOk && rsiOk && trendOk) {
-              const atrPctS12s = (atr15m / price) * 100 * 1.2;
-              const slPctS12s  = Math.max(0.8, Math.min(atrPctS12s, 1.5));
-              const slDist     = price * slPctS12s / 100; // адаптивный SL
-              let conf = 75;
-              if (wickRatio > 0.7)             conf += 6;
-              if ((c1.quoteVolume||1) >= avgVol * 2.5) conf += 5;
-              if (rsi1h_s12 > 65)              conf += 4;
-              if (price < ma200_s12)           conf += 5;
-
-              signals.push({
-                strategy: '1️⃣2️⃣ Liquidity Sweep (15m)', instId, direction: 'short',
-                signal: '🔴 SHORT', price, confidence: Math.min(conf, 95),
-                metrics: `Sweep $${localHigh.toFixed(4)} | Wick:${(wickRatio*100).toFixed(0)}% | Vol:${((c1.quoteVolume||1)/avgVol).toFixed(1)}x | RSI1H:${rsi1h_s12.toFixed(0)}`,
-                sl:  (price + slDist).toFixed(4),
-                tp1: (price - slDist * 2.0).toFixed(4),
-                tp2: (price - slDist * 3.0).toFixed(4),
-              });
-            }
-          }
-
-          // ── LONG: пробой вниз + сильный отскок ──────────────
-          const sweepDn = c1.low < localLow && c2.close > localLow && c3.close > c2.close;
-          if (sweepDn) {
-            const wickRatio = (Math.min(c1.open, c1.close) - c1.low) / (c1.high - c1.low);
-            const volumeOk  = (c1.quoteVolume||1) >= avgVol * 1.5;
-            const rsiOk     = rsi1h_s12 < 45;
-            const trendOk   = price > ma200_s12 * 0.98;
-
-            if (wickRatio > 0.5 && volumeOk && rsiOk && trendOk) {
-              const atrPctS12l = (atr15m / price) * 100 * 1.2;
-              const slPctS12l  = Math.max(0.8, Math.min(atrPctS12l, 1.5));
-              const slDist     = price * slPctS12l / 100; // адаптивный SL
-              let conf = 75;
-              if (wickRatio > 0.7)             conf += 6;
-              if ((c1.quoteVolume||1) >= avgVol * 2.5) conf += 5;
-              if (rsi1h_s12 < 35)              conf += 4;
-              if (price > ma200_s12)           conf += 5;
-
-              signals.push({
-                strategy: '1️⃣2️⃣ Liquidity Sweep (15m)', instId, direction: 'long',
-                signal: '🟢 LONG', price, confidence: Math.min(conf, 95),
-                metrics: `Sweep $${localLow.toFixed(4)} | Wick:${(wickRatio*100).toFixed(0)}% | Vol:${((c1.quoteVolume||1)/avgVol).toFixed(1)}x | RSI1H:${rsi1h_s12.toFixed(0)}`,
-                sl:  (price - slDist).toFixed(4),
-                tp1: (price + slDist * 2.0).toFixed(4),
-                tp2: (price + slDist * 3.0).toFixed(4),
-              });
-            }
-          }
-        }
-      }
-    } catch(e) { console.error('S12 error:', e.message); }
-
-    // ────────────────────────────────────────────────────────
     // S13: Order Block Reversal (1H) — ICT концепт
     // Находим зону где крупные игроки набирали позицию
     // и ждём возврата цены к этой зоне
@@ -4128,39 +4010,8 @@ if (k1h.length >= 55) {
     } catch(e) { console.error('S13 error:', e.message); }
 
     // ────────────────────────────────────────────────────────
-    // S11: Elliott Wave + Fibonacci + SMA200 (live версия)
-    // ────────────────────────────────────────────────────────
-    try {
-      const k1h_s11  = await getOKXKlinesCached(instId, '1H',  60);
-      const k30m_s11 = await getOKXKlinesCached(instId, '30m', 20);
-      const k4h_s11  = await getOKXKlinesCached(instId, '4H',  50);
+    // S11: Elliott+Fib+SMA — УДАЛЕНА (сложная, редко срабатывает)
 
-      if (k1h_s11.length >= 50) {
-        const dir = btS11(k1h_s11, k1h_s11.length - 1, k30m_s11, k4h_s11);
-        if (dir === 'long' || dir === 'short') {
-          const atr_s11 = calcATR(k1h_s11, 14);
-          const sltp    = calcSLTP(price, dir, '1️⃣1️⃣ Elliott+Fib+SMA', atr_s11);
-
-          // Fibonacci зона — доп. confidence бонус
-          const sma200_s11 = calcSMA(k1h_s11, Math.min(200, k1h_s11.length));
-          const trendStr   = Math.abs(price - sma200_s11) / sma200_s11;
-          let conf = 72;
-          if (trendStr > 0.03) conf += 6;  // далеко от MA200 — чёткий тренд
-          if (trendStr > 0.06) conf += 5;  // очень далеко — сильный тренд
-
-          signals.push({
-            strategy:  '1️⃣1️⃣ Elliott+Fib+SMA',
-            instId, direction: dir,
-            signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-            price, confidence: Math.min(conf, 95),
-            metrics:   `Elliott Wave + Fib 50-70% | SMA200: $${sma200_s11.toFixed(4)}`,
-            ...sltp,
-          });
-        }
-      }
-    } catch(e) { console.error('S11 error:', e.message); }
-
-    // ════════════════════════════════════════════════════════
     // S14 — Whale Follow (15m) — следуем за крупными трейдерами
     // ════════════════════════════════════════════════════════
     try {
@@ -4211,54 +4062,72 @@ if (k1h.length >= 55) {
     } catch(e) { console.error('S14 error:', e.message); }
 
     // ════════════════════════════════════════════════════════
-    // S15 — Liquidation Hunt (5m) — ловим каскады ликвидаций
+    // S15: Liquidation Hunt — УДАЛЕНА (OKX API недоступен)
+
+    // ════════════════════════════════════════════════════════
+    // S16: VWAP Deviation (1H) — PAPER ONLY (сбор данных)
+    // Цена сильно отклонилась от VWAP → возврат к среднему
     // ════════════════════════════════════════════════════════
     try {
-      const liqs = await getOKXLiquidations();
-      const liqData = liqs[instId];
+      const k1h_s16 = klines1h || await getOKXKlinesCached(instId, '1H', 50);
+      if (k1h_s16.length >= 20) {
+        const vwap_s16 = calcVWAP(k1h_s16);
+        const price_s16 = k1h_s16[k1h_s16.length-1].close;
+        const dev = (price_s16 - vwap_s16) / vwap_s16 * 100;
+        const atr_s16 = calcATR(k1h_s16, 14);
+        const rsi_s16 = k1h_s16.length >= 15 ? calcRSI(k1h_s16, 14) : 50;
 
-      if (liqData && liqData.count >= 5) {
-        const totalLiq = liqData.longLiq + liqData.shortLiq;
-        const longRatio = liqData.longLiq / totalLiq;
-
-        // Направление: если ликвидируются преимущественно longs (65%+) → шорт
-        // если преимущественно shorts → лонг (short squeeze)
-        let dir = null;
-        if (longRatio >= 0.7 && liqData.longLiq >= 500000) {
-          dir = 'short'; // longs cascading — продолжение падения
-        } else if (longRatio <= 0.3 && liqData.shortLiq >= 500000) {
-          dir = 'long';  // shorts cascading — short squeeze
-        }
-
-        if (dir) {
-          // Проверяем что цена двинулась в нужную сторону за последние 5m
-          const k5m = await getOKXKlinesCached(instId, '5m', 6);
-          if (k5m.length >= 5) {
-            const recentChange = (k5m[k5m.length - 1].close - k5m[k5m.length - 5].close) / k5m[k5m.length - 5].close * 100;
-            const directionAlign = (dir === 'long' && recentChange > 0.3) || (dir === 'short' && recentChange < -0.3);
-
-            if (directionAlign) {
-              const sltp = calcSLTP(price, dir, '1️⃣5️⃣ Liquidation Hunt (5m)');
-
-              let conf = 70;
-              if (liqData.count >= 10) conf += 6;
-              if (totalLiq >= 1000000)  conf += 5;
-              if (totalLiq >= 5000000)  conf += 7;
-              if (Math.abs(recentChange) > 1) conf += 4;
-
-              signals.push({
-                strategy:  '1️⃣5️⃣ Liquidation Hunt (5m)',
-                instId, direction: dir,
-                signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-                price, confidence: Math.min(conf, 92),
-                metrics:   `${liqData.count} ликв · $${(totalLiq/1e6).toFixed(2)}M · ${(longRatio*100).toFixed(0)}% longs · 5m: ${recentChange.toFixed(2)}%`,
-                ...sltp,
-              });
-            }
+        // Отклонение > 3% + RSI подтверждает разворот
+        if (Math.abs(dev) > 3) {
+          const dir = dev > 3 ? 'short' : 'long'; // цена выше VWAP → шорт, ниже → лонг
+          const rsiOk = dir === 'short' ? rsi_s16 > 65 : rsi_s16 < 35;
+          if (rsiOk) {
+            const conf = Math.min(50 + Math.abs(dev) * 3 + (dir === 'short' ? rsi_s16 - 65 : 35 - rsi_s16), 85);
+            signals.push({
+              instId, direction: dir,
+              strategy: '1️⃣6️⃣ VWAP Deviation (1H)',
+              confidence: Math.round(conf),
+              price: price_s16,
+              paperOnly: true, // всегда paper
+              ...calcSLTP(price_s16, dir, '1️⃣6️⃣ VWAP Deviation (1H)', atr_s16),
+              metrics: `Dev:${dev.toFixed(1)}% RSI:${rsi_s16.toFixed(0)}`,
+            });
           }
         }
       }
-    } catch(e) { console.error('S15 error:', e.message); }
+    } catch(e) { console.error('S16 error:', e.message); }
+
+    // ════════════════════════════════════════════════════════
+    // S17: BB Squeeze (1H) — PAPER ONLY (сбор данных)
+    // Bollinger Bands сжимаются → пробой в сторону тренда
+    // ════════════════════════════════════════════════════════
+    try {
+      const k1h_s17 = klines1h || await getOKXKlinesCached(instId, '1H', 30);
+      if (k1h_s17.length >= 20) {
+        const closes = k1h_s17.map(k => k.close);
+        const ma20 = closes.slice(-20).reduce((a,b) => a+b, 0) / 20;
+        const std20 = Math.sqrt(closes.slice(-20).reduce((s,c) => s + Math.pow(c-ma20,2), 0) / 20);
+        const bbWidth = (std20 * 4) / ma20 * 100; // ширина BB в %
+        const price_s17 = closes[closes.length-1];
+        const atr_s17 = calcATR(k1h_s17, 14);
+        const adx_s17 = calcADX ? calcADX(k1h_s17, 14)?.adx || 0 : 0;
+
+        // BB сжаты (ширина < 3%) + ADX растёт → ожидаем пробой
+        if (bbWidth < 3 && adx_s17 > 20) {
+          const dir = price_s17 > ma20 ? 'long' : 'short';
+          const conf = Math.min(55 + (3 - bbWidth) * 5 + adx_s17 * 0.3, 82);
+          signals.push({
+            instId, direction: dir,
+            strategy: '1️⃣7️⃣ BB Squeeze (1H)',
+            confidence: Math.round(conf),
+            price: price_s17,
+            paperOnly: true, // всегда paper
+            ...calcSLTP(price_s17, dir, '1️⃣7️⃣ BB Squeeze (1H)', atr_s17),
+            metrics: `BBW:${bbWidth.toFixed(1)}% ADX:${adx_s17.toFixed(0)}`,
+          });
+        }
+      }
+    } catch(e) { console.error('S17 error:', e.message); }
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
@@ -5427,10 +5296,14 @@ if (alreadyOpen) {
       setCoinCooldown(coin.instId);
       logSignal(best);
 
-      if (store.observeMode) {
-        // В observe mode — просто сохраняем paper trade и уведомляем
+      if (store.observeMode || best.paperOnly) {
+        // paper mode или paper-only стратегия (S16, S17)
         savePaperTrade(best);
-        await sendTelegram(buildSignalAlert(best));
+        if (!best.paperOnly) {
+          await sendTelegram(buildSignalAlert(best));
+        } else {
+          console.log(`[PAPER ONLY] ${best.instId} ${best.strategy} conf=${best.confidence}%`);
+        }
       } else {
         saveOpenTrade(best);
 

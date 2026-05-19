@@ -568,6 +568,7 @@ nav::-webkit-scrollbar{display:none;}
         Tools <span class="nav-dd-arrow">▾</span>
       </button>
       <div class="nav-dropdown-menu" id="dd-menu-tools">
+        <button class="nav-dd-item" onclick="showPageDD('montecarlo')">Monte Carlo</button>
         <button class="nav-dd-item" onclick="showPageDD('calc')">Calculator</button>
         <button class="nav-dd-item" onclick="showPageDD('news')">News</button>
         <button class="nav-dd-item" onclick="showPageDD('dca')">DCA</button>
@@ -808,6 +809,71 @@ nav::-webkit-scrollbar{display:none;}
       <div class="m-row"><div><div class="m-name">Margin Required</div><div class="m-hint">With leverage</div></div><div class="m-val" id="calc-margin">$333</div></div>
       <div class="m-row"><div class="m-name">Potential Profit</div><div class="m-val green" id="calc-profit">+$100</div></div>
       <div class="m-row"><div class="m-name">Potential Loss</div><div class="m-val red" id="calc-loss">-$50</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- MONTE CARLO -->
+<div class="page" id="page-montecarlo">
+  <div class="stats-row" style="margin-bottom:1.5rem">
+    <div class="stat-card blue"><div class="stat-label">Trades</div><div class="stat-value" id="mc-total">50</div></div>
+    <div class="stat-card" id="mc-wr-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="mc-wr">—</div></div>
+    <div class="stat-card" id="mc-pnl-card"><div class="stat-label">Median P&L</div><div class="stat-value" id="mc-pnl">—</div></div>
+    <div class="stat-card red"><div class="stat-label">Max Drawdown</div><div class="stat-value" id="mc-dd">—</div></div>
+    <div class="stat-card" id="mc-prob-card"><div class="stat-label">Prob. Profitable</div><div class="stat-value" id="mc-prob">—</div></div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1rem">
+    <div class="sec-title">Параметры симуляции</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:12px">
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px">WIN RATE: <b id="mc-wr-lbl">37%</b></label>
+        <input type="range" min="10" max="95" value="37" id="mc-sl-wr" style="width:100%;margin-top:4px">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px">RISK/REWARD: <b id="mc-rr-lbl">1:2</b></label>
+        <input type="range" min="10" max="50" value="20" id="mc-sl-rr" style="width:100%;margin-top:4px">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px">RISK/TRADE: <b id="mc-risk-lbl">$47</b></label>
+        <input type="range" min="10" max="300" value="47" id="mc-sl-risk" style="width:100%;margin-top:4px">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px">TRADES: <b id="mc-n-lbl">50</b></label>
+        <input type="range" min="10" max="200" value="50" id="mc-sl-n" style="width:100%;margin-top:4px">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn" onclick="mcRun()">▶ Run Simulation</button>
+      <button class="btn" onclick="mcLoadReal()">📊 Load Real Trades</button>
+      <button class="btn" onclick="mcSet(85,20,47)">S1 Paper 85%</button>
+      <button class="btn" onclick="mcSet(37,20,47)">Live 37%</button>
+      <button class="btn" onclick="mcSet(55,20,47)">Target 55%</button>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-bottom:1rem">
+    <div class="panel">
+      <div class="sec-title">Equity Curves (1000 paths)</div>
+      <div style="position:relative;height:260px"><canvas id="mc-chart"></canvas></div>
+      <div style="display:flex;gap:16px;margin-top:8px;font-family:'DM Mono',monospace;font-size:.45rem;color:var(--dim)">
+        <span>— Median</span>
+        <span style="color:#22c55e">— Best 10%</span>
+        <span style="color:#ef4444">— Worst 10%</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sec-title">Distribution of Outcomes</div>
+      <div style="position:relative;height:260px"><canvas id="mc-dist"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid-3" id="mc-stats-grid" style="margin-bottom:1rem"></div>
+
+  <div class="panel">
+    <div class="sec-title">Интерпретация</div>
+    <div id="mc-interpretation" style="font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim);line-height:1.8">
+      Настройте параметры и нажмите Run Simulation.
     </div>
   </div>
 </div>
@@ -2023,6 +2089,97 @@ function setTrackFilter(f) {
   const el = document.getElementById('tr-filter-label');
   if (el) el.textContent = labels[f] || '';
   loadTrackRecord();
+}
+
+// ── MONTE CARLO ───────────────────────────────────────────────
+let mcChartInst, mcDistInst;
+let mcP = { wr:37, rr:2.0, risk:47, n:50 };
+
+function mcSet(wr,rr10,risk){ document.getElementById('mc-sl-wr').value=wr; document.getElementById('mc-sl-rr').value=rr10; document.getElementById('mc-sl-risk').value=risk; mcUpd(); mcRun(); }
+function mcUpd(){
+  mcP.wr=+document.getElementById('mc-sl-wr').value;
+  mcP.rr=+document.getElementById('mc-sl-rr').value/10;
+  mcP.risk=+document.getElementById('mc-sl-risk').value;
+  mcP.n=+document.getElementById('mc-sl-n').value;
+  document.getElementById('mc-wr-lbl').textContent=mcP.wr+'%';
+  document.getElementById('mc-rr-lbl').textContent='1:'+mcP.rr.toFixed(1);
+  document.getElementById('mc-risk-lbl').textContent='$'+mcP.risk;
+  document.getElementById('mc-n-lbl').textContent=mcP.n;
+}
+['mc-sl-wr','mc-sl-rr','mc-sl-risk','mc-sl-n'].forEach(id=>document.getElementById(id)?.addEventListener('input',mcUpd));
+
+async function mcLoadReal(){
+  const d=await safeFetch('/api/trades',{closed:[]});
+  const trades=(d.closed||[]).map(t=>(t.outcome==='tp1'||t.outcome==='tp2')?47*2:-47);
+  if(!trades.length){alert('Нет реальных сделок');return;}
+  const wins=trades.filter(t=>t>0).length;
+  document.getElementById('mc-sl-wr').value=Math.round(wins/trades.length*100);
+  document.getElementById('mc-sl-n').value=trades.length;
+  mcUpd(); mcRun(trades);
+}
+
+function mcRun(fixedTrades){
+  mcUpd();
+  const {wr,rr,risk,n}=mcP; const SIMS=1000;
+  const paths=[];
+  for(let s=0;s<SIMS;s++){
+    const trades=fixedTrades||Array.from({length:n},()=>Math.random()*100<wr?risk*rr:-risk);
+    let eq=0; const path=[0];
+    for(const t of trades){eq+=t;path.push(Math.round(eq));}
+    paths.push(path);
+  }
+  const finals=paths.map(p=>p[n]).sort((a,b)=>a-b);
+  const median=finals[Math.floor(SIMS/2)];
+  const p10=finals[Math.floor(SIMS*0.1)];
+  const p90=finals[Math.floor(SIMS*0.9)];
+  const profPct=Math.round(finals.filter(v=>v>0).length/SIMS*100);
+  let maxDD=0;
+  for(const path of paths){let peak=0;for(const v of path){if(v>peak)peak=v;if(v-peak<maxDD)maxDD=v-peak;}}
+  const medP=paths.reduce((b,p)=>Math.abs(p[n]-median)<Math.abs(b[n]-median)?p:b);
+  const bestP=paths.reduce((b,p)=>p[n]>b[n]?p:b);
+  const wstP=paths.reduce((b,p)=>p[n]<b[n]?p:b);
+  const lbls=Array.from({length:n+1},(_,i)=>i===0?'Start':'T'+i);
+
+  document.getElementById('mc-total').textContent=n;
+  const we=document.getElementById('mc-wr'); we.textContent=wr+'%'; we.closest('.stat-card').className='stat-card '+(wr>=55?'green':wr>=40?'yellow':'red');
+  const pe=document.getElementById('mc-pnl'); pe.textContent=(median>=0?'+':'')+'$'+Math.round(median); pe.closest('.stat-card').className='stat-card '+(median>=0?'green':'red');
+  document.getElementById('mc-dd').textContent='$'+Math.round(Math.abs(maxDD));
+  const pre=document.getElementById('mc-prob'); pre.textContent=profPct+'%'; pre.closest('.stat-card').className='stat-card '+(profPct>=60?'green':profPct>=40?'yellow':'red');
+
+  document.getElementById('mc-stats-grid').innerHTML=[
+    ['Best','+$'+Math.round(finals[SIMS-1]),'green'],
+    ['Top 10%',(p90>=0?'+':'')+'$'+Math.round(p90),p90>=0?'green':'red'],
+    ['Median',(median>=0?'+':'')+'$'+Math.round(median),median>=0?'green':'red'],
+    ['Bottom 10%',(p10>=0?'+':'')+'$'+Math.round(p10),p10>=0?'green':'red'],
+    ['Worst','$'+Math.round(finals[0]),'red'],
+    ['Max DD','$'+Math.round(Math.abs(maxDD)),'red'],
+  ].map(([l,v,c])=>`<div class="stat-card ${c}"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`).join('');
+
+  const minWR=Math.round(100/(1+rr));
+  document.getElementById('mc-interpretation').innerHTML=
+    `При RR 1:${rr.toFixed(1)} нужен WR минимум <b>${minWR}%</b>.<br>`+
+    `Текущий WR <b>${wr}%</b> — ${wr>=minWR?'✅ выше минимума':'❌ ниже минимума'}.<br>`+
+    `Вероятность прибыли за <b>${n}</b> сделок: <b>${profPct}%</b>.<br>`+
+    `Медианный итог: <b>${median>=0?'+':''}$${Math.round(median)}</b> | Max drawdown: <b>$${Math.round(Math.abs(maxDD))}</b>.`;
+
+  if(!window.Chart)return;
+  if(mcChartInst)mcChartInst.destroy();
+  mcChartInst=new Chart(document.getElementById('mc-chart'),{type:'line',data:{labels:lbls,datasets:[
+    ...paths.slice(0,120).map(p=>({data:p,borderColor:'rgba(100,130,200,0.05)',borderWidth:1,pointRadius:0,tension:0.3})),
+    {data:bestP,borderColor:'#22c55e',borderWidth:2,pointRadius:0,tension:0.3},
+    {data:medP,borderColor:'#3b82f6',borderWidth:2.5,pointRadius:0,tension:0.3},
+    {data:wstP,borderColor:'#ef4444',borderWidth:2,pointRadius:0,tension:0.3},
+  ]},options:{responsive:true,maintainAspectRatio:false,animation:{duration:200},plugins:{legend:{display:false}},
+    scales:{x:{ticks:{maxTicksLimit:8,font:{size:10}}},y:{ticks:{callback:v=>'$'+v,font:{size:10}},grid:{color:'rgba(128,128,128,0.1)'}}}}});
+
+  const bw=(finals[SIMS-1]-finals[0])/25||1;
+  const bins=Array(25).fill(0);
+  finals.forEach(v=>{const i=Math.min(Math.floor((v-finals[0])/bw),24);bins[i]++;});
+  const binL=bins.map((_,i)=>Math.round(finals[0]+i*bw));
+  if(mcDistInst)mcDistInst.destroy();
+  mcDistInst=new Chart(document.getElementById('mc-dist'),{type:'bar',data:{labels:binL,datasets:[{data:bins,backgroundColor:binL.map(v=>v>=0?'rgba(34,197,94,0.7)':'rgba(239,68,68,0.7)'),borderWidth:0}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:200},plugins:{legend:{display:false}},
+      scales:{x:{ticks:{callback:v=>'$'+binL[v],maxTicksLimit:6,font:{size:10}}},y:{ticks:{font:{size:10}},grid:{color:'rgba(128,128,128,0.1)'}}}}});
 }
 
 loadOverview();

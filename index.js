@@ -4231,7 +4231,7 @@ if (k1h.length >= 55) {
     // Цена сильно отклонилась от VWAP → возврат к среднему
     // ════════════════════════════════════════════════════════
     try {
-      const k1h_s16 = klines1h || await getOKXKlinesCached(instId, '1H', 50);
+      const k1h_s16 = await getOKXKlinesCached(instId, '1H', 50);
       if (k1h_s16.length >= 20) {
         const vwap_s16 = calcVWAP(k1h_s16);
         const price_s16 = k1h_s16[k1h_s16.length-1].close;
@@ -4264,7 +4264,7 @@ if (k1h.length >= 55) {
     // Bollinger Bands сжимаются → пробой в сторону тренда
     // ════════════════════════════════════════════════════════
     try {
-      const k1h_s17 = klines1h || await getOKXKlinesCached(instId, '1H', 30);
+      const k1h_s17 = await getOKXKlinesCached(instId, '1H', 30);
       if (k1h_s17.length >= 20) {
         const closes = k1h_s17.map(k => k.close);
         const ma20 = closes.slice(-20).reduce((a,b) => a+b, 0) / 20;
@@ -4553,6 +4553,138 @@ app.get('/api/paper', async (req, res) => {
   } catch(e) {
     console.error('[API/paper]', e.message);
     res.json({ open: [], closed: [], stats: null, observeMode: store.observeMode, error: e.message });
+  }
+});
+
+// ── BACKTEST API ─────────────────────────────────────────────
+app.get('/api/backtest', async (req, res) => {
+  try {
+    const instId = req.query.instId || 'SOL-USDT-SWAP';
+    const period = Math.min(parseInt(req.query.period) || 14, 30);
+    const limit  = period * 24 * 4 + 10; // 15m свечи
+
+    // Загружаем исторические данные
+    const [k15m, k1h, k4h] = await Promise.all([
+      getOKXKlinesCached(instId, '15m', Math.min(limit, 300)),
+      getOKXKlinesCached(instId, '1H',  Math.min(period * 24, 300)),
+      getOKXKlinesCached(instId, '4H',  Math.min(period * 6,  100)),
+    ]);
+
+    if (!k15m.length) return res.json({ signals: [], error: 'Нет данных' });
+
+    const cutoff  = Date.now() - period * 24 * 60 * 60 * 1000;
+    const signals = [];
+
+    // Прогоняем S1 Volume Spike по истории
+    for (let i = 15; i < k15m.length - 1; i++) {
+      const slice = k15m.slice(i - 14, i + 1);
+      const last  = slice[slice.length - 1];
+      const prev  = slice[slice.length - 2];
+      if (!last || !prev || last.ts < cutoff) continue;
+
+      const avgVol   = slice.slice(-11, -1).reduce((a,c) => a + (c.quoteVolume||0), 0) / 10;
+      const volSpike = (last.quoteVolume||0) >= avgVol * 2.0;
+      const pc       = prev.close ? (last.close - prev.close) / prev.close * 100 : 0;
+
+      if (volSpike && Math.abs(pc) >= 1.0) {
+        const dir  = pc >= 0 ? 'long' : 'short';
+        const atr  = calcATR(slice, 10) || last.close * 0.015;
+        const sl   = dir === 'long' ? last.close - atr : last.close + atr;
+        const tp1  = dir === 'long' ? last.close + atr * 2 : last.close - atr * 2;
+        const conf = Math.min(65 + (last.quoteVolume / avgVol - 2) * 10, 95);
+
+        // Симулируем исход по следующим свечам
+        let outcome = 'open', pnl = 0, closePrice = last.close;
+        for (let j = i + 1; j < Math.min(i + 33, k15m.length); j++) {
+          const future = k15m[j];
+          if (!future) break;
+          const high = future.high || future.close;
+          const low  = future.low  || future.close;
+          if (dir === 'long') {
+            if (low  <= sl)  { outcome = 'sl';  closePrice = sl;  pnl = (sl - last.close) / last.close * 100; break; }
+            if (high >= tp1) { outcome = 'tp1'; closePrice = tp1; pnl = (tp1 - last.close) / last.close * 100; break; }
+          } else {
+            if (high >= sl)  { outcome = 'sl';  closePrice = sl;  pnl = (last.close - sl) / last.close * 100; break; }
+            if (low  <= tp1) { outcome = 'tp1'; closePrice = tp1; pnl = (last.close - tp1) / last.close * 100; break; }
+          }
+        }
+        if (outcome === 'open') { outcome = 'expired'; pnl = (k15m[Math.min(i+32,k15m.length-1)].close - last.close) / last.close * 100 * (dir==='long'?1:-1); }
+
+        signals.push({
+          ts:        last.ts,
+          strategy:  '1️⃣ Volume Spike (15m)',
+          direction: dir,
+          price:     parseFloat(last.close.toFixed(4)),
+          sl:        parseFloat(sl.toFixed(4)),
+          tp1:       parseFloat(tp1.toFixed(4)),
+          confidence: Math.round(conf),
+          outcome,
+          pnl:       parseFloat(pnl.toFixed(2)),
+          closePrice: parseFloat(closePrice.toFixed(4)),
+          volRatio:  parseFloat((last.quoteVolume / avgVol).toFixed(1)),
+        });
+      }
+    }
+
+    // Прогоняем S4 MA20/MA50 по истории
+    for (let i = 55; i < k1h.length - 1; i++) {
+      const slice = k1h.slice(i - 54, i + 1);
+      const last  = slice[slice.length - 1];
+      if (!last || last.ts < cutoff) continue;
+
+      const closes = slice.map(k => k.close);
+      const ma20  = closes.slice(-20).reduce((a,b) => a+b, 0) / 20;
+      const ma50  = closes.slice(-50).reduce((a,b) => a+b, 0) / 50;
+      const prev20 = closes.slice(-21,-1).reduce((a,b) => a+b, 0) / 20;
+      const prev50 = closes.slice(-51,-1).reduce((a,b) => a+b, 0) / 50;
+
+      const crossUp   = prev20 <= prev50 && ma20 > ma50;
+      const crossDown = prev20 >= prev50 && ma20 < ma50;
+
+      if (crossUp || crossDown) {
+        const dir  = crossUp ? 'long' : 'short';
+        const atr  = calcATR(slice, 14) || last.close * 0.015;
+        const sl   = dir === 'long' ? last.close - atr : last.close + atr;
+        const tp1  = dir === 'long' ? last.close + atr * 2 : last.close - atr * 2;
+        const gap  = Math.abs(ma20 - ma50) / ma50 * 100;
+        const conf = Math.min(50 + gap * 20, 85);
+
+        let outcome = 'open', pnl = 0, closePrice = last.close;
+        for (let j = i + 1; j < Math.min(i + 9, k1h.length); j++) {
+          const future = k1h[j];
+          if (!future) break;
+          const high = future.high || future.close;
+          const low  = future.low  || future.close;
+          if (dir === 'long') {
+            if (low  <= sl)  { outcome='sl';  closePrice=sl;  pnl=(sl-last.close)/last.close*100; break; }
+            if (high >= tp1) { outcome='tp1'; closePrice=tp1; pnl=(tp1-last.close)/last.close*100; break; }
+          } else {
+            if (high >= sl)  { outcome='sl';  closePrice=sl;  pnl=(last.close-sl)/last.close*100; break; }
+            if (low  <= tp1) { outcome='tp1'; closePrice=tp1; pnl=(last.close-tp1)/last.close*100; break; }
+          }
+        }
+        if (outcome==='open') { outcome='expired'; pnl=0; }
+
+        signals.push({
+          ts:        last.ts,
+          strategy:  '4️⃣ MA20/MA50 (1H)',
+          direction: dir,
+          price:     parseFloat(last.close.toFixed(4)),
+          sl:        parseFloat(sl.toFixed(4)),
+          tp1:       parseFloat(tp1.toFixed(4)),
+          confidence: Math.round(conf),
+          outcome,
+          pnl:       parseFloat(pnl.toFixed(2)),
+          closePrice: parseFloat(closePrice.toFixed(4)),
+        });
+      }
+    }
+
+    signals.sort((a,b) => b.ts - a.ts);
+    res.json({ signals, instId, period, total: signals.length });
+  } catch(e) {
+    console.error('[API/backtest]', e.message);
+    res.json({ signals: [], error: e.message });
   }
 });
 
@@ -6252,8 +6384,34 @@ async function checkOutcomes() {
       continue;
     }
 
-    const price = await getCurrentPrice(trade.instId);
+    let price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }
+
+    const sl  = parseFloat(trade.sl);
+    const tp1 = parseFloat(trade.tp1);
+    const tp2 = parseFloat(trade.tp2);
+
+    // Точная проверка через 1-минутные свечи
+    let slHit=false, tp1Hit=false, tp2Hit=false, hitPrice=price;
+    try {
+      const minsOpen = Math.min(Math.ceil((Date.now()-trade.ts)/60000)+1, 60);
+      const k1m = await getOKXKlinesCached(trade.instId, '1m', minsOpen);
+      const recentK = k1m.filter(k => k.ts > trade.ts - 60000);
+      for (const k of recentK) {
+        const high = k.high || k.close;
+        const low  = k.low  || k.close;
+        if (trade.direction === 'long') {
+          if (low  <= sl)  { slHit  = true; hitPrice = sl;  break; }
+          if (high >= tp2) { tp2Hit = true; hitPrice = tp2; break; }
+          if (high >= tp1) { tp1Hit = true; hitPrice = tp1; }
+        } else {
+          if (high >= sl)  { slHit  = true; hitPrice = sl;  break; }
+          if (low  <= tp2) { tp2Hit = true; hitPrice = tp2; break; }
+          if (low  <= tp1) { tp1Hit = true; hitPrice = tp1; }
+        }
+      }
+      price = hitPrice;
+    } catch(e) { /* fallback to current price */ }
 
     // ── Breakeven: при +1R передвигаем SL в безубыток ────────
     // Пропускаем если AutoExec управляет позицией на Bybit
@@ -6921,6 +7079,31 @@ cron.schedule('*/30 * * * *', async () => {
 
 cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
 
+// Синхронизация с Bybit каждые 3 минуты (только при AutoExec)
+cron.schedule('*/3 * * * *', async () => {
+  if (!autoExecSignals || store.observeMode || !store.openTrades?.length) return;
+  try {
+    const { BybitClient } = require('./bybit-client');
+    const bybit = new BybitClient();
+    const positions = await bybit.getPositions();
+    const openOnBybit = new Set((positions||[]).filter(p=>parseFloat(p.size)>0).map(p=>p.symbol));
+    const stillOpen=[], toClose=[];
+    for (const trade of store.openTrades) {
+      const sym = (trade.instId||'').replace('-USDT-SWAP','USDT');
+      if (openOnBybit.has(sym)) stillOpen.push(trade);
+      else toClose.push(trade);
+    }
+    if (toClose.length > 0) {
+      for (const trade of toClose) {
+        trade.outcome='closed_on_exchange'; trade.closedAt=Date.now(); trade.pnl=0;
+        pushTradeHistory(trade);
+        console.log('[Bybit Sync] '+trade.instId+' закрыта → убрана из store');
+      }
+      store.openTrades = stillOpen;
+    }
+  } catch(e) { console.error('[Bybit Sync]', e.message); }
+});
+
 // Paper trading — проверяем виртуальные сделки каждые 5 минут
 cron.schedule('*/5 * * * *', () => {
   if (store.observeMode) {
@@ -6976,7 +7159,8 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
 
 // Агент Психолог — проверяет после каждого закрытия сделки (каждые 15 мин)
-cron.schedule('*/15 * * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
+// Психолог — раз в день в 20:00 Алматы (15:00 UTC)
+cron.schedule('0 15 * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
 
 // Агент Аудитор — каждое воскресенье в 10:00 UTC (15:00 Алматы)
 cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('auditor error:', e.message)); });

@@ -568,6 +568,7 @@ nav::-webkit-scrollbar{display:none;}
         Tools <span class="nav-dd-arrow">▾</span>
       </button>
       <div class="nav-dropdown-menu" id="dd-menu-tools">
+        <button class="nav-dd-item" onclick="showPageDD('backtest')">Backtest</button>
         <button class="nav-dd-item" onclick="showPageDD('montecarlo')">Monte Carlo</button>
         <button class="nav-dd-item" onclick="showPageDD('calc')">Calculator</button>
         <button class="nav-dd-item" onclick="showPageDD('news')">News</button>
@@ -810,6 +811,54 @@ nav::-webkit-scrollbar{display:none;}
       <div class="m-row"><div class="m-name">Potential Profit</div><div class="m-val green" id="calc-profit">+$100</div></div>
       <div class="m-row"><div class="m-name">Potential Loss</div><div class="m-val red" id="calc-loss">-$50</div></div>
     </div>
+  </div>
+</div>
+
+<!-- BACKTEST -->
+<div class="page" id="page-backtest">
+  <div class="panel" style="margin-bottom:1rem">
+    <div class="sec-title">Backtest — История сигналов</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;margin-top:12px;align-items:end">
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;display:block;margin-bottom:4px">МОНЕТА (напр. SOL, BTC, ETH)</label>
+        <input id="bt-coin" class="dca-input" type="text" placeholder="SOL" value="SOL" style="text-transform:uppercase">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;display:block;margin-bottom:4px">ПЕРИОД</label>
+        <select id="bt-period" class="dca-input" style="cursor:pointer">
+          <option value="7">7 дней</option>
+          <option value="14" selected>14 дней</option>
+          <option value="30">30 дней</option>
+        </select>
+      </div>
+      <button class="btn" onclick="runBacktest()" style="padding:10px 20px">▶ Запустить</button>
+      <button class="btn" onclick="btClear()" style="padding:10px 20px;border-color:var(--dim);color:var(--dim)">Сброс</button>
+    </div>
+  </div>
+
+  <div id="bt-loading" style="display:none;text-align:center;padding:40px;font-family:'DM Mono',monospace;font-size:.6rem;color:var(--dim);letter-spacing:2px">
+    ЗАГРУЗКА ДАННЫХ С OKX...
+  </div>
+
+  <div id="bt-results" style="display:none">
+    <!-- Summary cards -->
+    <div class="stats-row" id="bt-stats" style="margin-bottom:1rem"></div>
+
+    <!-- Strategy comparison -->
+    <div class="panel" style="margin-bottom:1rem">
+      <div class="sec-title">Стратегии — Сравнение</div>
+      <div id="bt-strat-table" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Signal timeline -->
+    <div class="panel">
+      <div class="sec-title">История сигналов</div>
+      <div id="bt-timeline" style="margin-top:12px;max-height:400px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <div id="bt-empty" style="text-align:center;padding:60px;font-family:'DM Mono',monospace;font-size:.6rem;color:var(--dim);letter-spacing:2px">
+    ВВЕДИТЕ МОНЕТУ И НАЖМИТЕ ЗАПУСТИТЬ
   </div>
 </div>
 
@@ -2180,6 +2229,106 @@ function mcRun(fixedTrades){
   mcDistInst=new Chart(document.getElementById('mc-dist'),{type:'bar',data:{labels:binL,datasets:[{data:bins,backgroundColor:binL.map(v=>v>=0?'rgba(34,197,94,0.7)':'rgba(239,68,68,0.7)'),borderWidth:0}]},
     options:{responsive:true,maintainAspectRatio:false,animation:{duration:200},plugins:{legend:{display:false}},
       scales:{x:{ticks:{callback:v=>'$'+binL[v],maxTicksLimit:6,font:{size:10}}},y:{ticks:{font:{size:10}},grid:{color:'rgba(128,128,128,0.1)'}}}}});
+}
+
+// ── BACKTEST ────────────────────────────────────────────────
+function btClear(){
+  document.getElementById('bt-results').style.display='none';
+  document.getElementById('bt-empty').style.display='block';
+  document.getElementById('bt-loading').style.display='none';
+}
+
+async function runBacktest(){
+  const coin   = (document.getElementById('bt-coin').value||'SOL').toUpperCase().trim();
+  const period = +document.getElementById('bt-period').value;
+  const instId = coin + '-USDT-SWAP';
+
+  document.getElementById('bt-empty').style.display='none';
+  document.getElementById('bt-results').style.display='none';
+  document.getElementById('bt-loading').style.display='block';
+
+  try {
+    // Загружаем исторические свечи с нашего API
+    const limit = period * 24 * 4; // 15m свечи
+    const res = await fetch(`/api/backtest?instId=${instId}&period=${period}`);
+    const data = await res.json();
+
+    if (!data.signals || !data.signals.length) {
+      document.getElementById('bt-loading').style.display='none';
+      document.getElementById('bt-empty').style.display='block';
+      document.getElementById('bt-empty').textContent = 'НЕТ ДАННЫХ ДЛЯ ' + coin + ' ЗА ' + period + ' ДНЕЙ';
+      return;
+    }
+
+    renderBacktest(data, coin, period);
+  } catch(e) {
+    document.getElementById('bt-loading').style.display='none';
+    document.getElementById('bt-empty').style.display='block';
+    document.getElementById('bt-empty').textContent = 'ОШИБКА: ' + e.message;
+  }
+}
+
+function renderBacktest(data, coin, period) {
+  document.getElementById('bt-loading').style.display='none';
+  document.getElementById('bt-empty').style.display='none';
+  document.getElementById('bt-results').style.display='block';
+
+  const signals = data.signals || [];
+  const wins    = signals.filter(s => s.outcome === 'tp1' || s.outcome === 'tp2');
+  const losses  = signals.filter(s => s.outcome === 'sl');
+  const wr      = signals.length ? Math.round(wins.length / signals.length * 100) : 0;
+  const pnl     = signals.reduce((s,t) => s + (t.pnl||0), 0);
+  const wc      = wr >= 55 ? 'green' : wr >= 40 ? 'yellow' : 'red';
+  const pc      = pnl >= 0 ? 'green' : 'red';
+
+  document.getElementById('bt-stats').innerHTML = `
+    <div class="stat-card blue"><div class="stat-label">Сигналов</div><div class="stat-value">${signals.length}</div><div class="stat-sub">${coin} / ${period}д</div></div>
+    <div class="stat-card ${wc}"><div class="stat-label">Win Rate</div><div class="stat-value">${wr}%</div></div>
+    <div class="stat-card green"><div class="stat-label">Победы</div><div class="stat-value">${wins.length}</div></div>
+    <div class="stat-card red"><div class="stat-label">Потери</div><div class="stat-value">${losses.length}</div></div>
+    <div class="stat-card ${pc}"><div class="stat-label">Total PnL</div><div class="stat-value">${pnl>=0?'+':''}${pnl.toFixed(1)}%</div></div>`;
+
+  // По стратегиям
+  const byS = {};
+  for (const s of signals) {
+    const k = s.strategy || '?';
+    if (!byS[k]) byS[k] = {wins:0,losses:0,total:0,pnl:0};
+    byS[k].total++;
+    if (s.outcome==='tp1'||s.outcome==='tp2') byS[k].wins++;
+    else if (s.outcome==='sl') byS[k].losses++;
+    byS[k].pnl += s.pnl||0;
+  }
+
+  document.getElementById('bt-strat-table').innerHTML = Object.entries(byS)
+    .sort((a,b) => b[1].total - a[1].total)
+    .map(([name,v]) => {
+      const wr = v.total ? Math.round(v.wins/v.total*100) : 0;
+      const wc = wr>=55?'var(--green)':wr>=40?'#e8a020':'var(--red)';
+      const bar = `<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px"><div style="height:100%;width:${wr}%;background:${wc};border-radius:2px"></div></div>`;
+      return `<div class="sig-row" style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:2;font-family:'DM Mono',monospace;font-size:.55rem">${name}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim)">${v.total} сигн.</div>
+        <div style="font-family:'DM Mono',monospace;font-size:.55rem;color:${wc};min-width:50px;text-align:right">${wr}% WR</div>
+        <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:${v.pnl>=0?'var(--green)':'var(--red)'};min-width:60px;text-align:right">${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</div>
+      </div>${bar}`;
+    }).join('') || '<div class="empty">НЕТ ДАННЫХ</div>';
+
+  // Timeline
+  document.getElementById('bt-timeline').innerHTML = [...signals].reverse().map(s => {
+    const icon = s.outcome==='tp1'||s.outcome==='tp2' ? '✅' : s.outcome==='sl' ? '❌' : '⏰';
+    const dir  = s.direction==='long' ? '🟢' : '🔴';
+    const date = new Date(s.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    const pnlStr = s.pnl!=null ? (s.pnl>=0?'+':'')+s.pnl.toFixed(2)+'%' : '';
+    const pnlCls = (s.pnl||0)>=0?'c-green':'c-red';
+    return `<div class="sig-row" style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);min-width:90px">${date}</div>
+      <div>${dir}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.52rem;flex:1">${s.strategy?.split(' ').slice(0,3).join(' ')||'?'}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">$${s.price?.toFixed?.(4)||s.price}</div>
+      <div>${icon}</div>
+      <div class="sig-conf ${pnlCls}">${pnlStr}</div>
+    </div>`;
+  }).join('') || '<div class="empty">НЕТ СИГНАЛОВ</div>';
 }
 
 loadOverview();

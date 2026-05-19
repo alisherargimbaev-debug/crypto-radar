@@ -5345,7 +5345,12 @@ if (alreadyOpen) {
           console.log(`[PAPER ONLY] ${best.instId} ${best.strategy} conf=${best.confidence}%`);
         }
       } else {
-        saveOpenTrade(best);
+        // Когда AutoExec включён — он сам управляет позициями через Bybit
+        // Не сохраняем в store.openTrades чтобы избежать конфликта трекинга
+        // store обновится через position_closed событие от AutoExec
+        if (!autoExecSignals) {
+          saveOpenTrade(best);
+        }
 
         // AutoExec emit — ПЕРВЫМ, до Telegram (экономим 1-2 сек)
         if (autoExecSignals) {
@@ -5996,6 +6001,9 @@ async function checkTrailingStop() {
 //  ТАЙМЕР НА СДЕЛКУ — напоминание если сделка висит долго
 // ============================================================
 async function checkTradeTimers() {
+  // Когда AutoExec активен — он сам управляет позициями
+  // Напоминания не нужны — могут быть по уже закрытым сделкам
+  if (autoExecSignals) return;
   if (!store.openTrades.length) return;
 
   for (const trade of store.openTrades) {
@@ -6102,8 +6110,6 @@ async function checkOutcomes() {
     const ageMin = (Date.now() - trade.ts) / 60000;
 
     // ── TIME-IN-TRADE ТАЙМАУТ ────────────────────────────────
-    // Если сделка не закрылась за 8 часов — рынок не подтвердил идею
-    // Закрываем: если в плюсе — как TP1, если в нуле/минусе — как expired
     if (ageMin > 480) {
       const expPrice = await getCurrentPrice(trade.instId);
       const entry    = parseFloat(trade.price);
@@ -6113,7 +6119,6 @@ async function checkOutcomes() {
           : (entry - expPrice) / entry * 100
         : 0;
 
-      // Если в плюсе — засчитываем как TP1 (не waste)
       trade.outcome    = pnlPct > 0.3 ? 'tp1' : 'expired';
       trade.closedAt   = Date.now();
       trade.closePrice = expPrice || entry;
@@ -6129,49 +6134,81 @@ async function checkOutcomes() {
       continue;
     }
 
-    const price = await getCurrentPrice(trade.instId);
+    // ── ТОЧНАЯ ПРОВЕРКА ЧЕРЕЗ 1-МИНУТНЫЕ СВЕЧИ ──────────────
+    // Смотрим High/Low каждой свечи — видим касания SL/TP
+    // которые не видно при проверке только текущей цены
+    let price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }
 
-    // ── Breakeven: при +1R передвигаем SL в безубыток ────────
-    // Пропускаем если AutoExec управляет позицией на Bybit
-    // (AutoExec сам следит за реальной позицией по правильной цене входа)
+    const sl  = parseFloat(trade.sl);
+    const tp1 = parseFloat(trade.tp1);
+    const tp2 = parseFloat(trade.tp2);
+
+    // Получаем последние 1-минутные свечи с момента открытия сделки
+    let slHit = false, tp1Hit = false, tp2Hit = false;
+    let hitPrice = price;
+
+    try {
+      const minsOpen = Math.min(Math.ceil(ageMin) + 1, 60); // максимум 60 свечей
+      const k1m = await getOKXKlinesCached(trade.instId, '1m', minsOpen);
+
+      // Ищем свечи ПОСЛЕ открытия сделки
+      const tradeTsNum = typeof trade.ts === 'number' ? trade.ts : Date.now();
+      const recentK = k1m.filter(k => k.ts > tradeTsNum - 60000); // последние с момента входа
+
+      for (const k of recentK) {
+        const high = k.high || k.close;
+        const low  = k.low  || k.close;
+
+        if (trade.direction === 'long') {
+          if (low <= sl)  { slHit  = true; hitPrice = sl;  break; }
+          if (high >= tp2) { tp2Hit = true; hitPrice = tp2; break; }
+          if (high >= tp1) { tp1Hit = true; hitPrice = tp1; }
+        } else {
+          if (high >= sl) { slHit  = true; hitPrice = sl;  break; }
+          if (low <= tp2)  { tp2Hit = true; hitPrice = tp2; break; }
+          if (low <= tp1)  { tp1Hit = true; hitPrice = tp1; }
+        }
+      }
+    } catch(e) {
+      // Fallback — используем текущую цену
+      if (trade.direction === 'long') {
+        slHit  = price <= sl;
+        tp2Hit = price >= tp2;
+        tp1Hit = price >= tp1;
+      } else {
+        slHit  = price >= sl;
+        tp2Hit = price <= tp2;
+        tp1Hit = price <= tp1;
+      }
+      hitPrice = price;
+    }
+
+    // ── Breakeven (только без AutoExec) ─────────────────────
     if (!trade.trailingActive && !autoExecSignals) {
-      const entry = parseFloat(trade.price);
+      const entry  = parseFloat(trade.price);
       const slOrig = parseFloat(trade.sl);
       const slDist = Math.abs(entry - slOrig);
-      if (trade.direction === 'long') {
-        const oneR = entry + slDist; // +1R
-        if (price >= oneR) {
-          trade.sl = entry.toFixed(4); // SL → безубыток
-          trade.trailingActive = true;
-          console.log(`[BREAKEVEN] ${trade.instId} LONG → SL в безубыток ($${entry.toFixed(4)})`);
-          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
-        }
-      } else {
-        const oneR = entry - slDist; // -1R (для шорта)
-        if (price <= oneR) {
-          trade.sl = entry.toFixed(4);
-          trade.trailingActive = true;
-          console.log(`[BREAKEVEN] ${trade.instId} SHORT → SL в безубыток ($${entry.toFixed(4)})`);
-          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
-        }
+      const halfTP = Math.abs((tp1 - entry));
+      const halfTPReached = trade.direction === 'long'
+        ? price >= entry + halfTP * 0.5
+        : price <= entry - halfTP * 0.5;
+
+      if (halfTPReached) {
+        trade.sl = entry.toFixed(6);
+        trade.trailingActive = true;
+        console.log(`[BREAKEVEN] ${trade.instId} → SL в безубыток`);
+        await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL в безубыток (50% TP достигнут). Сделка безрисковая.`);
       }
     }
 
     let outcome = null;
-    if (trade.direction === 'long') {
-      if (price <= parseFloat(trade.sl)) {
-        // Если trailing был активен — закрылся по безубытку (не tp1 и не sl)
-        outcome = trade.trailingActive ? 'breakeven' : 'sl';
-      }
-      else if (price >= parseFloat(trade.tp2)) outcome = 'tp2';
-      else if (price >= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
-    } else {
-      if (price >= parseFloat(trade.sl)) {
-        outcome = trade.trailingActive ? 'breakeven' : 'sl';
-      }
-      else if (price <= parseFloat(trade.tp2)) outcome = 'tp2';
-      else if (price <= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
+    if (slHit) {
+      outcome = trade.trailingActive ? 'breakeven' : 'sl';
+    } else if (tp2Hit) {
+      outcome = 'tp2';
+    } else if (tp1Hit && !trade.trailingActive) {
+      outcome = 'tp1';
     }
 
     if (outcome) {
@@ -6798,6 +6835,53 @@ cron.schedule('*/30 * * * *', async () => {
 
 cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
 
+// Синхронизация открытых сделок с Bybit (только когда AutoExec активен)
+// В observe mode — не нужно, бот сам трекает виртуально
+cron.schedule('*/3 * * * *', async () => {
+  if (!autoExecSignals || store.observeMode) return;
+  if (!store.openTrades?.length) return;
+
+  try {
+    const { BybitClient } = require('./bybit-client');
+    const bybit = new BybitClient();
+    const positions = await bybit.getPositions();
+
+    // Символы которые реально открыты на Bybit
+    const openOnBybit = new Set(
+      (positions || [])
+        .filter(p => parseFloat(p.size) > 0)
+        .map(p => p.symbol)
+    );
+
+    const stillOpen = [];
+    const toClose   = [];
+
+    for (const trade of store.openTrades) {
+      const sym = (trade.instId || '').replace('-USDT-SWAP', 'USDT');
+      if (openOnBybit.has(sym)) {
+        stillOpen.push(trade); // позиция ещё открыта
+      } else {
+        toClose.push(trade);   // позиции нет на Bybit → закрылась
+      }
+    }
+
+    if (toClose.length > 0) {
+      for (const trade of toClose) {
+        console.log(`[Bybit Sync] ${trade.instId} закрыта на бирже → убираем из store`);
+        // Отмечаем как закрытую (исход неизвестен — Bybit уже закрыл)
+        trade.outcome   = 'closed_on_exchange';
+        trade.closedAt  = Date.now();
+        trade.pnl       = 0;
+        pushTradeHistory(trade);
+      }
+      store.openTrades = stillOpen;
+      console.log(`[Bybit Sync] Закрыто ${toClose.length} сделок из store`);
+    }
+  } catch(e) {
+    console.error('[Bybit Sync] error:', e.message);
+  }
+});
+
 // Paper trading — проверяем виртуальные сделки каждые 5 минут
 cron.schedule('*/5 * * * *', () => {
   if (store.observeMode) {
@@ -6853,7 +6937,8 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
 
 // Агент Психолог — проверяет после каждого закрытия сделки (каждые 15 мин)
-cron.schedule('*/15 * * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
+// Психолог — раз в день в 20:00 Алматы (15:00 UTC)
+cron.schedule('0 15 * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
 
 // Агент Аудитор — каждое воскресенье в 10:00 UTC (15:00 Алматы)
 cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('auditor error:', e.message)); });

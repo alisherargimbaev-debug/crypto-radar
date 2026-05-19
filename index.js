@@ -105,6 +105,7 @@ const STRATEGY_SL = {
   '1️⃣3️⃣ Order Block (1H)':          { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3
   '1️⃣4️⃣ Whale Follow (15m)':        { sl: 1.5, tp1: 3.0,  tp2: 4.5 }, // RR 1:2/1:3 (быстрая реакция)
   '1️⃣8️⃣ News Trading':               { sl: 1.0, tp1: 3.0,  tp2: 5.0 }, // быстрый выход на новостях
+  '1️⃣9️⃣ Value Area Reversal (1H)':   { sl: 1.2, tp1: 2.4,  tp2: 3.6 }, // SL под минимумом дипа
   '1️⃣5️⃣ Liquidation Hunt (5m)':     { sl: 1.0, tp1: 2.5,  tp2: 4.0 }, // RR 1:2.5/1:4 (тугой SL — каскад быстрый)
 };
 
@@ -2592,6 +2593,25 @@ function calcPriceChangePct(k) {
   const prev = k[k.length - 2].close, cur = k[k.length - 1].close;
   return prev ? (cur - prev) / prev * 100 : 0;
 }
+// ── DVOL — Deribit Volatility Index (крипто аналог VIX) ──────
+let dvolCache = { btc: null, eth: null, ts: 0 };
+async function getDVOL() {
+  if (Date.now() - dvolCache.ts < 300000) return dvolCache; // кэш 5 минут
+  try {
+    const [btcRes, ethRes] = await Promise.all([
+      httpGet('https://www.deribit.com/api/v2/public/get_index?currency=BTC'),
+      httpGet('https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=BTC&start_timestamp=' + (Date.now()-3600000) + '&end_timestamp=' + Date.now() + '&resolution=3600'),
+    ]);
+    const dvol = ethRes?.result?.data?.[0]?.[4] || null; // close value
+    dvolCache = { btc: dvol, ts: Date.now() };
+    if (dvol) console.log(`[DVOL] BTC Volatility: ${dvol}`);
+    return dvolCache;
+  } catch(e) {
+    console.error('[DVOL] error:', e.message);
+    return dvolCache;
+  }
+}
+
 function calcRSI(klines, period) {
   const closes = klines.map(c => c.close);
   if (closes.length < period + 1) return 50;
@@ -3171,6 +3191,20 @@ async function getMarketRegime(instId) {
 
 function applyMarketRegime(sig, regime) {
   if (!regime) return sig;
+
+  // ═══════════════════════════════════════════════════════════
+  // DVOL ФИЛЬТР — Deribit Volatility Index (крипто VIX)
+  // При экстремальной волатильности только шорты/выход
+  // ═══════════════════════════════════════════════════════════
+  const dvol = dvolCache?.btc;
+  if (dvol && dvol > 80 && sig.direction === 'long') {
+    // DVOL > 80 = паника на опционном рынке → не входим в лонги
+    const isS1 = sig.strategy.startsWith('1️⃣ ');
+    if (!isS1) {
+      sig.confidence = Math.max(sig.confidence - 15, 0);
+      sig.regimeNote = (sig.regimeNote || '') + ` ⚠️ DVOL:${dvol.toFixed(0)}>80 → -15%`;
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════
   // ЖЁСТКИЕ БЛОКИ — confidence → 0 (сигнал не пройдёт порог)
@@ -4103,6 +4137,94 @@ if (k1h.length >= 55) {
         }
       }
     } catch(e) { console.error('S18 error:', e.message); }
+
+    // ════════════════════════════════════════════════════════
+    // S19: Value Area Reversal — PAPER ONLY (сбор данных)
+    // Цена дипает ниже Value Area → возвращается → LONG
+    // Стратегия от World Champion трейдеров (Volume Profile)
+    // ════════════════════════════════════════════════════════
+    try {
+      const k1h_s19 = await getOKXKlinesCached(instId, '1H', 48);
+      const k15_s19 = await getOKXKlinesCached(instId, '15m', 20);
+
+      if (k1h_s19.length >= 24 && k15_s19.length >= 10) {
+        // Считаем Value Area за последние 24 часа
+        const session = k1h_s19.slice(-24);
+        const totalVol = session.reduce((s, k) => s + (k.quoteVolume || 0), 0);
+        const sorted   = [...session].sort((a, b) => (b.quoteVolume || 0) - (a.quoteVolume || 0));
+
+        // POC = свеча с максимальным объёмом
+        const poc = sorted[0]?.close || 0;
+
+        // Value Area = 70% объёма вокруг POC
+        let vaVol = 0, vaCandles = [];
+        for (const k of sorted) {
+          vaVol += k.quoteVolume || 0;
+          vaCandles.push(k);
+          if (vaVol >= totalVol * 0.70) break;
+        }
+        const prices = vaCandles.map(k => k.close);
+        const vah = Math.max(...prices); // Value Area High
+        const val = Math.min(...prices); // Value Area Low
+
+        // Последние 3 свечи 15m
+        const last3  = k15_s19.slice(-3);
+        const prev   = last3[0]; // 2 свечи назад
+        const mid    = last3[1]; // предыдущая
+        const curr   = last3[2]; // текущая
+        const price_s19 = curr.close;
+
+        // Объём на дипе и на возврате
+        const dipVol    = mid.quoteVolume || 0;
+        const returnVol = curr.quoteVolume || 0;
+        const avgVol    = k15_s19.slice(-10).reduce((s,k) => s+(k.quoteVolume||0), 0) / 10;
+
+        // ── LONG условие ───────────────────────────────────
+        // 1. Предыдущая свеча ушла ниже VAL (дип)
+        // 2. Текущая свеча закрылась ВЫШЕ VAL (возврат)
+        // 3. Объём на дипе низкий (нет продавцов)
+        // 4. Объём на возврате высокий (покупатели входят)
+        const longCondition =
+          mid.low < val &&            // был дип ниже VAL
+          curr.close > val &&         // закрылись обратно выше VAL
+          dipVol < avgVol * 0.8 &&   // объём дипа слабый
+          returnVol > avgVol * 1.2;  // объём возврата сильный
+
+        // ── SHORT условие (зеркальное) ──────────────────────
+        const shortCondition =
+          mid.high > vah &&
+          curr.close < vah &&
+          dipVol < avgVol * 0.8 &&
+          returnVol > avgVol * 1.2;
+
+        if (longCondition || shortCondition) {
+          const dir = longCondition ? 'long' : 'short';
+          const atr_s19 = calcATR(k15_s19, 10);
+
+          // Confidence: выше если Value Area строится в нашу сторону
+          const vaBuilding = longCondition
+            ? vah > k1h_s19[k1h_s19.length-12]?.close  // VAH растёт
+            : val < k1h_s19[k1h_s19.length-12]?.close; // VAL падает
+          const conf = Math.min(
+            60 +
+            (vaBuilding ? 15 : 0) +
+            (returnVol / avgVol > 2 ? 10 : 5) +
+            (Math.abs(price_s19 - poc) / poc < 0.02 ? 10 : 0), // близко к POC
+            88
+          );
+
+          signals.push({
+            instId, direction: dir,
+            strategy: '1️⃣9️⃣ Value Area Reversal (1H)',
+            confidence: Math.round(conf),
+            price: price_s19,
+            paperOnly: true,
+            ...calcSLTP(price_s19, dir, '1️⃣9️⃣ Value Area Reversal (1H)', atr_s19),
+            metrics: `VAL:${val.toFixed(3)} VAH:${vah.toFixed(3)} POC:${poc.toFixed(3)} RetVol:${(returnVol/avgVol).toFixed(1)}x`,
+          });
+        }
+      }
+    } catch(e) { console.error('S19 error:', e.message); }
 
     // ════════════════════════════════════════════════════════
     // S16: VWAP Deviation (1H) — PAPER ONLY (сбор данных)
@@ -5076,6 +5198,7 @@ async function checkSignals() {
     if (!candidates.length) { console.log('Нет кандидатов'); isRunning = false; return; }
 
     const fng          = await getFearAndGreed();
+    const dvol         = await getDVOL(); // Deribit Volatility Index
     const session      = getCurrentSession();
     const asianSession = isAsianSession();
     const macroEvent   = await checkMacroEvents();
@@ -5345,12 +5468,7 @@ if (alreadyOpen) {
           console.log(`[PAPER ONLY] ${best.instId} ${best.strategy} conf=${best.confidence}%`);
         }
       } else {
-        // Когда AutoExec включён — он сам управляет позициями через Bybit
-        // Не сохраняем в store.openTrades чтобы избежать конфликта трекинга
-        // store обновится через position_closed событие от AutoExec
-        if (!autoExecSignals) {
-          saveOpenTrade(best);
-        }
+        saveOpenTrade(best);
 
         // AutoExec emit — ПЕРВЫМ, до Telegram (экономим 1-2 сек)
         if (autoExecSignals) {
@@ -6001,9 +6119,6 @@ async function checkTrailingStop() {
 //  ТАЙМЕР НА СДЕЛКУ — напоминание если сделка висит долго
 // ============================================================
 async function checkTradeTimers() {
-  // Когда AutoExec активен — он сам управляет позициями
-  // Напоминания не нужны — могут быть по уже закрытым сделкам
-  if (autoExecSignals) return;
   if (!store.openTrades.length) return;
 
   for (const trade of store.openTrades) {
@@ -6110,6 +6225,8 @@ async function checkOutcomes() {
     const ageMin = (Date.now() - trade.ts) / 60000;
 
     // ── TIME-IN-TRADE ТАЙМАУТ ────────────────────────────────
+    // Если сделка не закрылась за 8 часов — рынок не подтвердил идею
+    // Закрываем: если в плюсе — как TP1, если в нуле/минусе — как expired
     if (ageMin > 480) {
       const expPrice = await getCurrentPrice(trade.instId);
       const entry    = parseFloat(trade.price);
@@ -6119,6 +6236,7 @@ async function checkOutcomes() {
           : (entry - expPrice) / entry * 100
         : 0;
 
+      // Если в плюсе — засчитываем как TP1 (не waste)
       trade.outcome    = pnlPct > 0.3 ? 'tp1' : 'expired';
       trade.closedAt   = Date.now();
       trade.closePrice = expPrice || entry;
@@ -6134,81 +6252,49 @@ async function checkOutcomes() {
       continue;
     }
 
-    // ── ТОЧНАЯ ПРОВЕРКА ЧЕРЕЗ 1-МИНУТНЫЕ СВЕЧИ ──────────────
-    // Смотрим High/Low каждой свечи — видим касания SL/TP
-    // которые не видно при проверке только текущей цены
-    let price = await getCurrentPrice(trade.instId);
+    const price = await getCurrentPrice(trade.instId);
     if (!price) { stillOpen.push(trade); continue; }
 
-    const sl  = parseFloat(trade.sl);
-    const tp1 = parseFloat(trade.tp1);
-    const tp2 = parseFloat(trade.tp2);
-
-    // Получаем последние 1-минутные свечи с момента открытия сделки
-    let slHit = false, tp1Hit = false, tp2Hit = false;
-    let hitPrice = price;
-
-    try {
-      const minsOpen = Math.min(Math.ceil(ageMin) + 1, 60); // максимум 60 свечей
-      const k1m = await getOKXKlinesCached(trade.instId, '1m', minsOpen);
-
-      // Ищем свечи ПОСЛЕ открытия сделки
-      const tradeTsNum = typeof trade.ts === 'number' ? trade.ts : Date.now();
-      const recentK = k1m.filter(k => k.ts > tradeTsNum - 60000); // последние с момента входа
-
-      for (const k of recentK) {
-        const high = k.high || k.close;
-        const low  = k.low  || k.close;
-
-        if (trade.direction === 'long') {
-          if (low <= sl)  { slHit  = true; hitPrice = sl;  break; }
-          if (high >= tp2) { tp2Hit = true; hitPrice = tp2; break; }
-          if (high >= tp1) { tp1Hit = true; hitPrice = tp1; }
-        } else {
-          if (high >= sl) { slHit  = true; hitPrice = sl;  break; }
-          if (low <= tp2)  { tp2Hit = true; hitPrice = tp2; break; }
-          if (low <= tp1)  { tp1Hit = true; hitPrice = tp1; }
-        }
-      }
-    } catch(e) {
-      // Fallback — используем текущую цену
-      if (trade.direction === 'long') {
-        slHit  = price <= sl;
-        tp2Hit = price >= tp2;
-        tp1Hit = price >= tp1;
-      } else {
-        slHit  = price >= sl;
-        tp2Hit = price <= tp2;
-        tp1Hit = price <= tp1;
-      }
-      hitPrice = price;
-    }
-
-    // ── Breakeven (только без AutoExec) ─────────────────────
+    // ── Breakeven: при +1R передвигаем SL в безубыток ────────
+    // Пропускаем если AutoExec управляет позицией на Bybit
+    // (AutoExec сам следит за реальной позицией по правильной цене входа)
     if (!trade.trailingActive && !autoExecSignals) {
-      const entry  = parseFloat(trade.price);
+      const entry = parseFloat(trade.price);
       const slOrig = parseFloat(trade.sl);
       const slDist = Math.abs(entry - slOrig);
-      const halfTP = Math.abs((tp1 - entry));
-      const halfTPReached = trade.direction === 'long'
-        ? price >= entry + halfTP * 0.5
-        : price <= entry - halfTP * 0.5;
-
-      if (halfTPReached) {
-        trade.sl = entry.toFixed(6);
-        trade.trailingActive = true;
-        console.log(`[BREAKEVEN] ${trade.instId} → SL в безубыток`);
-        await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL в безубыток (50% TP достигнут). Сделка безрисковая.`);
+      if (trade.direction === 'long') {
+        const oneR = entry + slDist; // +1R
+        if (price >= oneR) {
+          trade.sl = entry.toFixed(4); // SL → безубыток
+          trade.trailingActive = true;
+          console.log(`[BREAKEVEN] ${trade.instId} LONG → SL в безубыток ($${entry.toFixed(4)})`);
+          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
+        }
+      } else {
+        const oneR = entry - slDist; // -1R (для шорта)
+        if (price <= oneR) {
+          trade.sl = entry.toFixed(4);
+          trade.trailingActive = true;
+          console.log(`[BREAKEVEN] ${trade.instId} SHORT → SL в безубыток ($${entry.toFixed(4)})`);
+          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
+        }
       }
     }
 
     let outcome = null;
-    if (slHit) {
-      outcome = trade.trailingActive ? 'breakeven' : 'sl';
-    } else if (tp2Hit) {
-      outcome = 'tp2';
-    } else if (tp1Hit && !trade.trailingActive) {
-      outcome = 'tp1';
+    if (trade.direction === 'long') {
+      if (price <= parseFloat(trade.sl)) {
+        // Если trailing был активен — закрылся по безубытку (не tp1 и не sl)
+        outcome = trade.trailingActive ? 'breakeven' : 'sl';
+      }
+      else if (price >= parseFloat(trade.tp2)) outcome = 'tp2';
+      else if (price >= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
+    } else {
+      if (price >= parseFloat(trade.sl)) {
+        outcome = trade.trailingActive ? 'breakeven' : 'sl';
+      }
+      else if (price <= parseFloat(trade.tp2)) outcome = 'tp2';
+      else if (price <= parseFloat(trade.tp1) && !trade.trailingActive) outcome = 'tp1';
     }
 
     if (outcome) {
@@ -6835,53 +6921,6 @@ cron.schedule('*/30 * * * *', async () => {
 
 cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
 
-// Синхронизация открытых сделок с Bybit (только когда AutoExec активен)
-// В observe mode — не нужно, бот сам трекает виртуально
-cron.schedule('*/3 * * * *', async () => {
-  if (!autoExecSignals || store.observeMode) return;
-  if (!store.openTrades?.length) return;
-
-  try {
-    const { BybitClient } = require('./bybit-client');
-    const bybit = new BybitClient();
-    const positions = await bybit.getPositions();
-
-    // Символы которые реально открыты на Bybit
-    const openOnBybit = new Set(
-      (positions || [])
-        .filter(p => parseFloat(p.size) > 0)
-        .map(p => p.symbol)
-    );
-
-    const stillOpen = [];
-    const toClose   = [];
-
-    for (const trade of store.openTrades) {
-      const sym = (trade.instId || '').replace('-USDT-SWAP', 'USDT');
-      if (openOnBybit.has(sym)) {
-        stillOpen.push(trade); // позиция ещё открыта
-      } else {
-        toClose.push(trade);   // позиции нет на Bybit → закрылась
-      }
-    }
-
-    if (toClose.length > 0) {
-      for (const trade of toClose) {
-        console.log(`[Bybit Sync] ${trade.instId} закрыта на бирже → убираем из store`);
-        // Отмечаем как закрытую (исход неизвестен — Bybit уже закрыл)
-        trade.outcome   = 'closed_on_exchange';
-        trade.closedAt  = Date.now();
-        trade.pnl       = 0;
-        pushTradeHistory(trade);
-      }
-      store.openTrades = stillOpen;
-      console.log(`[Bybit Sync] Закрыто ${toClose.length} сделок из store`);
-    }
-  } catch(e) {
-    console.error('[Bybit Sync] error:', e.message);
-  }
-});
-
 // Paper trading — проверяем виртуальные сделки каждые 5 минут
 cron.schedule('*/5 * * * *', () => {
   if (store.observeMode) {
@@ -6937,8 +6976,7 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
 
 // Агент Психолог — проверяет после каждого закрытия сделки (каждые 15 мин)
-// Психолог — раз в день в 20:00 Алматы (15:00 UTC)
-cron.schedule('0 15 * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
+cron.schedule('*/15 * * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
 
 // Агент Аудитор — каждое воскресенье в 10:00 UTC (15:00 Алматы)
 cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('auditor error:', e.message)); });

@@ -2612,6 +2612,158 @@ async function getDVOL() {
   }
 }
 
+// ── WEEKLY POC (Point of Control) ────────────────────────────
+// Самый торгуемый уровень за текущую неделю — магнит для цены
+let weeklyPocCache = new Map(); // instId → { poc, vah, val, ts }
+
+async function getWeeklyPOC(instId) {
+  const cached = weeklyPocCache.get(instId);
+  if (cached && Date.now() - cached.ts < 3600000) return cached; // кэш 1 час
+
+  try {
+    // Берём 1H свечи за текущую неделю (168 часов)
+    const k1h = await getOKXKlinesCached(instId, '1H', 168);
+    if (k1h.length < 24) return null;
+
+    // Начало текущей недели (понедельник)
+    const now = new Date();
+    const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
+    const weekStart = Date.now() - dayOfWeek * 86400000 - now.getHours() * 3600000;
+
+    // Фильтруем свечи этой недели
+    const weekCandles = k1h.filter(k => k.ts >= weekStart);
+    if (weekCandles.length < 8) {
+      // Мало данных — берём последние 7 дней
+      weeklyPocCache.set(instId, null);
+      return null;
+    }
+
+    // Находим диапазон цен
+    const allHighs  = weekCandles.map(k => k.high || k.close);
+    const allLows   = weekCandles.map(k => k.low  || k.close);
+    const priceHigh = Math.max(...allHighs);
+    const priceLow  = Math.min(...allLows);
+    const range     = priceHigh - priceLow;
+    if (range <= 0) return null;
+
+    // Делим диапазон на 50 зон и считаем объём в каждой
+    const ZONES = 50;
+    const zoneSize = range / ZONES;
+    const volumeByZone = new Array(ZONES).fill(0);
+
+    for (const k of weekCandles) {
+      const vol  = k.quoteVolume || 0;
+      const high = k.high || k.close;
+      const low  = k.low  || k.close;
+      const kRange = high - low || zoneSize;
+
+      for (let z = 0; z < ZONES; z++) {
+        const zLow  = priceLow + z * zoneSize;
+        const zHigh = zLow + zoneSize;
+        const overlap = Math.max(0, Math.min(high, zHigh) - Math.max(low, zLow));
+        volumeByZone[z] += vol * (overlap / kRange);
+      }
+    }
+
+    // POC = зона с максимальным объёмом
+    const pocIdx  = volumeByZone.indexOf(Math.max(...volumeByZone));
+    const poc     = priceLow + (pocIdx + 0.5) * zoneSize;
+
+    // Value Area = 70% объёма вокруг POC
+    const totalVol = volumeByZone.reduce((a,b) => a+b, 0);
+    let vaVol = volumeByZone[pocIdx];
+    let vaLow = pocIdx, vaHigh = pocIdx;
+    while (vaVol < totalVol * 0.7 && (vaLow > 0 || vaHigh < ZONES - 1)) {
+      const extLow  = vaLow  > 0         ? volumeByZone[vaLow - 1]  : 0;
+      const extHigh = vaHigh < ZONES - 1 ? volumeByZone[vaHigh + 1] : 0;
+      if (extLow >= extHigh && vaLow > 0)         { vaLow--;  vaVol += extLow; }
+      else if (vaHigh < ZONES - 1)                { vaHigh++; vaVol += extHigh; }
+      else break;
+    }
+
+    const result = {
+      poc:  parseFloat(poc.toFixed(6)),
+      vah:  parseFloat((priceLow + (vaHigh + 1) * zoneSize).toFixed(6)),
+      val:  parseFloat((priceLow + vaLow * zoneSize).toFixed(6)),
+      ts:   Date.now(),
+    };
+    weeklyPocCache.set(instId, result);
+    return result;
+  } catch(e) {
+    console.error('[WeeklyPOC]', instId, e.message);
+    return null;
+  }
+}
+
+// ── GEX (Gamma Exposure) из Deribit ──────────────────────────
+// Уровни где маркет-мейкеры держат гамму → магниты цены
+// Работает только для BTC и ETH
+let gexCache = { btc: null, eth: null, ts: 0 };
+
+async function getGEXLevels(coin) {
+  if (!['BTC','ETH'].includes(coin)) return null;
+  const key = coin.toLowerCase();
+
+  if (gexCache[key] && Date.now() - gexCache.ts < 3600000) return gexCache[key];
+
+  try {
+    // Получаем все активные опционы
+    const instruments = await httpGet(
+      `https://www.deribit.com/api/v2/public/get_instruments?currency=${coin}&kind=option&expired=false`
+    );
+    if (!instruments?.result) return null;
+
+    // Берём только ближайшие экспирации (до 30 дней)
+    const now30d = Date.now() + 30 * 86400000;
+    const near = instruments.result.filter(i =>
+      i.expiration_timestamp < now30d && i.strike
+    );
+    if (!near.length) return null;
+
+    // Группируем по страйку и считаем нетто-гамму
+    const strikes = {};
+    for (const ins of near.slice(0, 100)) { // берём первые 100
+      const strike = ins.strike;
+      if (!strikes[strike]) strikes[strike] = { gex: 0, oi: 0 };
+      try {
+        const ticker = await httpGet(
+          `https://www.deribit.com/api/v2/public/ticker?instrument_name=${ins.instrument_name}`
+        );
+        const gamma = ticker?.result?.greeks?.gamma || 0;
+        const oi    = ticker?.result?.open_interest || 0;
+        const price = ticker?.result?.underlying_price || 1;
+        // GEX = gamma × OI × price² × 0.01 (нормализация)
+        const gex = gamma * oi * price * price * 0.01;
+        // Колл = позитивный GEX, Пут = негативный
+        strikes[strike].gex += ins.instrument_name.includes('-C') ? gex : -gex;
+        strikes[strike].oi  += oi;
+      } catch(_) {}
+    }
+
+    // Находим ключевые уровни
+    const levels = Object.entries(strikes)
+      .map(([strike, data]) => ({ strike: parseFloat(strike), ...data }))
+      .filter(l => Math.abs(l.gex) > 0)
+      .sort((a,b) => Math.abs(b.gex) - Math.abs(a.gex))
+      .slice(0, 5); // топ-5 уровней
+
+    const result = {
+      levels,
+      wallUp:   levels.filter(l => l.gex > 0).sort((a,b) => a.strike - b.strike)[0]?.strike || null,
+      wallDown: levels.filter(l => l.gex < 0).sort((a,b) => b.strike - a.strike)[0]?.strike || null,
+      ts: Date.now(),
+    };
+
+    gexCache[key] = result;
+    gexCache.ts   = Date.now();
+    console.log(`[GEX] ${coin}: Wall↑${result.wallUp} Wall↓${result.wallDown}`);
+    return result;
+  } catch(e) {
+    console.error('[GEX]', coin, e.message);
+    return null;
+  }
+}
+
 function calcRSI(klines, period) {
   const closes = klines.map(c => c.close);
   if (closes.length < period + 1) return 50;
@@ -4335,7 +4487,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.gexNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
 
@@ -5331,6 +5483,9 @@ async function checkSignals() {
 
     const fng          = await getFearAndGreed();
     const dvol         = await getDVOL(); // Deribit Volatility Index
+
+    // Weekly POC и GEX загружаем параллельно для всех монет пакетом
+    // (кэшируются на 1 час — не нагружают API)
     const session      = getCurrentSession();
     const asianSession = isAsianSession();
     const macroEvent   = await checkMacroEvents();
@@ -5469,6 +5624,71 @@ if (alreadyOpen) {
             }
           }
         } catch(e) { /* FVG не критичен */ }
+
+        // 9. WEEKLY POC — самый торгуемый уровень недели
+        try {
+          const poc = await getWeeklyPOC(coin.instId);
+          if (poc) {
+            const price = parseFloat(sig.price);
+            const distToPOC = Math.abs(price - poc.poc) / price * 100;
+            const distToVAH = Math.abs(price - poc.vah) / price * 100;
+            const distToVAL = Math.abs(price - poc.val) / price * 100;
+
+            if (distToPOC < 1.5) {
+              // Цена у POC — очень сильный уровень
+              sig.confidence = Math.min(sig.confidence + 12, 100);
+              sig.pocNote    = `🎯 Weekly POC: $${poc.poc.toFixed(3)} (${distToPOC.toFixed(1)}% away) → +12%`;
+            } else if (sig.direction === 'long' && price < poc.val && distToVAL < 2) {
+              // Цена ниже Value Area Low → возврат внутрь VA
+              sig.confidence = Math.min(sig.confidence + 8, 100);
+              sig.pocNote    = `📊 Ниже VAL $${poc.val.toFixed(3)} → возврат ожидается → +8%`;
+            } else if (sig.direction === 'short' && price > poc.vah && distToVAH < 2) {
+              // Цена выше Value Area High → возврат внутрь VA
+              sig.confidence = Math.min(sig.confidence + 8, 100);
+              sig.pocNote    = `📊 Выше VAH $${poc.vah.toFixed(3)} → возврат ожидается → +8%`;
+            } else if (distToPOC < 3) {
+              sig.confidence = Math.min(sig.confidence + 5, 100);
+              sig.pocNote    = `📊 Weekly POC близко: $${poc.poc.toFixed(3)} → +5%`;
+            }
+          }
+        } catch(e) { /* POC не критичен */ }
+
+        // 10. GEX — Gamma Exposure (только BTC и ETH)
+        try {
+          const coin_name = coin.instId.replace('-USDT-SWAP','');
+          if (['BTC','ETH'].includes(coin_name)) {
+            const gex = await getGEXLevels(coin_name);
+            if (gex?.levels?.length) {
+              const price = parseFloat(sig.price);
+              // Проверяем ближайший GEX уровень
+              const nearest = gex.levels.reduce((best, l) =>
+                Math.abs(l.strike - price) < Math.abs(best.strike - price) ? l : best
+              );
+              const distPct = Math.abs(nearest.strike - price) / price * 100;
+
+              if (distPct < 2) {
+                if (nearest.gex > 0) {
+                  // Позитивный GEX = маркет-мейкеры покупают при падении → поддержка
+                  if (sig.direction === 'long') {
+                    sig.confidence = Math.min(sig.confidence + 10, 100);
+                    sig.gexNote    = `⚡ GEX Wall $${nearest.strike.toLocaleString()} (поддержка) → +10%`;
+                  }
+                } else {
+                  // Негативный GEX = сопротивление
+                  if (sig.direction === 'short') {
+                    sig.confidence = Math.min(sig.confidence + 10, 100);
+                    sig.gexNote    = `⚡ GEX Wall $${nearest.strike.toLocaleString()} (сопротивление) → +10%`;
+                  }
+                }
+              }
+
+              // Добавляем в контекст ключевые стены
+              if (!sig.gexNote && gex.wallUp && gex.wallDown) {
+                sig.gexNote = `⚡ GEX: ↑$${gex.wallUp?.toLocaleString()} ↓$${gex.wallDown?.toLocaleString()}`;
+              }
+            }
+          }
+        } catch(e) { /* GEX не критичен */ }
 
         filtered.push(sig);
       }

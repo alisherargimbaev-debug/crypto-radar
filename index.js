@@ -113,6 +113,56 @@ const S2 = { priceMax: -2.5, oiMin: 2.0, vdeltaMax: -1500000, ticksMin: 500, vol
 
 const MIN_VOLUME_24H = 10000000;
 const TOP_N          = 50;
+
+// ── КЛАССИФИКАЦИЯ АКТИВОВ ────────────────────────────────────
+// Определяем тип актива и применяем правильные параметры
+const ASSET_CLASSES = {
+  // Золото и серебро
+  XAU: { class: 'commodity', name: 'Золото',   slPct: 0.7,  tpMult: 2, sessionUTC: null,         dxyFilter: true  },
+  XAG: { class: 'commodity', name: 'Серебро',  slPct: 1.0,  tpMult: 2, sessionUTC: null,         dxyFilter: true  },
+  // Нефть
+  CL:  { class: 'commodity', name: 'Нефть WTI',slPct: 1.2,  tpMult: 2, sessionUTC: null,         opecFilter: true },
+  BZ:  { class: 'commodity', name: 'Нефть Brent',slPct: 1.2, tpMult: 2, sessionUTC: null,        opecFilter: true },
+  // Акции (NYSE: 14:30-21:00 UTC)
+  NVDA:{ class: 'stock',     name: 'NVIDIA',   slPct: 1.5,  tpMult: 2, sessionUTC: [14.5, 21],   earningsFilter: true },
+  TSLA:{ class: 'stock',     name: 'Tesla',    slPct: 2.0,  tpMult: 2, sessionUTC: [14.5, 21],   earningsFilter: true },
+  AAPL:{ class: 'stock',     name: 'Apple',    slPct: 1.0,  tpMult: 2, sessionUTC: [14.5, 21],   earningsFilter: true },
+  INTC:{ class: 'stock',     name: 'Intel',    slPct: 1.5,  tpMult: 2, sessionUTC: [14.5, 21],   earningsFilter: true },
+  MSTR:{ class: 'stock',     name: 'MicroStrategy',slPct: 3.0, tpMult: 2, sessionUTC: [14.5, 21],earningsFilter: true },
+};
+
+function getAssetClass(instId) {
+  const coin = instId.replace('-USDT-SWAP','').replace('-USDT','');
+  return ASSET_CLASSES[coin] || { class: 'crypto', slPct: null, tpMult: 2, sessionUTC: null };
+}
+
+// Проверяем что рынок открыт для данного актива
+function isMarketOpenForAsset(asset) {
+  if (asset.class === 'crypto') return true; // крипта 24/7
+  if (!asset.sessionUTC) return true; // коммодити торгуются почти 24/7
+
+  const utcHour = new Date().getUTCHours() + new Date().getUTCMinutes() / 60;
+  const [open, close] = asset.sessionUTC;
+  const day = new Date().getUTCDay(); // 0=вс, 6=сб
+
+  // Акции не торгуются в выходные
+  if (asset.class === 'stock' && (day === 0 || day === 6)) return false;
+  return utcHour >= open && utcHour < close;
+}
+
+// DXY кэш (индекс доллара — влияет на золото)
+let dxyCache = { value: null, ts: 0 };
+async function getDXY() {
+  if (Date.now() - dxyCache.ts < 3600000) return dxyCache.value;
+  try {
+    // DXY через BTC/USDT как прокси (упрощённо)
+    // В идеале использовать forex API
+    const data = await httpGet('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-SPOT');
+    // Если BTC растёт → доллар слабеет → золото может расти
+    dxyCache = { value: null, ts: Date.now() };
+    return null;
+  } catch(e) { return null; }
+}
 const COOLDOWN_MIN   = 60;  // 60 мин — защита от серий по одной монете
 
 // ── Портфельный риск-менеджмент ────────────────────────────
@@ -1714,8 +1764,25 @@ function parseAIResponse(line, sig) {
 async function getOKXCandidates() {
   const data = await httpGet('https://www.okx.com/api/v5/market/tickers?instType=SWAP');
   if (!data || data.code !== '0') return [];
-  return data.data
-    .filter(t => t.instId.endsWith('-USDT-SWAP'))
+
+  // Принудительно добавляем товарные и фондовые активы
+  // (они могут не попасть в топ по объёму, но мы хотим их сканировать)
+  const FORCED_ASSETS = [
+    'XAU-USDT-SWAP',  // Золото
+    'XAG-USDT-SWAP',  // Серебро
+    'CL-USDT-SWAP',   // Нефть WTI
+    'BZ-USDT-SWAP',   // Нефть Brent
+    'NVDA-USDT-SWAP', // NVIDIA
+    'TSLA-USDT-SWAP', // Tesla
+    'AAPL-USDT-SWAP', // Apple
+    'INTC-USDT-SWAP', // Intel
+    'MSTR-USDT-SWAP', // MicroStrategy
+  ];
+
+  const allTickers = data.data.filter(t => t.instId.endsWith('-USDT-SWAP'));
+
+  // Топ по объёму
+  const topCoins = allTickers
     .map(t => ({
       instId:    t.instId,
       symbol:    t.instId.replace('-USDT-SWAP', ''),
@@ -1726,12 +1793,31 @@ async function getOKXCandidates() {
     }))
     .filter(t => t.volume24h >= MIN_VOLUME_24H)
     .sort((a, b) => {
-    // Сортируем по комбинации объёма и движения цены
-    const scoreA = b.volume24h + Math.abs(a.change24h) * 1e8;
-    const scoreB = a.volume24h + Math.abs(b.change24h) * 1e8;
-    return scoreA - scoreB;
+      const scoreA = b.volume24h + Math.abs(a.change24h) * 1e8;
+      const scoreB = a.volume24h + Math.abs(b.change24h) * 1e8;
+      return scoreA - scoreB;
     })
     .slice(0, TOP_N);
+
+  // Добавляем форсированные активы если их нет в топе
+  const topIds = new Set(topCoins.map(c => c.instId));
+  for (const forcedId of FORCED_ASSETS) {
+    if (topIds.has(forcedId)) continue;
+    const ticker = allTickers.find(t => t.instId === forcedId);
+    if (ticker && parseFloat(ticker.last) > 0) {
+      topCoins.push({
+        instId:      ticker.instId,
+        symbol:      ticker.instId.replace('-USDT-SWAP',''),
+        price:       parseFloat(ticker.last),
+        change24h:   (parseFloat(ticker.last) - parseFloat(ticker.open24h)) / parseFloat(ticker.open24h) * 100,
+        volume24h:   parseFloat(ticker.volCcy24h) * parseFloat(ticker.last),
+        fundingRate: parseFloat(ticker.fundingRate || 0),
+        forced:      true,
+      });
+    }
+  }
+
+  return topCoins;
 }
 
 async function getOKXKlines(instId, bar, limit) {
@@ -4487,7 +4573,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.gexNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.gexNote, sig.assetNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
 
@@ -5499,6 +5585,13 @@ async function checkSignals() {
     for (const coin of candidates) {
       if (isCoinOnCooldown(coin.instId)) continue;
 
+      // ── ПРОВЕРКА ТИПА АКТИВА ─────────────────────────────────
+      const asset = getAssetClass(coin.instId);
+      if (!isMarketOpenForAsset(asset)) {
+        console.log(`[ASSET] ${coin.instId} — рынок закрыт (${asset.name || asset.class})`);
+        continue;
+      }
+
 // Блокируем если монета уже в открытых сделках
 const alreadyOpen = store.openTrades.some(t => t.instId === coin.instId);
 if (alreadyOpen) {
@@ -5512,6 +5605,25 @@ if (alreadyOpen) {
         continue;
       }
       if (signals.length) console.log(`[RAW SIGNALS] ${coin.instId}: ${signals.length} (${signals.map(s=>s.strategy.split(' ')[0]).join(',')})`);
+
+      // ── Корректировка SL/TP под тип актива ────────────────────
+      if (asset.slPct && asset.class !== 'crypto') {
+        for (const sig of signals) {
+          const price = parseFloat(sig.price);
+          const sl    = asset.slPct / 100;
+          const tp    = sl * (asset.tpMult || 2);
+          sig.sl  = sig.direction === 'long'
+            ? (price * (1 - sl)).toFixed(6)
+            : (price * (1 + sl)).toFixed(6);
+          sig.tp1 = sig.direction === 'long'
+            ? (price * (1 + tp)).toFixed(6)
+            : (price * (1 - tp)).toFixed(6);
+          sig.tp2 = sig.direction === 'long'
+            ? (price * (1 + tp * 1.5)).toFixed(6)
+            : (price * (1 - tp * 1.5)).toFixed(6);
+          sig.assetNote = `📦 ${asset.name}: SL=${asset.slPct}% (адаптирован)`;
+        }
+      }
 
       // ── АВТОРОТАЦИЯ СТРАТЕГИЙ ────────────────────────────────
       // В observe mode — все стратегии активны для полного наблюдения

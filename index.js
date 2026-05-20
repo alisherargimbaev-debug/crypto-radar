@@ -2701,85 +2701,86 @@ async function getDVOL() {
 
 // ── WEEKLY POC (Point of Control) ────────────────────────────
 // Самый торгуемый уровень за текущую неделю — магнит для цены
-let weeklyPocCache = new Map(); // instId → { poc, vah, val, ts }
+let weeklyPocCache  = new Map();
+let monthlyPocCache = new Map();
+
+// ── Общая функция расчёта Volume Profile ─────────────────────
+function calcVolumeProfile(candles, zones = 50) {
+  if (!candles?.length) return null;
+  const allHighs  = candles.map(k => k.high || k.close);
+  const allLows   = candles.map(k => k.low  || k.close);
+  const priceHigh = Math.max(...allHighs);
+  const priceLow  = Math.min(...allLows);
+  const range     = priceHigh - priceLow;
+  if (range <= 0) return null;
+
+  const zoneSize     = range / zones;
+  const volumeByZone = new Array(zones).fill(0);
+
+  for (const k of candles) {
+    const vol    = k.quoteVolume || 0;
+    const high   = k.high || k.close;
+    const low    = k.low  || k.close;
+    const kRange = high - low || zoneSize;
+    for (let z = 0; z < zones; z++) {
+      const zLow    = priceLow + z * zoneSize;
+      const zHigh   = zLow + zoneSize;
+      const overlap = Math.max(0, Math.min(high, zHigh) - Math.max(low, zLow));
+      volumeByZone[z] += vol * (overlap / kRange);
+    }
+  }
+
+  const pocIdx  = volumeByZone.indexOf(Math.max(...volumeByZone));
+  const poc     = priceLow + (pocIdx + 0.5) * zoneSize;
+  const totalVol = volumeByZone.reduce((a,b) => a+b, 0);
+
+  // Value Area = 70% объёма вокруг POC
+  let vaVol = volumeByZone[pocIdx], vaLow = pocIdx, vaHigh = pocIdx;
+  while (vaVol < totalVol * 0.7 && (vaLow > 0 || vaHigh < zones - 1)) {
+    const extLow  = vaLow  > 0       ? volumeByZone[vaLow - 1]  : 0;
+    const extHigh = vaHigh < zones-1 ? volumeByZone[vaHigh + 1] : 0;
+    if (extLow >= extHigh && vaLow > 0) { vaLow--;  vaVol += extLow; }
+    else if (vaHigh < zones - 1)        { vaHigh++; vaVol += extHigh; }
+    else break;
+  }
+
+  return {
+    poc: parseFloat(poc.toFixed(6)),
+    vah: parseFloat((priceLow + (vaHigh + 1) * zoneSize).toFixed(6)),
+    val: parseFloat((priceLow + vaLow * zoneSize).toFixed(6)),
+    ts:  Date.now(),
+  };
+}
 
 async function getWeeklyPOC(instId) {
   const cached = weeklyPocCache.get(instId);
-  if (cached && Date.now() - cached.ts < 3600000) return cached; // кэш 1 час
-
+  if (cached && Date.now() - cached.ts < 3600000) return cached;
   try {
-    // Берём 1H свечи за текущую неделю (168 часов)
     const k1h = await getOKXKlinesCached(instId, '1H', 168);
     if (k1h.length < 24) return null;
-
-    // Начало текущей недели (понедельник)
-    const now = new Date();
-    const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
-    const weekStart = Date.now() - dayOfWeek * 86400000 - now.getHours() * 3600000;
-
-    // Фильтруем свечи этой недели
-    const weekCandles = k1h.filter(k => k.ts >= weekStart);
-    if (weekCandles.length < 8) {
-      // Мало данных — берём последние 7 дней
-      weeklyPocCache.set(instId, null);
-      return null;
-    }
-
-    // Находим диапазон цен
-    const allHighs  = weekCandles.map(k => k.high || k.close);
-    const allLows   = weekCandles.map(k => k.low  || k.close);
-    const priceHigh = Math.max(...allHighs);
-    const priceLow  = Math.min(...allLows);
-    const range     = priceHigh - priceLow;
-    if (range <= 0) return null;
-
-    // Делим диапазон на 50 зон и считаем объём в каждой
-    const ZONES = 50;
-    const zoneSize = range / ZONES;
-    const volumeByZone = new Array(ZONES).fill(0);
-
-    for (const k of weekCandles) {
-      const vol  = k.quoteVolume || 0;
-      const high = k.high || k.close;
-      const low  = k.low  || k.close;
-      const kRange = high - low || zoneSize;
-
-      for (let z = 0; z < ZONES; z++) {
-        const zLow  = priceLow + z * zoneSize;
-        const zHigh = zLow + zoneSize;
-        const overlap = Math.max(0, Math.min(high, zHigh) - Math.max(low, zLow));
-        volumeByZone[z] += vol * (overlap / kRange);
-      }
-    }
-
-    // POC = зона с максимальным объёмом
-    const pocIdx  = volumeByZone.indexOf(Math.max(...volumeByZone));
-    const poc     = priceLow + (pocIdx + 0.5) * zoneSize;
-
-    // Value Area = 70% объёма вокруг POC
-    const totalVol = volumeByZone.reduce((a,b) => a+b, 0);
-    let vaVol = volumeByZone[pocIdx];
-    let vaLow = pocIdx, vaHigh = pocIdx;
-    while (vaVol < totalVol * 0.7 && (vaLow > 0 || vaHigh < ZONES - 1)) {
-      const extLow  = vaLow  > 0         ? volumeByZone[vaLow - 1]  : 0;
-      const extHigh = vaHigh < ZONES - 1 ? volumeByZone[vaHigh + 1] : 0;
-      if (extLow >= extHigh && vaLow > 0)         { vaLow--;  vaVol += extLow; }
-      else if (vaHigh < ZONES - 1)                { vaHigh++; vaVol += extHigh; }
-      else break;
-    }
-
-    const result = {
-      poc:  parseFloat(poc.toFixed(6)),
-      vah:  parseFloat((priceLow + (vaHigh + 1) * zoneSize).toFixed(6)),
-      val:  parseFloat((priceLow + vaLow * zoneSize).toFixed(6)),
-      ts:   Date.now(),
-    };
-    weeklyPocCache.set(instId, result);
+    const now        = new Date();
+    const dayOfWeek  = now.getDay() === 0 ? 6 : now.getDay() - 1;
+    const weekStart  = Date.now() - dayOfWeek * 86400000 - now.getHours() * 3600000;
+    const candles    = k1h.filter(k => k.ts >= weekStart);
+    if (candles.length < 8) { weeklyPocCache.set(instId, null); return null; }
+    const result = calcVolumeProfile(candles);
+    if (result) weeklyPocCache.set(instId, result);
     return result;
-  } catch(e) {
-    console.error('[WeeklyPOC]', instId, e.message);
-    return null;
-  }
+  } catch(e) { console.error('[WeeklyPOC]', instId, e.message); return null; }
+}
+
+async function getMonthlyPOC(instId) {
+  const cached = monthlyPocCache.get(instId);
+  if (cached && Date.now() - cached.ts < 7200000) return cached; // кэш 2 часа
+  try {
+    // 30 дней × 24 часа = 720 часов (берём 4H свечи = 180 свечей)
+    const k4h    = await getOKXKlinesCached(instId, '4H', 180);
+    if (k4h.length < 30) return null;
+    const result = calcVolumeProfile(k4h);
+    if (result) monthlyPocCache.set(instId, result);
+    console.log(`[MonthlyPOC] ${instId}: POC=${result?.poc}`);
+    return result;
+  } catch(e) { console.error('[MonthlyPOC]', instId, e.message); return null; }
 }
 
 // ── GEX (Gamma Exposure) из Deribit ──────────────────────────
@@ -4574,7 +4575,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.gexNote, sig.assetNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.mpocNote, sig.absNote, sig.gexNote, sig.assetNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
 
@@ -5748,23 +5749,73 @@ if (alreadyOpen) {
             const distToVAL = Math.abs(price - poc.val) / price * 100;
 
             if (distToPOC < 1.5) {
-              // Цена у POC — очень сильный уровень
-              sig.confidence = Math.min(sig.confidence + 12, 100);
-              sig.pocNote    = `🎯 Weekly POC: $${poc.poc.toFixed(3)} (${distToPOC.toFixed(1)}% away) → +12%`;
+              sig.confidence = Math.min(sig.confidence + 10, 100);
+              sig.pocNote    = `🎯 Weekly POC: $${poc.poc.toFixed(3)} (${distToPOC.toFixed(1)}% away) → +10%`;
             } else if (sig.direction === 'long' && price < poc.val && distToVAL < 2) {
-              // Цена ниже Value Area Low → возврат внутрь VA
-              sig.confidence = Math.min(sig.confidence + 8, 100);
-              sig.pocNote    = `📊 Ниже VAL $${poc.val.toFixed(3)} → возврат ожидается → +8%`;
+              sig.confidence = Math.min(sig.confidence + 7, 100);
+              sig.pocNote    = `📊 W.VAL $${poc.val.toFixed(3)} — возврат ожидается → +7%`;
             } else if (sig.direction === 'short' && price > poc.vah && distToVAH < 2) {
-              // Цена выше Value Area High → возврат внутрь VA
-              sig.confidence = Math.min(sig.confidence + 8, 100);
-              sig.pocNote    = `📊 Выше VAH $${poc.vah.toFixed(3)} → возврат ожидается → +8%`;
+              sig.confidence = Math.min(sig.confidence + 7, 100);
+              sig.pocNote    = `📊 W.VAH $${poc.vah.toFixed(3)} — возврат ожидается → +7%`;
             } else if (distToPOC < 3) {
-              sig.confidence = Math.min(sig.confidence + 5, 100);
-              sig.pocNote    = `📊 Weekly POC близко: $${poc.poc.toFixed(3)} → +5%`;
+              sig.confidence = Math.min(sig.confidence + 4, 100);
+              sig.pocNote    = `📊 Weekly POC близко: $${poc.poc.toFixed(3)} → +4%`;
             }
           }
         } catch(e) { /* POC не критичен */ }
+
+        // 9b. MONTHLY POC — самый торгуемый уровень за месяц (сильнее Weekly)
+        try {
+          const mpoc = await getMonthlyPOC(coin.instId);
+          if (mpoc) {
+            const price      = parseFloat(sig.price);
+            const distToMPOC = Math.abs(price - mpoc.poc) / price * 100;
+            const distToMVAH = Math.abs(price - mpoc.vah) / price * 100;
+            const distToMVAL = Math.abs(price - mpoc.val) / price * 100;
+
+            if (distToMPOC < 1.5) {
+              // У Monthly POC — очень сильный уровень
+              sig.confidence = Math.min(sig.confidence + 15, 100);
+              sig.mpocNote   = `🎯🎯 Monthly POC: $${mpoc.poc.toFixed(3)} (${distToMPOC.toFixed(1)}% away) → +15%`;
+            } else if (sig.direction === 'long' && price < mpoc.val && distToMVAL < 2) {
+              sig.confidence = Math.min(sig.confidence + 10, 100);
+              sig.mpocNote   = `📊 M.VAL $${mpoc.val.toFixed(3)} — сильная поддержка → +10%`;
+            } else if (sig.direction === 'short' && price > mpoc.vah && distToMVAH < 2) {
+              sig.confidence = Math.min(sig.confidence + 10, 100);
+              sig.mpocNote   = `📊 M.VAH $${mpoc.vah.toFixed(3)} — сильное сопротивление → +10%`;
+            } else if (distToMPOC < 3) {
+              sig.confidence = Math.min(sig.confidence + 6, 100);
+              sig.mpocNote   = `📊 Monthly POC близко: $${mpoc.poc.toFixed(3)} → +6%`;
+            }
+          }
+        } catch(e) { /* Monthly POC не критичен */ }
+
+        // 10. ABSORPTION FILTER — поглощение перед всплеском (из видео трейдера)
+        // Шаг 1: Absorption — высокий объём БЕЗ движения цены
+        // Шаг 2: Aggression — S1 Volume Spike (уже есть)
+        // Если видим оба шага → confidence +12%
+        try {
+          if (sig.strategy.includes('Volume Spike')) {
+            const k15 = await getOKXKlinesCached(coin.instId, '15m', 10);
+            if (k15.length >= 6) {
+              const recent  = k15.slice(-6, -1); // 5 свечей до сигнала
+              const avgVol  = recent.reduce((s,k) => s + (k.quoteVolume||0), 0) / recent.length;
+
+              // Ищем absorption: свечи с высоким объёмом (>1.5x avg) но маленьким движением (<0.3%)
+              const absorptionCandles = recent.filter(k => {
+                const vol  = k.quoteVolume || 0;
+                const move = Math.abs(k.close - k.open) / k.open * 100;
+                return vol > avgVol * 1.5 && move < 0.3;
+              });
+
+              if (absorptionCandles.length >= 1) {
+                // Нашли поглощение перед всплеском — это идеальная ситуация
+                sig.confidence = Math.min(sig.confidence + 12, 100);
+                sig.absNote    = `🧲 Absorption (${absorptionCandles.length} свеч) → Aggression → +12%`;
+              }
+            }
+          }
+        } catch(e) { /* Absorption не критичен */ }
 
         // 10. GEX — Gamma Exposure (только BTC и ETH)
         try {

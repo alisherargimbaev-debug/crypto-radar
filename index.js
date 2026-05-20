@@ -5664,8 +5664,12 @@ if (alreadyOpen) {
 
 // Correlation check — не открываем 2 позиции в одном секторе
 if (!store.observeMode) {
+  // Сначала чистим устаревшие сделки (старше 12 часов) — AutoExec мог закрыть на Bybit
+  const twelveHrsAgo = Date.now() - 12 * 60 * 60 * 1000;
+  store.openTrades = store.openTrades.filter(t => (t.ts || 0) > twelveHrsAgo);
+
   const corr = checkCorrelation(coin.instId);
-  if (!corr.ok) {
+  if (!corr.ok && corr.reason) {
     console.log(`[CORR] ${coin.instId} пропущен: ${corr.reason}`);
     continue;
   }

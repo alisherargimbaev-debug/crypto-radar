@@ -2308,61 +2308,59 @@ function renderBacktest(data, coin, period) {
   document.getElementById('bt-results').style.display='block';
 
   const signals = data.signals || [];
-  const wins    = signals.filter(s => s.outcome === 'tp1' || s.outcome === 'tp2');
-  const losses  = signals.filter(s => s.outcome === 'sl');
-  const wr      = signals.length ? Math.round(wins.length / signals.length * 100) : 0;
-  const pnl     = signals.reduce((s,t) => s + (t.pnl||0), 0);
-  const wc      = wr >= 55 ? 'green' : wr >= 40 ? 'yellow' : 'red';
-  const pc      = pnl >= 0 ? 'green' : 'red';
+  const wf      = data.walkForward || {};
+  const all     = wf.all || {};
+  const wins    = signals.filter(s => s.outcome==='tp1').length;
+  const losses  = signals.filter(s => s.outcome==='sl').length;
+  const wr      = all.wr || 0;
+  const wc      = wr>=55?'green':wr>=40?'yellow':'red';
+  const pc      = (all.pnl||0)>=0?'green':'red';
 
   document.getElementById('bt-stats').innerHTML = `
     <div class="stat-card blue"><div class="stat-label">Сигналов</div><div class="stat-value">${signals.length}</div><div class="stat-sub">${coin} / ${period}д</div></div>
     <div class="stat-card ${wc}"><div class="stat-label">Win Rate</div><div class="stat-value">${wr}%</div></div>
-    <div class="stat-card green"><div class="stat-label">Победы</div><div class="stat-value">${wins.length}</div></div>
-    <div class="stat-card red"><div class="stat-label">Потери</div><div class="stat-value">${losses.length}</div></div>
-    <div class="stat-card ${pc}"><div class="stat-label">Total PnL</div><div class="stat-value">${pnl>=0?'+':''}${pnl.toFixed(1)}%</div></div>`;
+    <div class="stat-card green"><div class="stat-label">Победы</div><div class="stat-value">${wins}</div></div>
+    <div class="stat-card red"><div class="stat-label">Потери</div><div class="stat-value">${losses}</div></div>
+    <div class="stat-card ${pc}"><div class="stat-label">Total PnL</div><div class="stat-value">${(all.pnl||0)>=0?'+':''}${all.pnl||0}%</div></div>
+    <div class="stat-card blue"><div class="stat-label">Slippage</div><div class="stat-value">${data.slippage||0.3}%</div><div class="stat-sub">учтён в расчёте</div></div>`;
 
-  // По стратегиям
-  const byS = {};
-  for (const s of signals) {
-    const k = s.strategy || '?';
-    if (!byS[k]) byS[k] = {wins:0,losses:0,total:0,pnl:0};
-    byS[k].total++;
-    if (s.outcome==='tp1'||s.outcome==='tp2') byS[k].wins++;
-    else if (s.outcome==='sl') byS[k].losses++;
-    byS[k].pnl += s.pnl||0;
-  }
-
-  document.getElementById('bt-strat-table').innerHTML = Object.entries(byS)
-    .sort((a,b) => b[1].total - a[1].total)
-    .map(([name,v]) => {
-      const wr = v.total ? Math.round(v.wins/v.total*100) : 0;
-      const wc = wr>=55?'var(--green)':wr>=40?'#e8a020':'var(--red)';
-      const bar = `<div style="height:3px;background:var(--border);border-radius:2px;margin-top:4px"><div style="height:100%;width:${wr}%;background:${wc};border-radius:2px"></div></div>`;
-      return `<div class="sig-row" style="padding:10px 0;border-bottom:1px solid var(--border)">
-        <div style="flex:2;font-family:'DM Mono',monospace;font-size:.55rem">${name}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim)">${v.total} сигн.</div>
-        <div style="font-family:'DM Mono',monospace;font-size:.55rem;color:${wc};min-width:50px;text-align:right">${wr}% WR</div>
-        <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:${v.pnl>=0?'var(--green)':'var(--red)'};min-width:60px;text-align:right">${v.pnl>=0?'+':''}${v.pnl.toFixed(1)}%</div>
-      </div>${bar}`;
-    }).join('') || '<div class="empty">НЕТ ДАННЫХ</div>';
+  // Walk-forward таблица
+  const stabColor = (data.stability?.color||'gray') === 'green' ? 'var(--green)' : (data.stability?.color==='yellow'?'#e8a020':'var(--red)');
+  document.getElementById('bt-strat-table').innerHTML = `
+    <div style="margin-bottom:16px;padding:12px;border:1px solid ${stabColor};border-radius:4px">
+      <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;margin-bottom:4px">WALK-FORWARD АНАЛИЗ</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:${stabColor};margin-bottom:12px">${data.stability?.label||'—'}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        ${['train','val','test'].map(p => {
+          const m = wf[p]||{};
+          const c = (m.wr||0)>=55?'var(--green)':(m.wr||0)>=40?'#e8a020':'var(--red)';
+          return `<div style="background:var(--panel2);padding:10px;border-radius:4px">
+            <div style="font-family:'DM Mono',monospace;font-size:.45rem;color:var(--dim);margin-bottom:4px">${m.label||p}</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:${c}">${m.wr||0}%</div>
+            <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)">${m.total||0} сигн · PF ${m.pf||'—'}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:${(m.pnl||0)>=0?'var(--green)':'var(--red)'}">${(m.pnl||0)>=0?'+':''}${m.pnl||0}%</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
 
   // Timeline
-  document.getElementById('bt-timeline').innerHTML = [...signals].reverse().map(s => {
-    const icon = s.outcome==='tp1'||s.outcome==='tp2' ? '✅' : s.outcome==='sl' ? '❌' : '⏰';
-    const dir  = s.direction==='long' ? '🟢' : '🔴';
+  document.getElementById('bt-timeline').innerHTML = [...signals].slice(0,50).map(s => {
+    const icon = s.outcome==='tp1'?'✅':s.outcome==='sl'?'❌':'⏰';
+    const dir  = s.direction==='long'?'🟢':'🔴';
     const date = new Date(s.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-    const pnlStr = s.pnl!=null ? (s.pnl>=0?'+':'')+s.pnl.toFixed(2)+'%' : '';
     const pnlCls = (s.pnl||0)>=0?'c-green':'c-red';
+    const slipNote = s.slippage?`+${s.slippage}% slip`:'';
     return `<div class="sig-row" style="padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);min-width:90px">${date}</div>
       <div>${dir}</div>
       <div style="font-family:'DM Mono',monospace;font-size:.52rem;flex:1">${s.strategy?.split(' ').slice(0,3).join(' ')||'?'}</div>
-      <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">$${s.price?.toFixed?.(4)||s.price}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.45rem;color:var(--dim)">${slipNote}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">$${s.price}</div>
       <div>${icon}</div>
-      <div class="sig-conf ${pnlCls}">${pnlStr}</div>
+      <div class="sig-conf ${pnlCls}">${(s.pnl||0)>=0?'+':''}${s.pnl||0}%</div>
     </div>`;
-  }).join('') || '<div class="empty">НЕТ СИГНАЛОВ</div>';
+  }).join('')||'<div class="empty">НЕТ СИГНАЛОВ</div>';
 }
 
 loadOverview();

@@ -11,6 +11,15 @@ try {
   console.log('[STOCKS] Engine не найден — stocks отключён');
 }
 
+// Delta Tracker — реальный Delta Profile через OKX WebSocket
+let deltaTracker = null;
+try {
+  deltaTracker = require('./delta-tracker');
+  console.log('[DELTA] Tracker загружен ✅');
+} catch(e) {
+  console.log('[DELTA] Tracker не найден:', e.message);
+}
+
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -4575,7 +4584,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.mpocNote, sig.absNote, sig.gexNote, sig.assetNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.mpocNote, sig.absNote, sig.deltaNote, sig.gexNote, sig.assetNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
 
@@ -5816,6 +5825,55 @@ if (alreadyOpen) {
             }
           }
         } catch(e) { /* Absorption не критичен */ }
+
+        // 11. REAL DELTA — анализ через WebSocket trade stream
+        try {
+          if (deltaTracker?.isReady()) {
+            // Подписываем монету если ещё не подписаны
+            deltaTracker.addCoin(coin.instId);
+
+            const d15 = deltaTracker.getDelta(coin.instId, 15);
+            if (d15 && d15.tradesCount >= 10) {
+              const ratio = d15.deltaRatio; // -1 до +1
+
+              // Delta подтверждает направление сигнала
+              if (sig.direction === 'long' && ratio > 0.2) {
+                sig.confidence  = Math.min(sig.confidence + 10, 100);
+                sig.deltaNote   = `📊 Delta: +${(ratio*100).toFixed(0)}% покупок → подтверждение → +10%`;
+              } else if (sig.direction === 'short' && ratio < -0.2) {
+                sig.confidence  = Math.min(sig.confidence + 10, 100);
+                sig.deltaNote   = `📊 Delta: ${(ratio*100).toFixed(0)}% продаж → подтверждение → +10%`;
+              }
+
+              // Delta противоречит сигналу — снижаем
+              if (sig.direction === 'long' && ratio < -0.3) {
+                sig.confidence  = Math.max(sig.confidence - 10, 0);
+                sig.deltaNote   = `⚠️ Delta: продавцы доминируют (${(ratio*100).toFixed(0)}%) → -10%`;
+              } else if (sig.direction === 'short' && ratio > 0.3) {
+                sig.confidence  = Math.max(sig.confidence - 10, 0);
+                sig.deltaNote   = `⚠️ Delta: покупатели доминируют (+${(ratio*100).toFixed(0)}%) → -10%`;
+              }
+
+              // Absorption из реального delta
+              if (d15.absorption && d15.absorptionZones >= 2) {
+                sig.confidence = Math.min(sig.confidence + 8, 100);
+                sig.deltaNote  = (sig.deltaNote || '') + ` 🧲 Real Absorption (${d15.absorptionZones} зоны) → +8%`;
+              }
+
+              // Delta divergence
+              const div = deltaTracker.getDeltaDivergence(coin.instId);
+              if (div) {
+                if (div.type === 'bullish' && sig.direction === 'long') {
+                  sig.confidence = Math.min(sig.confidence + 12, 100);
+                  sig.deltaNote  = `🔄 Bullish Delta Divergence → разворот вверх → +12%`;
+                } else if (div.type === 'bearish' && sig.direction === 'short') {
+                  sig.confidence = Math.min(sig.confidence + 12, 100);
+                  sig.deltaNote  = `🔄 Bearish Delta Divergence → разворот вниз → +12%`;
+                }
+              }
+            }
+          }
+        } catch(e) { /* Delta не критичен */ }
 
         // 10. GEX — Gamma Exposure (только BTC и ETH)
         try {
@@ -7657,6 +7715,21 @@ setTimeout(() => {
   } catch(e) { console.error('[TG] deleteWebhook error:', e.message); }
   await new Promise(r => setTimeout(r, 2000));
   pollTelegramUpdates();
+
+  // Запускаем Delta Tracker — подписываемся на топ монеты
+  if (deltaTracker) {
+    const TOP_DELTA_COINS = [
+      'BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP',
+      'BNB-USDT-SWAP', 'XRP-USDT-SWAP', 'DOGE-USDT-SWAP',
+      'TON-USDT-SWAP', 'ADA-USDT-SWAP', 'AVAX-USDT-SWAP',
+      'LINK-USDT-SWAP', 'DOT-USDT-SWAP', 'NEAR-USDT-SWAP',
+      'SUI-USDT-SWAP', 'APT-USDT-SWAP', 'OP-USDT-SWAP',
+      'ARB-USDT-SWAP', 'INJ-USDT-SWAP', 'TIA-USDT-SWAP',
+      'WLD-USDT-SWAP', 'HYPE-USDT-SWAP',
+    ];
+    deltaTracker.start(TOP_DELTA_COINS);
+    console.log('[DELTA] Tracker запущен — подписан на', TOP_DELTA_COINS.length, 'монет');
+  }
 })();
 
 if (autoExecSignals) {

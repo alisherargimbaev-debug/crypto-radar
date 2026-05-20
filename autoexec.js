@@ -143,7 +143,16 @@ async function handleSignal(signal) {
     resetDailyPnlIfNeeded();
     if (dailyPnl <= DAILY_LOSS_LIMIT) {
       console.log(`${tag} Daily loss limit hit: ${dailyPnl.toFixed(2)}%`);
-      await notify(`🛑 Дневной лимит потерь достигнут (${dailyPnl.toFixed(2)}%). Торговля остановлена.`);
+      await notify(`🛑 Дневной лимит потерь достигнут (${dailyPnl.toFixed(2)}%). Торговля остановлена до завтра.`);
+      enabled = false;
+      return;
+    }
+
+    // Недельный лимит потерь -8%
+    const weeklyPnl = getWeeklyPnl();
+    if (weeklyPnl <= -8.0) {
+      console.log(`${tag} Weekly loss limit hit: ${weeklyPnl.toFixed(2)}%`);
+      await notify(`🛑 НЕДЕЛЬНЫЙ лимит -8% достигнут (${weeklyPnl.toFixed(2)}%). Торговля остановлена до понедельника.`);
       enabled = false;
       return;
     }
@@ -597,6 +606,17 @@ function countDecimals(num) {
 // Ключ дня для сброса дневного PnL
 function todayKey() {
   return new Date().toISOString().split('T')[0];
+}
+
+// Недельный PnL
+let weeklyPnlStart = { value: 0, weekNum: 0 };
+function getWeeklyPnl() {
+  const now    = new Date();
+  const weekNum = Math.floor(now.getTime() / (7 * 24 * 3600 * 1000));
+  if (weeklyPnlStart.weekNum !== weekNum) {
+    weeklyPnlStart = { value: dailyPnl, weekNum };
+  }
+  return dailyPnl - weeklyPnlStart.value;
 }
 
 function resetDailyPnlIfNeeded() {

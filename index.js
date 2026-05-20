@@ -6584,6 +6584,9 @@ async function checkTrailingStop() {
 //  ТАЙМЕР НА СДЕЛКУ — напоминание если сделка висит долго
 // ============================================================
 async function checkTradeTimers() {
+  // Когда AutoExec активен — он сам управляет позициями на Bybit
+  // Напоминания не нужны — store.openTrades может содержать уже закрытые сделки
+  if (autoExecSignals) return;
   if (!store.openTrades.length) return;
 
   for (const trade of store.openTrades) {

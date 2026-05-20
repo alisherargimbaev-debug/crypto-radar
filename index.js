@@ -2682,15 +2682,16 @@ function calcPriceChangePct(k) {
 // ── DVOL — Deribit Volatility Index (крипто аналог VIX) ──────
 let dvolCache = { btc: null, eth: null, ts: 0 };
 async function getDVOL() {
-  if (Date.now() - dvolCache.ts < 300000) return dvolCache; // кэш 5 минут
+  if (Date.now() - dvolCache.ts < 300000) return dvolCache;
   try {
-    const [btcRes, ethRes] = await Promise.all([
-      httpGet('https://www.deribit.com/api/v2/public/get_index?currency=BTC'),
-      httpGet('https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=BTC&start_timestamp=' + (Date.now()-3600000) + '&end_timestamp=' + Date.now() + '&resolution=3600'),
-    ]);
-    const dvol = ethRes?.result?.data?.[0]?.[4] || null; // close value
+    const res = await httpGet(
+      'https://www.deribit.com/api/v2/public/get_volatility_index_data' +
+      '?currency=BTC&start_timestamp=' + (Date.now() - 3600000) +
+      '&end_timestamp=' + Date.now() + '&resolution=3600'
+    );
+    const dvol = res?.result?.data?.slice(-1)?.[0]?.[4] || null;
     dvolCache = { btc: dvol, ts: Date.now() };
-    if (dvol) console.log(`[DVOL] BTC Volatility: ${dvol}`);
+    if (dvol) console.log(`[DVOL] BTC: ${dvol}`);
     return dvolCache;
   } catch(e) {
     console.error('[DVOL] error:', e.message);

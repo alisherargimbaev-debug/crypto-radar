@@ -1459,7 +1459,7 @@ function buildModulesText(chatId) {
     `⚙️ ТВОИ ПОДПИСКИ\n━━━━━━━━━━━━━━━━━━━━━━\n` +
     `${ico(s.anomalies)} Аномалии (OKX 24h ≥3%)\n` +
     `${ico(s.news)} Новости (RSS + AI)\n` +
-    `${ico(s.whales)} Киты (OKX + copytrader HL/BN)\n\n` +
+    `${ico(s.whales)} Киты (Hyperliquid + Bybit)\n\n` +
     `👆 Нажми кнопку чтобы вкл/выкл.\n` +
     `ℹ️ Сигналы сделок приходят всегда.`
   );

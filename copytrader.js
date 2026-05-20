@@ -6,11 +6,8 @@
 //  Публичные источники (без API-ключей):
 //    • Hyperliquid leaderboard — https://stats-data.hyperliquid.xyz/Mainnet/leaderboard
 //    • Hyperliquid позиции     — POST https://api.hyperliquid.xyz/info
-//                                body: {"type":"clearinghouseState","user":"0x..."}
-//    • Binance leaderboard     — POST https://www.binance.com/bapi/futures/v1/
-//                                public/future/leaderboard/getLeaderboardRank
-//                                (неофициальный endpoint — может отвалиться без предупреждения)
-//    • Binance позиции         — POST .../leaderboard/getOtherPosition
+//    • Bybit leaderboard       — https://api.bybit.com/v5/leaderboard/get-rank
+//    • Bybit позиции           — https://api.bybit.com/v5/leaderboard/get-positions
 //
 //  Env: TELEGRAM_TOKEN, CHAT_ID, CHAT_ID_2 (всё берётся из уже загруженного .env)
 // ════════════════════════════════════════════════════════════════════════
@@ -30,7 +27,7 @@ if (!TELEGRAM_TOKEN || !CHAT_IDS.length) {
 const MIN_PNL_MONTH_PCT = 100;                  // PnL за месяц, % (было 50 — слишком много трейдеров)
 const MIN_ACCOUNT_USD   = 250_000;              // минимальный размер аккаунта трейдера
 const MIN_POSITION_USD  = 1_000_000;            // фильтр размера позиции (было 500k — много шума)
-const MAX_TRACKED       = 15;                   // сколько трейдеров держим одновременно
+const MAX_TRACKED       = 30;  // расширили с 15 до 30                   // сколько трейдеров держим одновременно
 const CHECK_INTERVAL_MS      = 5 * 60 * 1000;   // каждые 5 минут (было 2 — слишком часто)
 const LEADERBOARD_REFRESH_MS = 60 * 60 * 1000;  // раз в час — обновляем список трейдеров
 const ALERT_COOLDOWN_MS      = 8 * 60 * 60 * 1000; // не чаще 1 алерта на трейдера в 8ч (было 4)
@@ -46,7 +43,8 @@ const TOP50_COINS = new Set([
 ]);
 
 // Выключить Binance можно одним флагом, если вдруг endpoint заблокируют
-const ENABLE_BINANCE = true;
+const ENABLE_BINANCE = false; // Binance API сломан → используем Bybit
+const ENABLE_BYBIT   = true;
 
 // ── STATE ───────────────────────────────────────────────────────────────
 const state = {
@@ -270,74 +268,80 @@ async function fetchHyperliquidPositions(address) {
 //  BINANCE FUTURES LEADERBOARD (неофициальный bapi, работает стабильно,
 //  но может быть заблокирован Binance без предупреждения)
 // ══════════════════════════════════════════════════════════════════════
-async function fetchBinanceLeaderboard() {
-  if (!ENABLE_BINANCE) return [];
-  const url = 'https://www.binance.com/bapi/futures/v1/public/future/leaderboard/getLeaderboardRank';
-  const body = {
-    isShared: true,         // только те, кто расшарил позиции
-    periodType: 'MONTHLY',
-    statisticsType: 'ROI',
-    tradeType: 'PERPETUAL', // USDⓈ-M перпетуалы
-    isTrader: false,
-  };
-  const data = await httpPost(url, body);
-  if (!data?.data || !Array.isArray(data.data)) return [];
+async function fetchBybitLeaderboard() {
+  if (!ENABLE_BYBIT) return [];
+  try {
+    const url = 'https://api.bybit.com/v5/leaderboard/get-rank';
+    const params = new URLSearchParams({
+      category:  'linear',
+      period:    'monthly',
+      rankType:  'pnl',
+      limit:     '100',
+    });
+    const data = await httpGet(url + '?' + params.toString());
+    if (!data?.result?.list) return [];
 
-  const out = [];
-  for (const r of data.data) {
-    try {
-      if (!r.positionShared) continue;
-      // roiValue может прийти как доля (0.65 = 65%) или уже как процент (65)
-      const raw = parseFloat(r.roiValue || 0);
-      const roi = Math.abs(raw) <= 100 ? raw * 100 : raw;
-      if (!isFinite(roi) || roi < MIN_PNL_MONTH_PCT) continue;
+    const out = [];
+    for (const r of data.result.list) {
+      try {
+        const pnlUsd = parseFloat(r.pnl || 0);
+        if (pnlUsd < MIN_ACCOUNT_USD) continue;
+        if (!r.isPositionShared) continue;
 
-      const pnlVal = parseFloat(r.pnlValue || 0);
-      if (pnlVal < MIN_ACCOUNT_USD) continue;
-
-      out.push({
-        source: 'binance',
-        address: r.encryptedUid,
-        name: r.nickName || shortAddr(r.encryptedUid),
-        wr: null,
-        pnlMonth: Math.round(roi),
-        accountValue: pnlVal,
-      });
-    } catch(_) { /* skip */ }
+        out.push({
+          source:       'bybit',
+          address:      r.userId,
+          name:         r.nickName || 'Bybit#' + String(r.userId).slice(-6),
+          wr:           null,
+          pnlMonth:     Math.round(pnlUsd),
+          accountValue: pnlUsd,
+        });
+      } catch(_) { /* skip */ }
+    }
+    out.sort((a,b) => b.pnlMonth - a.pnlMonth);
+    console.log('[COPYTRADER] Bybit лидерборд:', out.length, 'трейдеров');
+    return out.slice(0, MAX_TRACKED);
+  } catch(e) {
+    console.error('[COPYTRADER] Bybit leaderboard error:', e.message);
+    return [];
   }
-  out.sort((a,b) => b.pnlMonth - a.pnlMonth);
-  return out.slice(0, MAX_TRACKED);
 }
 
-async function fetchBinancePositions(uid) {
-  if (!ENABLE_BINANCE) return null;
-  const url = 'https://www.binance.com/bapi/futures/v1/public/future/leaderboard/getOtherPosition';
-  const data = await httpPost(url, { encryptedUid: uid, tradeType: 'PERPETUAL' });
-  const list = data?.data?.otherPositionRetList || data?.data?.otherPositions;
-  if (!Array.isArray(list)) return null;
+async function fetchBybitPositions(userId) {
+  if (!ENABLE_BYBIT) return null;
+  try {
+    const url = 'https://api.bybit.com/v5/leaderboard/get-positions';
+    const params = new URLSearchParams({ category: 'linear', uid: userId });
+    const data = await httpGet(url + '?' + params.toString());
+    const list = data?.result?.list;
+    if (!Array.isArray(list)) return null;
 
-  const positions = new Map();
-  for (const p of list) {
-    const symbol = String(p.symbol || '');
-    const coin   = symbol.replace(/USDT$|BUSD$|USDC$/, '');
-    if (!TOP50_COINS.has(coin)) continue;
-    const amt   = parseFloat(p.amount);
-    const entry = parseFloat(p.entryPrice);
-    const mark  = parseFloat(p.markPrice || entry);
-    if (!amt || !entry) continue;
-    const sizeUsd = Math.abs(amt * mark);
-    if (sizeUsd < MIN_POSITION_USD) continue;
+    const positions = new Map();
+    for (const p of list) {
+      const symbol = String(p.symbol || '');
+      const coin   = symbol.replace(/USDT$/, '');
+      if (!TOP50_COINS.has(coin)) continue;
+      const size  = parseFloat(p.size || 0);
+      const entry = parseFloat(p.entryPrice || 0);
+      const mark  = parseFloat(p.markPrice || entry);
+      if (!size || !entry) continue;
+      const sizeUsd = Math.abs(size * mark);
+      if (sizeUsd < MIN_POSITION_USD) continue;
 
-    positions.set(coin, {
-      coin,
-      side: amt > 0 ? 'LONG' : 'SHORT',
-      szi: amt,
-      sizeUsd,
-      entryPx: entry,
-      leverage: parseFloat(p.leverage || 1),
-    });
+      positions.set(coin, {
+        coin,
+        side:     p.side === 'Buy' ? 'LONG' : 'SHORT',
+        szi:      size,
+        sizeUsd,
+        entryPx:  entry,
+        leverage: parseFloat(p.leverage || 1),
+      });
+    }
+    return positions;
+  } catch(e) {
+    console.error('[COPYTRADER] Bybit positions error:', e.message);
+    return null;
   }
-  return positions;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -398,7 +402,7 @@ async function refreshLeaderboards() {
   console.log('[COPYTRADER] обновляю leaderboard...');
   const [hl, bn] = await Promise.all([
     fetchHyperliquidLeaderboard().catch(e => (console.error('[HL LB]', e.message), [])),
-    fetchBinanceLeaderboard().catch(e => (console.error('[BN LB]', e.message), [])),
+    fetchBybitLeaderboard().catch(e => (console.error('[BYBIT LB]', e.message), [])),
   ]);
   const combined = [...hl, ...bn];
 
@@ -431,7 +435,7 @@ async function pollPositions() {
     try {
       const fresh = whale.source === 'hyperliquid'
         ? await fetchHyperliquidPositions(whale.address)
-        : await fetchBinancePositions(whale.address);
+        : await fetchBybitPositions(whale.address);
 
       if (!fresh) continue;
       const old = whale.positions || new Map();

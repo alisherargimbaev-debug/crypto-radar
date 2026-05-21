@@ -5675,7 +5675,9 @@ if (!store.observeMode) {
   }
 
   // Liquidity filter — проскальзывание убивает edge на малых монетах
-  const estPositionUsd = store.accountBalance * store.riskPct / 100 / 0.015 * store.leverage;
+  // Используем реальное плечо AutoExec (5x) а не store.leverage (10x)
+  const autoLeverage = parseInt(process.env.AUTO_DEFAULT_LEVERAGE) || 5;
+  const estPositionUsd = store.accountBalance * store.riskPct / 100 / 0.015 * autoLeverage;
   const liq = checkLiquidity(coin, estPositionUsd);
   if (!liq.ok) {
     console.log(`[LIQ] ${coin.instId} пропущен: ${liq.reason}`);

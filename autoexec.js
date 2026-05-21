@@ -381,18 +381,39 @@ function startMonitor() {
 // ─── Обработка закрытой позиции ──────────────────────────────
 async function handlePositionClosed(symbol, tracked) {
   try {
-    // Получаем данные о закрытом PnL — ищем совпадение по времени открытия
-    const closedPnlList = await bybit.getClosedPnl(symbol, 5);
-    
-    // Ищем сделку которая открылась после нашего входа
-    const openedTs = tracked.openedAt ? new Date(tracked.openedAt).getTime() : 0;
-    const closedPnl = closedPnlList?.find(p => {
-      const createdTs = parseFloat(p.createdTime || p.updatedTime || 0);
-      return createdTs > openedTs - 60000; // в пределах 1 минуты от открытия
-    }) || closedPnlList?.[0];
+    // Получаем последние 10 закрытых сделок по символу
+    const closedPnlList = await bybit.getClosedPnl(symbol, 10);
+
+    // Ищем сделку которая:
+    // 1. Закрылась ПОСЛЕ того как мы открыли позицию
+    // 2. Цена входа совпадает с нашей (с допуском 0.5%)
+    const openedTs   = tracked.openedAt ? new Date(tracked.openedAt).getTime() : 0;
+    const entryPrice = tracked.entryPrice || 0;
+
+    let closedPnl = closedPnlList?.find(p => {
+      const closeTs    = parseFloat(p.updatedTime || p.createdTime || 0);
+      const pAvgEntry  = parseFloat(p.avgEntryPrice || 0);
+      const entryMatch = entryPrice > 0
+        ? Math.abs(pAvgEntry - entryPrice) / entryPrice < 0.005 // допуск 0.5%
+        : true;
+      return closeTs > openedTs && entryMatch;
+    });
+
+    // Fallback — берём первую закрытую после открытия нашей позиции
+    if (!closedPnl) {
+      closedPnl = closedPnlList?.find(p => {
+        const closeTs = parseFloat(p.updatedTime || p.createdTime || 0);
+        return closeTs > openedTs;
+      });
+    }
+
+    // Последний fallback — самая свежая
+    if (!closedPnl) closedPnl = closedPnlList?.[0];
 
     const pnl       = closedPnl ? parseFloat(closedPnl.closedPnl) : 0;
     const exitPrice = closedPnl ? parseFloat(closedPnl.avgExitPrice) : 0;
+
+    console.log(`[AutoExec][Close] ${symbol} entry=${entryPrice} exit=${exitPrice} pnl=${pnl} (source: ${closedPnl?.avgEntryPrice || 'fallback'})`);
 
     // Обновляем дневной PnL
     const balance = await bybit.getBalance();

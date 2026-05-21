@@ -126,11 +126,11 @@ const MIN_VOLUME_24H = 10000000;
 function checkLiquidity(coin, positionUsd) {
   const vol24h = coin.volume24h || 0;
   if (vol24h <= 0) return { ok: true };
-  const maxPos = vol24h * 0.001; // 0.1% суточного объёма
+  const maxPos = vol24h * 0.005; // 0.5% суточного объёма (было 0.1%)
   if (positionUsd > maxPos) {
     return {
       ok: false,
-      reason: `Позиция $${Math.round(positionUsd)} > 0.1% объёма монеты ($${Math.round(maxPos)}). Высокое проскальзывание!`,
+      reason: `Позиция $${Math.round(positionUsd)} > 0.5% объёма монеты ($${Math.round(maxPos)}). Высокое проскальзывание!`,
     };
   }
   return { ok: true };

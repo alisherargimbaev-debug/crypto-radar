@@ -6130,11 +6130,15 @@ if (!store.observeMode) {
       logSignal(best);
 
       if (store.observeMode || best.paperOnly) {
-        // paper mode или paper-only стратегия (S16, S17)
+        // paper mode или paper-only стратегия
         savePaperTrade(best);
-        if (!best.paperOnly) {
+
+        // В observe mode — уведомляем по ВСЕМ стратегиям
+        // Это позволяет увидеть какие стратегии работают
+        if (store.observeMode) {
           await sendTelegram(buildSignalAlert(best));
-        } else {
+        } else if (best.paperOnly) {
+          // Не в observe mode, но paper-only — тихо логируем
           console.log(`[PAPER ONLY] ${best.instId} ${best.strategy} conf=${best.confidence}%`);
         }
       } else {

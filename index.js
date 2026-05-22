@@ -1743,7 +1743,7 @@ async function validateSignalWithAI(sig, fng, session) {
   const prompt =
     `Ты агент риск-менеджер торгового бота. Оцени сигнал кратко.
 
-Сигнал: ${sig.strategy} ${sig.direction.toUpperCase()} ${sig.instId.replace('-USDT-SWAP','')}
+Сигнал: ${sig.strategy} ${sig.direction.toUpperCase()} ${(sig.instId||'').replace('-USDT-SWAP','')}
 Цена: $${sig.price} | SL: $${sig.sl} | TP1: $${sig.tp1}
 Confidence: ${sig.confidence}%
 Метрики: ${sig.metrics}
@@ -1869,7 +1869,7 @@ async function getOKXCandidates() {
     if (ticker && parseFloat(ticker.last) > 0) {
       topCoins.push({
         instId:      ticker.instId,
-        symbol:      ticker.instId.replace('-USDT-SWAP',''),
+        symbol:      (ticker.instId||'').replace('-USDT-SWAP',''),
         price:       parseFloat(ticker.last),
         change24h:   (parseFloat(ticker.last) - parseFloat(ticker.open24h)) / parseFloat(ticker.open24h) * 100,
         volume24h:   parseFloat(ticker.volCcy24h) * parseFloat(ticker.last),
@@ -1937,44 +1937,7 @@ async function getCurrentPrice(instId) {
 
 // Кэш ликвидаций OKX (обновляем раз в 60 секунд)
 const liquidationCache = { data: null, ts: 0 };
-async function getOKXLiquidations() {
-  const now = Date.now();
-  if (liquidationCache.data && now - liquidationCache.ts < 300000) {
-    return liquidationCache.data; // кэш 5 минут
-  }
-  // API не работает — возвращаем пустой кэш без запроса
-  console.log('[S15] liquidation-orders API недоступен — S15 пропущена');
-  liquidationCache.data = {};
-  liquidationCache.ts = now;
-  return {};
-}
 
-// Получить недавние крупные действия китов (через copytrader если есть)
-function getRecentWhaleActions() {
-  try {
-    if (typeof copytrader?.getRecentActions === 'function') {
-      return copytrader.getRecentActions(15) || []; // последние 15 минут
-    }
-    if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
-      const snap = copytrader.getTrackedWhalesSnapshot();
-      const positions = snap?.positions || [];
-      const now = Date.now();
-      // Фильтруем свежие позиции (открыты в последние 15 минут)
-      return positions.filter(p => {
-        const ts = p.openedAt || p.ts || p.timestamp || 0;
-        return ts > 0 && (now - ts) < 15 * 60 * 1000;
-      });
-    }
-  } catch(e) {
-    console.error('[S14] getRecentWhaleActions:', e.message);
-  }
-  return [];
-}
-
-
-// ============================================================
-//  FEAR & GREED
-// ============================================================
 async function getFearAndGreed() {
   if (store.fngCache && (Date.now() - store.fngTs) / 60000 < 60) return store.fngCache;
   const data = await httpGet('https://api.alternative.me/fng/?limit=1');
@@ -4736,7 +4699,7 @@ async function saveOpenTrade(sig) {
   // В памяти
   store.openTrades.push({
     ts: sig.ts, instId: sig.instId,
-    symbol: sig.instId.replace('-USDT-SWAP',''),
+    symbol: (sig.instId||'').replace('-USDT-SWAP',''),
     strategy: sig.strategy, direction: sig.direction,
     price: sig.price, sl: sig.sl, tp1: sig.tp1,
     tp2: sig.tp2, confidence: sig.confidence
@@ -4748,7 +4711,7 @@ async function saveOpenTrade(sig) {
     await supabase.from('open_trades').insert({
       ts:         sig.ts,
       inst_id:    sig.instId,
-      symbol:     sig.instId.replace('-USDT-SWAP',''),
+      symbol:     (sig.instId||'').replace('-USDT-SWAP',''),
       strategy:   sig.strategy,
       direction:  sig.direction,
       price:      sig.price,
@@ -4773,7 +4736,7 @@ async function logSignal(sig) {
     await supabase.from('signals').insert({
       ts:         sig.ts,
       inst_id:    sig.instId,
-      symbol:     sig.instId.replace('-USDT-SWAP',''),
+      symbol:     (sig.instId||'').replace('-USDT-SWAP',''),
       strategy:   sig.strategy,
       direction:  sig.direction,
       signal:     sig.signal,
@@ -6147,7 +6110,7 @@ if (!store.observeMode) {
         // AutoExec emit — ПЕРВЫМ, до Telegram (экономим 1-2 сек)
         if (autoExecSignals) {
           try {
-            const sym = best.instId.replace('-USDT-SWAP','USDT').replace(/-/g,'');
+            const sym = (best.instId||'').replace('-USDT-SWAP','USDT').replace(/-/g,'');
             const ep  = parseFloat(best.price);
             const slp = Math.abs((parseFloat(best.sl) - ep) / ep * 100);
             const tpp = Math.abs((parseFloat(best.tp1) - ep) / ep * 100);
@@ -6529,7 +6492,7 @@ const CORR_SECTORS = {
 
 function checkCorrelation(newSig) {
   if (!store.openTrades?.length) return { allowed: true };
-  const newSymbol = newSig.instId.replace('-USDT-SWAP', '');
+  const newSymbol = (newSig.instId||'').replace('-USDT-SWAP', '');
   const newSector = CORR_SECTORS[newSymbol] || 'other';
   const newDir    = newSig.direction;
 
@@ -6920,8 +6883,8 @@ async function checkOutcomes() {
       trade.pnl        = parseFloat(pnlPct.toFixed(2));
 
       const timeoutMsg = pnlPct > 0.3
-        ? `⏰ ${trade.instId.replace('-USDT-SWAP','')} — Таймаут 8ч, закрыто в плюсе +${pnlPct.toFixed(2)}% ✅`
-        : `⏰ ${trade.instId.replace('-USDT-SWAP','')} — Таймаут 8ч, идея не сработала (${pnlPct.toFixed(2)}%). Закрыто.`;
+        ? `⏰ ${(trade.instId||'').replace('-USDT-SWAP','')} — Таймаут 8ч, закрыто в плюсе +${pnlPct.toFixed(2)}% ✅`
+        : `⏰ ${(trade.instId||'').replace('-USDT-SWAP','')} — Таймаут 8ч, идея не сработала (${pnlPct.toFixed(2)}%). Закрыто.`;
       await sendTelegram(timeoutMsg);
 
       updateDailyPnl(trade.pnl, trade.outcome);
@@ -6971,7 +6934,7 @@ async function checkOutcomes() {
           trade.sl = entry.toFixed(4); // SL → безубыток
           trade.trailingActive = true;
           console.log(`[BREAKEVEN] ${trade.instId} LONG → SL в безубыток ($${entry.toFixed(4)})`);
-          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
+          await sendTelegram(`🛡 ${(trade.instId||"").replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
         }
       } else {
         const oneR = entry - slDist; // -1R (для шорта)
@@ -6979,7 +6942,7 @@ async function checkOutcomes() {
           trade.sl = entry.toFixed(4);
           trade.trailingActive = true;
           console.log(`[BREAKEVEN] ${trade.instId} SHORT → SL в безубыток ($${entry.toFixed(4)})`);
-          await sendTelegram(`🛡 ${trade.instId.replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
+          await sendTelegram(`🛡 ${(trade.instId||"").replace('-USDT-SWAP','')} — SL передвинут в безубыток (+1R достигнут). Сделка теперь безрисковая.`);
         }
       }
     }
@@ -7663,7 +7626,6 @@ cron.schedule('*/15 * * * *', () => {
   checkTrailingStop().catch(e => console.error('checkTrailingStop error:', e.message));
 });
 // Каждые 30 минут — RSS новости
-cron.schedule('*/30 * * * *', () => { checkRSSNews().catch(e => console.error('RSS error:', e.message)); });
 
 // Каждый час (в 00 минут)
 cron.schedule('0 */2 * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });
@@ -7695,13 +7657,11 @@ cron.schedule('0 16 * * *', async () => {
 });
 
 // Каждые 2 часа — whale активность
-cron.schedule('0 */2 * * *', () => { checkWhales().catch(e => console.error('checkWhales error:', e.message)); });
 
 // Каждый день в 07:00 UTC = 12:00 Алматы
 cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('dailyReport error:', e.message)); });
 
 // Вечерний дебрифинг — 16:00 UTC = 21:00 Алматы
-cron.schedule('0 16 * * *', () => { eveningDebrief().catch(e => console.error('eveningDebrief error:', e.message)); });
 
 // Агент Психолог — проверяет после каждого закрытия сделки (каждые 15 мин)
 // Психолог — раз в день в 20:00 Алматы (15:00 UTC)

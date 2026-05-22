@@ -251,7 +251,7 @@ if (!global.dailyPnlTracker) {
 function checkPortfolioRisk(sig) {
   if (!sig || !sig.instId) return { allowed: false, reason: 'Нет instId в сигнале' };
   const open = store.openTrades;
-  const symbol = sig.instId.replace('-USDT-SWAP', '');
+  const symbol = (sig.instId||'').replace('-USDT-SWAP', '');
 
   // ── EMERGENCY STOP ────────────────────────────────────────
   if (store.emergencyStop) {
@@ -1432,7 +1432,7 @@ async function handleTelegramCommand(text, chatId) {
     let bybitBalance = null;
     if (autoExecSignals) {
       try {
-        const { BybitClient } = require('./bybit-client') || {};
+        const BybitClient = require('./bybit-client');
         // Баланс через autoexec
       } catch(e) {}
     }
@@ -1847,7 +1847,7 @@ async function getOKXCandidates() {
   const topCoins = allTickers
     .map(t => ({
       instId:    t.instId,
-      symbol:    t.instId.replace('-USDT-SWAP', ''),
+      symbol:    (t.instId||'').replace('-USDT-SWAP', ''),
       price:     parseFloat(t.last),
       change24h: (parseFloat(t.last) - parseFloat(t.open24h)) / parseFloat(t.open24h) * 100,
       volume24h: parseFloat(t.volCcy24h) * parseFloat(t.last),
@@ -2617,7 +2617,7 @@ async function getLiquidationLevels(symbol) {
 
 async function applyLiquidationLevels(sig) {
   try {
-    const symbol = sig.instId.replace('-USDT-SWAP', '');
+    const symbol = (sig.instId||'').replace('-USDT-SWAP', '');
     const liq    = await getLiquidationLevels(symbol);
     if (!liq) return sig;
 
@@ -2699,7 +2699,7 @@ async function getWhaleActivity(instId, symbol) {
 }
 
 async function applyWhaleBoost(sig) {
-  const whale = await getWhaleActivity(sig.instId, sig.instId.replace('-USDT-SWAP',''));
+  const whale = await getWhaleActivity(sig.instId, (sig.instId||'').replace('-USDT-SWAP',''));
   if (!whale.hasWhales) return sig;
 
   if (sig.direction === 'long' && whale.dominant === 'buy') {
@@ -4641,7 +4641,7 @@ function buildSignalAlert(sig) {
   const filled   = Math.round(sig.confidence / 10);
   const bar      = '█'.repeat(filled) + '░'.repeat(10 - filled);
   const emoji    = sig.direction === 'long' ? '🚀' : '🩸';
-  const name     = sig.instId.replace('-USDT-SWAP', '');
+  const name     = (sig.instId||'').replace('-USDT-SWAP', '');
   const meta      = STRATEGY_META[sig.strategy] || { color: '#999', rating: '?', wr: '?' };
   const ratingLine = `${meta.rating === 'A' ? '🟢' : meta.rating === 'B' ? '🟡' : '🔴'} Рейтинг: ${meta.rating} | Win Rate: ${meta.wr}`;
   const timeStr  = getAlmatyTime();
@@ -4762,7 +4762,7 @@ async function saveOpenTrade(sig) {
 async function logSignal(sig) {
   // В памяти (для текущей сессии)
   store.signalLog.push({
-    ts: sig.ts, symbol: sig.instId.replace('-USDT-SWAP',''),
+    ts: sig.ts, symbol: (sig.instId||'').replace('-USDT-SWAP',''),
     strategy: sig.strategy, direction: sig.direction,
     price: sig.price, confidence: sig.confidence
   });
@@ -7628,7 +7628,7 @@ cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('ch
 cron.schedule('*/3 * * * *', async () => {
   if (!autoExecSignals || store.observeMode || !store.openTrades?.length) return;
   try {
-    const { BybitClient } = require('./bybit-client');
+    const BybitClient = require('./bybit-client');
     const bybit = new BybitClient();
     const positions = await bybit.getPositions();
     const openOnBybit = new Set((positions||[]).filter(p=>parseFloat(p.size)>0).map(p=>p.symbol));

@@ -2462,14 +2462,27 @@ function applyDayOfWeekFilter(sig) {
 // ============================================================
 //  МАКРО КАЛЕНДАРЬ
 // ============================================================
+let macroCalendarCache = { data: null, ts: 0 };
 async function checkMacroEvents() {
   try {
+    // Кэшируем на 1 час — бесплатный API имеет rate limit
+    if (macroCalendarCache.data && Date.now() - macroCalendarCache.ts < 3600000) {
+      return processMacroData(macroCalendarCache.data);
+    }
     const data = await httpGet('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
+    if (data && Array.isArray(data)) macroCalendarCache = { data, ts: Date.now() };
+    if (!data && !macroCalendarCache.data) return null;
+    return processMacroData(macroCalendarCache.data || data);
+  } catch(e) { console.error('[MACRO] error:', e.message); return null; }
+}
+
+function processMacroData(data) {
+  try {
     if (!data || !Array.isArray(data)) return null;
     const now = Date.now();
-    const BLOCK_BEFORE = 30 * 60 * 1000;  // блокируем за 30 мин до события
-    const BLOCK_AFTER  = 30 * 60 * 1000;  // и 30 мин после
-    const WARN_WINDOW  = 2 * 60 * 60 * 1000; // предупреждение за 2 часа
+    const BLOCK_BEFORE = 30 * 60 * 1000;
+    const BLOCK_AFTER  = 30 * 60 * 1000;
+    const WARN_WINDOW  = 2 * 60 * 60 * 1000;
 
     const highImpact = data.filter(e => {
       if (e.impact !== 'High') return false;
@@ -2499,7 +2512,7 @@ async function checkMacroEvents() {
 
 // Кэш для CoinGecko (лимит 30 req/min)
 let coingeckoCache = { data: null, ts: 0 };
-const COINGECKO_TTL = 10 * 60 * 1000; // 10 минут
+const COINGECKO_TTL = 30 * 60 * 1000; // 30 минут (rate limit защита)
 
 async function getCoingeckoGlobal() {
   if (coingeckoCache.data && Date.now() - coingeckoCache.ts < COINGECKO_TTL) {
@@ -5689,6 +5702,10 @@ if (!store.observeMode) {
       if (!signals.length) {
         if (Math.random() < 0.05) console.log(`[NO RAW SIGNALS] ${coin.instId}`);
         continue;
+      }
+      // Убедимся что все сигналы имеют instId
+      for (const sig of signals) {
+        if (!sig.instId) sig.instId = coin.instId;
       }
       if (signals.length) console.log(`[RAW SIGNALS] ${coin.instId}: ${signals.length} (${signals.map(s=>s.strategy.split(' ')[0]).join(',')})`);
 

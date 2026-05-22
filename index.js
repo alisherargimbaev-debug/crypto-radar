@@ -4668,8 +4668,10 @@ function buildSignalAlert(sig) {
     ? `\n💵 Position: $${positionSize.toFixed(0)} ⚠️ превышает баланс×плечо ($${maxPosition.toFixed(0)})\n   Маржа: $${margin.toFixed(0)} (${store.leverage}x)`
     : `\n💵 Position: $${positionSize.toFixed(0)} | Маржа: $${margin.toFixed(0)} (${store.leverage}x)\n   Риск: $${riskUSD.toFixed(0)} (${store.riskPct}%)`;
 
+  const dirLabel  = sig.signal || (sig.direction === 'long' ? '🟢 LONG' : '🔴 SHORT');
+
   return (
-    `${emoji} ${name}/USDT — ${sig.signal}\n` +
+    `${emoji} ${name}/USDT — ${dirLabel}\n` +
     `━━━━━━━━━━━━━━━━━━━━━━\n` +
     (store.observeMode ? `👁 РЕЖИМ НАБЛЮДЕНИЯ — не торгуй\n` : '') +
     `📌 ${sig.strategy}\n` +

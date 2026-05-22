@@ -207,8 +207,10 @@ nav::-webkit-scrollbar{display:none;}
 
 /* ── INVESTOR HERO ── */
 .inv-hero{text-align:center;padding:60px 24px;background:var(--panel);border:1px solid var(--border);margin-bottom:20px;position:relative;overflow:hidden;}
-.inv-hero::after{content:'QUANTUM FUND';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:'Bebas Neue',sans-serif;font-size:8rem;color:var(--border);letter-spacing:4px;white-space:nowrap;pointer-events:none;z-index:0;opacity:0.5;}
+.inv-hero::after{content:'APEX ALGO FUND';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-family:'Bebas Neue',sans-serif;font-size:7rem;color:var(--border);letter-spacing:4px;white-space:nowrap;pointer-events:none;z-index:0;opacity:0.3;}
 .inv-hero-content{position:relative;z-index:1;}
+@keyframes floatParticle{0%,100%{transform:translateY(0) translateX(0);}25%{transform:translateY(-20px) translateX(10px);}50%{transform:translateY(-10px) translateX(-10px);}75%{transform:translateY(-25px) translateX(5px);}}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.4;transform:scale(1.5);}}
 .inv-title{font-family:'Bebas Neue',sans-serif;font-size:3rem;letter-spacing:4px;color:var(--text);margin-bottom:12px;}
 .inv-sub{font-family:'Sora',sans-serif;font-size:0.85rem;color:var(--dim);max-width:480px;margin:0 auto 24px;line-height:1.7;}
 
@@ -653,7 +655,7 @@ nav::-webkit-scrollbar{display:none;}
     <div class="stat-card green"><div class="stat-label">Pumps</div><div class="stat-value" id="r-pumps">0</div><div class="stat-sub">+5% IN 24H</div></div>
     <div class="stat-card red"><div class="stat-label">Dumps</div><div class="stat-value" id="r-dumps">0</div><div class="stat-sub">-5% IN 24H</div></div>
     <div class="stat-card yellow"><div class="stat-label">Grade A</div><div class="stat-value" id="r-grade-a">0</div><div class="stat-sub">PRIME TARGETS</div></div>
-    <div class="stat-card"><div class="stat-label">Recent Signals</div><div class="stat-value" id="r-sigs">0</div><div class="stat-sub">PAPER TRADES</div></div>
+    <div class="stat-card"><div class="stat-label">Recent Signals</div><div class="stat-value" id="r-sigs">0</div><div class="stat-sub">ALL SIGNALS</div></div>
   </div>
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
@@ -663,7 +665,7 @@ nav::-webkit-scrollbar{display:none;}
     <div id="radar-body"><div class="empty">LOADING MARKET DATA...</div></div>
   </div>
   <div class="panel">
-    <div class="sec-title">Recent Signals (Paper Trading)</div>
+    <div class="sec-title">Recent Signals</div>
     <div id="radar-signals"><div class="empty">NO SIGNALS YET</div></div>
   </div>
 </div>
@@ -723,7 +725,7 @@ nav::-webkit-scrollbar{display:none;}
       <div class="m-row"><div><div class="m-name">Sharpe Ratio</div><div class="m-hint">TARGET >1.5 · EXCELLENT >2.0</div></div><div class="m-val" id="m-sharpe">—</div></div>
       <div class="m-row"><div><div class="m-name">Sortino Ratio</div><div class="m-hint">DOWNSIDE DEVIATION ONLY</div></div><div class="m-val" id="m-sortino">—</div></div>
       <div class="m-row"><div><div class="m-name">Profit Factor</div><div class="m-hint">GROSS PROFIT / GROSS LOSS</div></div><div class="m-val" id="m-pf">—</div></div>
-      <div class="m-row"><div><div class="m-name">Max Consecutive Losses</div><div class="m-hint">СЕРИЯ ПОТЕРЬ ПОДРЯД</div></div><div class="m-val" id="m-max-loss">—</div></div>
+      <div class="m-row"><div><div class="m-name">Max Consecutive Losses</div><div class="m-hint">CONSECUTIVE LOSSES IN A ROW</div></div><div class="m-val" id="m-max-loss">—</div></div>
       <div class="m-row"><div><div class="m-name">Expectancy</div><div class="m-hint">PER TRADE EXPECTED RETURN</div></div><div class="m-val" id="m-exp">—</div></div>
       <div class="m-row"><div><div class="m-name">Max Drawdown</div><div class="m-hint">PEAK TO TROUGH</div></div><div class="m-val red" id="m-dd">—</div></div>
       <div class="m-row"><div><div class="m-name">Recovery Factor</div><div class="m-hint">TOTAL PNL / MAX DD</div></div><div class="m-val" id="m-rf">—</div></div>
@@ -1034,19 +1036,30 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- INVESTOR -->
 <div class="page" id="page-investor">
-  <div class="inv-hero">
-    <div class="inv-title">QUANTUM FUND</div>
-    <div class="inv-sub">AI-powered multi-asset trading system. Institutional-grade risk management. 13 algorithmic strategies across crypto & equities.</div>
-    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-      <span class="badge b-green">13 STRATEGIES</span>
+  <div class="inv-hero" style="position:relative;overflow:hidden;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 20px">
+    <!-- Animated background -->
+    <div id="inv-particles" style="position:absolute;inset:0;pointer-events:none;overflow:hidden"></div>
+    <!-- Animated title -->
+    <div class="inv-title" id="inv-title" style="position:relative;z-index:1;opacity:0;transform:translateY(20px);transition:all 0.8s ease">APEX ALGO FUND</div>
+    <div class="inv-sub" style="position:relative;z-index:1;opacity:0;transform:translateY(10px);transition:all 0.8s ease 0.2s;margin-bottom:20px" id="inv-sub">
+      AI-powered multi-asset trading system. Institutional-grade risk management.<br>14 algorithmic strategies across crypto, stocks & commodities.
+    </div>
+    <!-- Animated badges -->
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;position:relative;z-index:1;opacity:0;transition:all 0.8s ease 0.4s" id="inv-badges">
+      <span class="badge b-green">14 STRATEGIES</span>
       <span class="badge b-blue">3 MARKETS</span>
       <span class="badge b-yellow">24/7 AUTOMATED</span>
-      <span class="badge b-dim">OBSERVE MODE ACTIVE</span>
+      <span id="inv-mode-badge" class="badge b-dim">OBSERVE MODE</span>
+    </div>
+    <!-- Live counter -->
+    <div style="position:absolute;top:16px;right:20px;z-index:2;font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);letter-spacing:2px">
+      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#22c55e;margin-right:6px;animation:pulse 2s infinite"></span>LIVE
     </div>
   </div>
+
   <div class="stats-row">
-    <div class="stat-card yellow"><div class="stat-label">AUM</div><div class="stat-value">$9,379</div><div class="stat-sub">PROPRIETARY CAPITAL</div></div>
-    <div class="stat-card blue"><div class="stat-label">Markets</div><div class="stat-value">3</div><div class="stat-sub">CRYPTO · STOCKS · COMING</div></div>
+    <div class="stat-card yellow"><div class="stat-label">AUM</div><div class="stat-value" id="inv-aum">$9,379</div><div class="stat-sub">PROPRIETARY CAPITAL</div></div>
+    <div class="stat-card blue"><div class="stat-label">Markets</div><div class="stat-value">3</div><div class="stat-sub">CRYPTO · STOCKS · COMMODITIES</div></div>
     <div class="stat-card green"><div class="stat-label">Max Risk</div><div class="stat-value">0.5%</div><div class="stat-sub">PER TRADE</div></div>
     <div class="stat-card"><div class="stat-label">Daily Limit</div><div class="stat-value">3%</div><div class="stat-sub">MAX DRAWDOWN</div></div>
     <div class="stat-card purple"><div class="stat-label">Weekly Limit</div><div class="stat-value">8%</div><div class="stat-sub">AUTO STOP</div></div>
@@ -1206,7 +1219,7 @@ async function loadPaper() {
     }
     d.stats = d.closed.length ? { total: d.closed.length, wins: wins.length, losses: losses.length, expired: expired.length, wr, totalPnl: parseFloat(totalPnl.toFixed(2)), byStrat } : null;
   }
-  renderOverview(d);
+  // Overview НЕ обновляем из paper — только из loadOverview (live данные)
   renderPaperPage(d);
   renderRadar(d);
 }
@@ -1290,27 +1303,37 @@ function renderPaperPage(d) {
   oe.innerHTML = open.length ? open.map(t => {
     const coin = (t.instId||'').replace('-USDT-SWAP','');
     const dc = t.direction === 'long' ? 'b-green' : 'b-red';
-    return `<div class="sig-row">
+    const openTime = t.ts ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    return `<div class="sig-row" style="padding:8px 0;border-bottom:1px solid var(--border)">
       <div class="sig-coin">${coin}</div>
       <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
-      <div class="sig-strat">$${t.price} · ${t.ageMin}m ago</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">📅 ${openTime} · $${t.price}</div>
       <div class="sig-conf">${t.confidence}%</div>
     </div>`;
   }).join('') : '<div class="empty">NO OPEN POSITIONS</div>';
 
   const ce = document.getElementById('paper-closed');
-  const closed = (d.closed || []).slice(0, 12);
+  const closed = (d.closed || []).slice(0, 20);
   ce.innerHTML = closed.length ? closed.map(t => {
     const coin = (t.instId||'').replace('-USDT-SWAP','');
     const dc = t.direction === 'long' ? 'b-green' : 'b-red';
-    const pnl = t.pnl != null ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) + '%' : '—';
-    const pc = (t.pnl||0) >= 0 ? 'c-green' : 'c-red';
+    // PnL с плечом (5x) для отображения
+    const rawPnl = t.pnl || 0;
+    const levPnl = rawPnl * 5; // 5x leverage
+    const pnlStr = (levPnl >= 0 ? '+' : '') + levPnl.toFixed(2) + '%';
+    const pc = levPnl >= 0 ? 'c-green' : 'c-red';
     const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
-    return `<div class="sig-row">
+    // Время открытия и закрытия
+    const openTime  = t.ts       ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const closeTime = t.closedAt ? new Date(t.closedAt).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    return `<div class="sig-row" style="flex-wrap:wrap;gap:4px;padding:8px 0;border-bottom:1px solid var(--border)">
       <div class="sig-coin">${coin}</div>
       <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
-      <div class="sig-strat">${icon} ${(t.outcome||'').toUpperCase()}</div>
-      <div class="sig-conf ${pc}">${pnl}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">
+        📅 ${openTime} → ${closeTime}
+      </div>
+      <div>${icon}</div>
+      <div class="sig-conf ${pc}">${pnlStr} <span style="opacity:.5;font-size:.7em">(5x)</span></div>
     </div>`;
   }).join('') : '<div class="empty">NO CLOSED TRADES YET</div>';
 
@@ -1486,7 +1509,7 @@ async function loadMetrics() {
 
     // Consecutive losses
     const mle = document.getElementById('m-max-loss');
-    if (mle) { mle.textContent = maxLoss + ' подряд'; mle.className = 'm-val '+(maxLoss>=5?'red':maxLoss>=3?'yellow':'green'); }
+    if (mle) { mle.textContent = maxLoss + ' in a row'; mle.className = 'm-val '+(maxLoss>=5?'red':maxLoss>=3?'yellow':'green'); }
   } catch(e) {
     document.querySelectorAll('[id^="m-"]').forEach(el=>el.textContent='—');
   }
@@ -1494,46 +1517,85 @@ async function loadMetrics() {
 
 // ── TRACK RECORD ─────────────────────────────────────────────
 async function loadTrackRecord() {
-  const d = await safeFetch('/api/paper', { closed:[], stats:null });
-  try {
-    const closed = (d.closed||[]).filter(t=>t.pnl!=null).reverse();
-    const s = d.stats;
-    // Equity curve
-    let eq=100; const eqData=[100]; const labels=['0'];
-    closed.forEach((t,i)=>{eq+=t.pnl||0;eqData.push(parseFloat(eq.toFixed(2)));labels.push(String(i+1));});
-    const isDark = document.documentElement.getAttribute('data-theme')==='dark';
-    const gridColor = isDark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)';
-    const tickColor = isDark?'#555':'#888';
-    const lastEq = eqData[eqData.length-1];
-    const lineColor = lastEq>=100?'#22cc66':'#ff4444';
-    const ctx1 = document.getElementById('equityChart').getContext('2d');
-    if(equityChart)equityChart.destroy();
-    equityChart = new Chart(ctx1,{type:'line',data:{labels,datasets:[{data:eqData,borderColor:lineColor,backgroundColor:lineColor+'15',borderWidth:2,fill:true,tension:.4,pointRadius:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{display:false},y:{grid:{color:gridColor},ticks:{color:tickColor,font:{family:'DM Mono',size:10}}}}}});
-    // PnL
-    const tp = s?.totalPnl||0;
-    const tpe = document.getElementById('tr-pnl');
-    tpe.textContent = (tp>=0?'+':'')+tp.toFixed(2)+'%';
-    tpe.closest('.stat-card').className='stat-card '+(tp>=0?'green':'red');
-    // Best/worst
-    if(s?.byStrat){
-      const st=Object.entries(s.byStrat).map(([n,v])=>{const t=v.wins+v.losses+v.expired;return{n,wr:t?Math.round(v.wins/t*100):0,t};}).filter(s=>s.t>=3).sort((a,b)=>b.wr-a.wr);
-      if(st.length){
-        document.getElementById('tr-best').textContent=st[0].n.split(' ').slice(0,2).join(' ');
-        document.getElementById('tr-best-wr').textContent='WR '+st[0].wr+'%';
-        const w=st[st.length-1];
-        document.getElementById('tr-worst').textContent=w.n.split(' ').slice(0,2).join(' ');
-        document.getElementById('tr-worst-wr').textContent='WR '+w.wr+'%';
+  const [liveData, paperData] = await Promise.all([
+    safeFetch('/api/trades', { closed: [] }),
+    safeFetch('/api/paper',  { closed: [], open: [] }),
+  ]);
+
+  const liveClosed  = (liveData.closed  || []).filter(t => t.outcome && t.outcome !== 'open');
+  const paperClosed = (paperData.closed || []).filter(t => t.outcome && t.outcome !== 'open');
+
+  // Выбираем данные в зависимости от фильтра
+  const f    = currentTrackFilter || 'all';
+  const data = f === 'live'  ? liveClosed
+             : f === 'paper' ? paperClosed
+             : [...liveClosed, ...paperClosed].sort((a,b) => (b.closedAt||0)-(a.closedAt||0));
+
+  // Метки для заголовка
+  const srcLabel = f === 'live' ? 'LIVE BOT' : f === 'paper' ? 'PAPER' : 'ALL';
+
+  // Equity curve
+  let eq = 0;
+  const eqPoints = data.map(t => { eq += (t.pnl||0)*5; return parseFloat(eq.toFixed(2)); });
+  const labels   = data.map((t,i) => '#'+(i+1));
+
+  if (equityChart) equityChart.destroy();
+  const ctx = document.getElementById('tr-chart');
+  if (!ctx) return;
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: eqPoints,
+        borderColor: eq >= 0 ? '#22c55e' : '#ef4444',
+        borderWidth: 2,
+        pointRadius: data.length < 50 ? 3 : 0,
+        tension: 0.3,
+        fill: true,
+        backgroundColor: eq >= 0 ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.05)',
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } },
+        y: { ticks: { callback: v => v+'%', font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
       }
     }
-    // Monthly
-    const months={};
-    closed.forEach(t=>{const d2=new Date(t.closedAt||t.ts||Date.now());const k=d2.toLocaleString('en',{month:'short',year:'2-digit'});months[k]=(months[k]||0)+(t.pnl||0);});
-    const ml=Object.keys(months),mv=Object.values(months);
-    const ctx2=document.getElementById('monthlyChart').getContext('2d');
-    if(monthlyChart)monthlyChart.destroy();
-    monthlyChart=new Chart(ctx2,{type:'bar',data:{labels:ml.length?ml:['No data'],datasets:[{data:ml.length?mv:[0],backgroundColor:mv.map(v=>v>=0?'rgba(34,204,102,0.5)':'rgba(255,68,68,0.5)'),borderColor:mv.map(v=>v>=0?'#22cc66':'#ff4444'),borderWidth:1,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:tickColor,font:{family:'DM Mono',size:10}},grid:{display:false}},y:{ticks:{color:tickColor,font:{family:'DM Mono',size:10}},grid:{color:gridColor}}}}});
-  } catch(e) { /* silent */ }
+  });
+
+  // Stats
+  const wins   = data.filter(t => t.outcome==='tp1'||t.outcome==='tp2');
+  const losses = data.filter(t => t.outcome==='sl');
+  const wr     = data.length ? Math.round(wins.length/data.length*100) : 0;
+  const totalPnl = eqPoints[eqPoints.length-1] || 0;
+  const gw     = wins.reduce((s,t)=>s+Math.abs((t.pnl||0)*5),0);
+  const gl     = losses.reduce((s,t)=>s+Math.abs((t.pnl||0)*5),0);
+  const pf     = gl > 0 ? (gw/gl).toFixed(2) : '∞';
+
+  // Best/worst strategy
+  const byS = {};
+  data.forEach(t => {
+    const k = (t.strategy||'?').split(' ').slice(0,3).join(' ');
+    if (!byS[k]) byS[k] = { wins:0, total:0 };
+    if (t.outcome==='tp1'||t.outcome==='tp2') byS[k].wins++;
+    byS[k].total++;
+  });
+  const stratList = Object.entries(byS).filter(([,v])=>v.total>=2).map(([n,v])=>({n,wr:Math.round(v.wins/v.total*100),total:v.total}));
+  const bestS  = stratList.sort((a,b)=>b.wr-a.wr)[0];
+  const worstS = stratList.sort((a,b)=>a.wr-b.wr)[0];
+
+  const se = id => { const e=document.getElementById(id); return e ? (v,c)=>{e.textContent=v;if(c)e.className='m-val '+c;} : ()=>{}; };
+  se('tr-total')(data.length + ' (' + srcLabel + ')');
+  se('tr-wr')(wr + '%', wr>=55?'green':wr>=40?'yellow':'red');
+  se('tr-pnl')((totalPnl>=0?'+':'')+totalPnl.toFixed(2)+'%', totalPnl>=0?'green':'red');
+  se('tr-pf')(pf);
+  se('tr-best')(bestS ? bestS.n + ' (' + bestS.wr + '% WR)' : '—');
+  se('tr-worst')(worstS ? worstS.n + ' (' + worstS.wr + '% WR)' : '—');
 }
+
 
 // ── STRATEGIES ────────────────────────────────────────────────
 async function loadStrategies() {
@@ -2361,6 +2423,59 @@ function renderBacktest(data, coin, period) {
       <div class="sig-conf ${pnlCls}">${(s.pnl||0)>=0?'+':''}${s.pnl||0}%</div>
     </div>`;
   }).join('')||'<div class="empty">НЕТ СИГНАЛОВ</div>';
+}
+
+// ── INVESTOR ANIMATION ───────────────────────────────────────
+function initInvestorAnimation() {
+  // Animate in elements
+  setTimeout(() => {
+    const t = document.getElementById('inv-title');
+    const s = document.getElementById('inv-sub');
+    const b = document.getElementById('inv-badges');
+    if(t) { t.style.opacity='1'; t.style.transform='translateY(0)'; }
+    if(s) { s.style.opacity='1'; s.style.transform='translateY(0)'; }
+    if(b) { b.style.opacity='1'; }
+  }, 100);
+
+  // Floating particles
+  const container = document.getElementById('inv-particles');
+  if (!container) return;
+  container.innerHTML = '';
+  for (let i = 0; i < 20; i++) {
+    const dot = document.createElement('div');
+    const size = Math.random() * 3 + 1;
+    dot.style.cssText = `
+      position:absolute;
+      width:${size}px;height:${size}px;
+      border-radius:50%;
+      background:rgba(255,255,255,${Math.random()*0.15+0.03});
+      left:${Math.random()*100}%;
+      top:${Math.random()*100}%;
+      animation:floatParticle ${Math.random()*8+6}s ease-in-out infinite;
+      animation-delay:${Math.random()*4}s;
+    `;
+    container.appendChild(dot);
+  }
+
+  // Animated number counter for AUM
+  const aumEl = document.getElementById('inv-aum');
+  if (aumEl) {
+    let start = 0, target = 9379, dur = 1500;
+    const step = ts => {
+      if (!start) start = ts;
+      const prog = Math.min((ts-start)/dur, 1);
+      aumEl.textContent = '$' + Math.round(prog * target).toLocaleString();
+      if (prog < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+}
+
+// Запускаем анимацию когда открывается investor страница
+const origShowPageDD = showPageDD;
+function showPageDD(page, btn) {
+  origShowPageDD(page, btn);
+  if (page === 'investor') setTimeout(initInvestorAnimation, 50);
 }
 
 loadOverview();

@@ -5063,9 +5063,12 @@ app.get('/api/news', async (req, res) => {
 // ── WHALES API (Copy Trading Tracker) ─────────────────────────
 app.get('/api/whales', (req, res) => {
   try {
-    res.json({ ok: true, ...copytrader.getTrackedWhalesSnapshot() });
+    if (!copytrader) return res.json({ traders: [], enabled: false });
+    const snapshot = copytrader.getTrackedWhalesSnapshot();
+    const traders = Array.isArray(snapshot) ? snapshot : (snapshot?.traders || []);
+    res.json({ ok: true, traders, enabled: copytrader.isEnabled() });
   } catch(e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.json({ traders: [], error: e.message });
   }
 });
 

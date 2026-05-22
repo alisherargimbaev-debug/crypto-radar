@@ -249,6 +249,7 @@ if (!global.dailyPnlTracker) {
 }
 
 function checkPortfolioRisk(sig) {
+  if (!sig || !sig.instId) return { allowed: false, reason: 'Нет instId в сигнале' };
   const open = store.openTrades;
   const symbol = sig.instId.replace('-USDT-SWAP', '');
 
@@ -4636,6 +4637,7 @@ function estimateTradeDuration(strategy, atr, price) {
 //  ФОРМАТИРОВАНИЕ
 // ============================================================
 function buildSignalAlert(sig) {
+  if (!sig || !sig.instId) return '⚠️ Ошибка сигнала: нет instId';
   const filled   = Math.round(sig.confidence / 10);
   const bar      = '█'.repeat(filled) + '░'.repeat(10 - filled);
   const emoji    = sig.direction === 'long' ? '🚀' : '🩸';
@@ -6016,6 +6018,8 @@ if (!store.observeMode) {
 
       const best = filtered
         .filter(s => {
+          // Обязательно должен быть instId
+          if (!s.instId) { s.instId = coin.instId; }
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
           const isS1sig = s.strategy.startsWith('1️⃣ ');
           const threshold = store.observeMode ? 50 : isS1sig ? 50 : 65;

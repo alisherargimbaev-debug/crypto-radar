@@ -671,7 +671,7 @@ const ADMIN_ONLY_COMMANDS = [
   '/setbalance', '/setleverage', '/weekends', '/autoexec',
   '/closeall', '/nightmode', '/audit', '/report', '/debrief',
   '/psychologist', '/benchmark', '/weekly', '/versions', '/logs',
-  '/diag', '/stocks',
+  '/diag', '/stocks', '/resetpaper',
 ];
 
 async function handleTelegramCommand(text, chatId) {
@@ -1230,6 +1230,26 @@ async function handleTelegramCommand(text, chatId) {
   else if (cmd === '/positions') {
     if (!autoExecSignals) { await sendTelegramTo(chatId, '❌ AutoExec не загружен'); }
     else { autoExecSignals.emit('telegram_command', { command: '/positions', args: [], replyFn: (t) => sendTelegramTo(chatId, t) }); }
+  }
+
+  else if (cmd === '/resetpaper') {
+    try {
+      const paperCount = (global.paperTrades || []).length;
+      const histCount  = store.tradeHistory.length;
+      global.paperTrades = [];
+      store.tradeHistory = store.tradeHistory.filter(t => t.source === 'bybit_real');
+      await supabase.from('paper_trades').delete().neq('id', 0);
+      await sendTelegramTo(chatId,
+        `🗑 PAPER TRADES СБРОШЕНЫ\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `Удалено из памяти: ${paperCount} paper trades\n` +
+        `История очищена: ${histCount - store.tradeHistory.length} записей\n\n` +
+        `✅ Дашборд теперь чистый\n` +
+        `Напиши /observe чтобы начать новый сбор данных`
+      );
+    } catch(e) {
+      await sendTelegramTo(chatId, `❌ Ошибка сброса: ${e.message}`);
+    }
   }
 
   else if (cmd === '/today') {
@@ -4330,7 +4350,23 @@ if (k1h.length >= 55) {
     // Следуем за крупными трейдерами с Hyperliquid
     // ════════════════════════════════════════════════════════
     try {
-      const whaleActions = getRecentWhaleActions();
+      // Получаем недавние действия китов через copytrader модуль
+      let whaleActions = [];
+      try {
+        if (typeof copytrader?.getRecentActions === 'function') {
+          whaleActions = copytrader.getRecentActions(15) || [];
+        } else if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
+          const snapshot = copytrader.getTrackedWhalesSnapshot() || [];
+          whaleActions = snapshot.flatMap(w =>
+            Object.values(w.positions || {}).map(p => ({
+              symbol: p.coin,
+              side:   p.side?.toLowerCase(),
+              size:   p.sizeUsd || 0,
+            }))
+          );
+        }
+      } catch(ce) { /* copytrader недоступен */ }
+
       if (whaleActions.length > 0) {
         // Какой символ нас интересует (без -USDT-SWAP)
         const symbol = instId.replace('-USDT-SWAP', '').replace('-USDT', '');

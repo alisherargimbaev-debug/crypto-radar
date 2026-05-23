@@ -1290,7 +1290,16 @@ async function handleTelegramCommand(text, chatId) {
       `📈 Открытых: ${openTrades.length}
 
 ` +
-      `${todayTrades.length === 0 ? 'Сделок сегодня не было.' : ''}`
+      `${todayTrades.length === 0 ? 'Сделок сегодня не было.' : ''}` +
+      (() => {
+        const cot = cotCache.data;
+        if (!Object.keys(cot).length) return '';
+        const lines = Object.entries(cot).map(([a, d]) => {
+          const e = d.signal==='bullish'?'🟢':d.signal==='bullish_weak'?'🟡':d.signal==='bearish'?'🔴':d.signal==='bearish_weak'?'🟠':'⚪️';
+          return `${e} ${a}: ${d.signal} (inst ${d.netInst>0?'+':''}${d.netInst.toLocaleString()})`;
+        }).join('\n');
+        return `\n\n📊 COT Report (CFTC):\n${lines}`;
+      })()
     );
   }
 
@@ -2742,6 +2751,143 @@ function calcPriceChangePct(k) {
   const prev = k[k.length - 2].close, cur = k[k.length - 1].close;
   return prev ? (cur - prev) / prev * 100 : 0;
 }
+// ── COT REPORT (CFTC) — Commitment of Traders ────────────────
+// Публикуется каждую пятницу в 15:30 ET на cftc.gov
+// Показывает позиции институционалов vs физиков по каждому активу
+// Используем как sentiment filter для XAU, XAG, CL, BZ
+
+let cotCache = {
+  ts: 0,
+  data: {}, // { XAU: { netInst: 0, netRetail: 0, signal: 'neutral', raw: {} }, ... }
+};
+
+// CFTC коды активов для legacy COT report
+const COT_CODES = {
+  XAU: '088691', // Gold - COMEX
+  XAG: '084691', // Silver - COMEX
+  CL:  '067651', // Crude Oil WTI - NYMEX
+  BZ:  '067651', // Brent (используем WTI как прокси)
+};
+
+// Парсим CSV строку из CFTC legacy format
+function parseCOTcsv(csvText, code) {
+  try {
+    const lines = csvText.split('\n').filter(l => l.includes(code));
+    if (!lines.length) return null;
+
+    // Берём самую свежую строку (первая после header)
+    const cols = lines[0].split(',').map(s => s.replace(/"/g, '').trim());
+
+    // Индексы по legacy COT format:
+    // 7 = NonComm Long, 8 = NonComm Short (институционалы / hedge funds)
+    // 10 = NonReport Long, 11 = NonReport Short (retail / физики)
+    const nonCommLong  = parseInt(cols[7])  || 0;
+    const nonCommShort = parseInt(cols[8])  || 0;
+    const retailLong   = parseInt(cols[10]) || 0;
+    const retailShort  = parseInt(cols[11]) || 0;
+
+    const netInst   = nonCommLong - nonCommShort;   // >0 = институционалы net long
+    const netRetail = retailLong  - retailShort;     // >0 = физики net long
+
+    // Сигнал:
+    // inst net long + retail net short → сильный лонг сигнал (институционалы покупают, физики продают)
+    // inst net short + retail net long → медвежий (институционалы продают, физики покупают)
+    let signal = 'neutral';
+    if (netInst > 10000 && netRetail < 0)  signal = 'bullish';
+    else if (netInst > 5000)               signal = 'bullish_weak';
+    else if (netInst < -10000 && netRetail > 0) signal = 'bearish';
+    else if (netInst < -5000)              signal = 'bearish_weak';
+
+    return { netInst, netRetail, signal, nonCommLong, nonCommShort, retailLong, retailShort };
+  } catch(e) {
+    console.error('[COT] parseCOTcsv error:', e.message);
+    return null;
+  }
+}
+
+async function fetchCOTReport() {
+  const CACHE_TTL = 6 * 3600 * 1000; // 6 часов (отчёт раз в неделю)
+  if (Date.now() - cotCache.ts < CACHE_TTL && Object.keys(cotCache.data).length) {
+    return cotCache.data;
+  }
+
+  try {
+    console.log('[COT] Загружаем CFTC COT Report...');
+
+    // CFTC legacy CSV — текущий год
+    const year = new Date().getFullYear();
+    const url  = `https://www.cftc.gov/dea/newcot/fut_fin_xls_${year}.zip`;
+
+    // Fallback: используем прямой CSV (без zip для простоты)
+    const csvUrl = `https://www.cftc.gov/dea/newcot/FinFutYY.txt`;
+
+    const resp = await axios.get(csvUrl, {
+      timeout: 20000,
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      responseType: 'text',
+    });
+
+    const csvText = resp.data;
+    if (!csvText || csvText.length < 100) throw new Error('Empty response');
+
+    const result = {};
+    for (const [asset, code] of Object.entries(COT_CODES)) {
+      const parsed = parseCOTcsv(csvText, code);
+      if (parsed) {
+        result[asset] = parsed;
+        console.log(`[COT] ${asset}: netInst=${parsed.netInst > 0 ? '+' : ''}${parsed.netInst} netRetail=${parsed.netRetail > 0 ? '+' : ''}${parsed.netRetail} → ${parsed.signal}`);
+      }
+    }
+
+    if (Object.keys(result).length) {
+      cotCache = { ts: Date.now(), data: result };
+      console.log('[COT] ✅ Загружено успешно');
+    }
+
+    return cotCache.data;
+  } catch(e) {
+    console.error('[COT] fetchCOTReport error:', e.message);
+    // Возвращаем кэш если есть, иначе пустой
+    return cotCache.data;
+  }
+}
+
+// Применяем COT к сигналу — только для commodities
+function applyCOTFilter(sig) {
+  const coin = (sig.instId || '').replace('-USDT-SWAP', '').split('-')[0];
+  const cot  = cotCache.data?.[coin];
+
+  if (!cot) return sig; // нет данных — пропускаем без изменений
+
+  const { signal, netInst } = cot;
+  const dir = sig.direction;
+
+  // ЛОНГ против медвежьего COT — снижаем уверенность
+  if (dir === 'long' && (signal === 'bearish' || signal === 'bearish_weak')) {
+    const penalty = signal === 'bearish' ? 15 : 8;
+    sig.confidence = Math.max(sig.confidence - penalty, 0);
+    sig.cotNote = `⚠️ COT bearish (inst net ${netInst > 0 ? '+' : ''}${netInst}) → -${penalty}%`;
+    console.log(`[COT] ${coin} LONG пенальти -${penalty}% | ${sig.cotNote}`);
+  }
+
+  // ШОРТ против бычьего COT
+  if (dir === 'short' && (signal === 'bullish' || signal === 'bullish_weak')) {
+    const penalty = signal === 'bullish' ? 15 : 8;
+    sig.confidence = Math.max(sig.confidence - penalty, 0);
+    sig.cotNote = `⚠️ COT bullish (inst net +${netInst}) → -${penalty}%`;
+    console.log(`[COT] ${coin} SHORT пенальти -${penalty}% | ${sig.cotNote}`);
+  }
+
+  // БОНУС: сигнал совпадает с институционалами
+  if (dir === 'long'  && signal === 'bullish')  { sig.confidence = Math.min(sig.confidence + 8, 100); sig.cotNote = `✅ COT bullish (inst +${netInst}) → +8%`; }
+  if (dir === 'short' && signal === 'bearish')  { sig.confidence = Math.min(sig.confidence + 8, 100); sig.cotNote = `✅ COT bearish (inst ${netInst}) → +8%`; }
+
+  return sig;
+}
+
+// Загрузка при старте
+fetchCOTReport().catch(e => console.error('[COT] init error:', e.message));
+
 // ── DVOL — Deribit Volatility Index (крипто аналог VIX) ──────
 let dvolCache = { btc: null, eth: null, ts: 0 };
 async function getDVOL() {
@@ -5073,6 +5219,15 @@ app.get('/api/news', async (req, res) => {
 });
 
 // ── WHALES API (Copy Trading Tracker) ─────────────────────────
+app.get('/api/cot', (req, res) => {
+  res.json({
+    ok:        true,
+    data:      cotCache.data,
+    updatedAt: cotCache.ts,
+    age:       cotCache.ts ? Math.round((Date.now() - cotCache.ts) / 3600000) + 'h ago' : 'never',
+  });
+});
+
 app.get('/api/whales', (req, res) => {
   try {
     if (!copytrader) return res.json({ traders: [], enabled: false });
@@ -5829,6 +5984,13 @@ if (!store.observeMode) {
 
         // 7. MACRO — блок перед FOMC/CPI
         sig = applyMacroFilter(sig, macroEvent);
+
+        // 7.5 COT — Commitment of Traders (только для commodities: XAU, XAG, CL, BZ)
+        const cotAssets = ['XAU', 'XAG', 'CL', 'BZ'];
+        const sigCoin   = (sig.instId || '').replace('-USDT-SWAP','').split('-')[0];
+        if (cotAssets.includes(sigCoin)) {
+          sig = applyCOTFilter(sig);
+        }
 
         // 8. FVG — Fair Value Gap (если цена в зоне — подтверждение)
         try {
@@ -7728,6 +7890,22 @@ cron.schedule('*/5 * * * *', () => { heartbeat().catch(()=>{}); });
 
 // Еженедельный P&L отчёт — воскресенье 18:00 UTC = 23:00 Алматы
 cron.schedule('0 18 * * 0', () => { weeklyPnLReport().catch(e => console.error('weeklyPnL error:', e.message)); });
+
+// COT Report — обновляем каждую субботу в 00:00 Алматы (пятница 18:00 ET — после публикации CFTC)
+cron.schedule('0 0 * * 6', async () => {
+  console.log('[COT] Еженедельное обновление COT Report...');
+  cotCache.ts = 0; // сбрасываем кэш
+  const data = await fetchCOTReport().catch(e => { console.error('[COT] cron error:', e.message); return {}; });
+  if (Object.keys(data).length) {
+    let msg = `📊 *COT Report обновлён*\n\n`;
+    for (const [asset, d] of Object.entries(data)) {
+      const emoji = d.signal === 'bullish' ? '🟢' : d.signal === 'bearish' ? '🔴' : '🟡';
+      msg += `${emoji} *${asset}*: inst net ${d.netInst > 0 ? '+' : ''}${d.netInst.toLocaleString()} → \`${d.signal}\`\n`;
+    }
+    msg += `\n_Источник: CFTC cftc.gov_`;
+    await sendTelegram(msg).catch(() => {});
+  }
+});
 
 // Weekly drawdown check — каждый час
 cron.schedule('0 * * * *', async () => {

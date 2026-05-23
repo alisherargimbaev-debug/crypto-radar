@@ -5280,8 +5280,16 @@ app.get('/api/whales', (req, res) => {
   try {
     if (!copytrader) return res.json({ traders: [], enabled: false });
     const snapshot = copytrader.getTrackedWhalesSnapshot();
-    const traders = Array.isArray(snapshot) ? snapshot : (snapshot?.traders || []);
-    res.json({ ok: true, traders, enabled: copytrader.isEnabled() });
+    // getTrackedWhalesSnapshot() returns { whales: [...], stats, enabled, ... }
+    const traders = snapshot?.whales || [];
+    res.json({
+      ok:        true,
+      traders,
+      stats:     snapshot?.stats || {},
+      enabled:   snapshot?.enabled ?? true,
+      updatedAt: snapshot?.updatedAt || null,
+      lastLeaderboardUpdate: snapshot?.lastLeaderboardUpdate || null,
+    });
   } catch(e) {
     res.json({ traders: [], error: e.message });
   }

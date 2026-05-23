@@ -1051,10 +1051,12 @@ nav::-webkit-scrollbar{display:none;}
 <!-- WHALES -->
 <div class="page" id="page-whales">
   <div class="panel">
-    <div class="sec-title">Whale Activity — Tracked Traders</div>
-    <div style="font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim);letter-spacing:1px;margin-bottom:14px;line-height:1.6">
-      MONITORING TOP TRADERS FROM HYPERLIQUID & BINANCE.<br>
-      DASHES SHOWN WHEN TRADERS HAVE NO OPEN POSITIONS.<br>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="sec-title" style="margin:0">Whale Activity — Tracked Traders</div>
+      <div id="whale-meta" style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)"></div>
+    </div>
+    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);letter-spacing:1px;margin-bottom:14px;line-height:1.6">
+      MONITORING TOP TRADERS FROM HYPERLIQUID & BYBIT.<br>
       ALERTS DELIVERED VIA TELEGRAM IN REAL-TIME.
     </div>
     <div id="whale-body"><div class="empty">LOADING WHALE DATA...</div></div>
@@ -1835,65 +1837,87 @@ async function addDCA(){
 
 // ── WHALES ────────────────────────────────────────────────────
 async function loadWhales(){
-  const d = await safeFetch('/api/whales', { traders:[], positions:[] });
-    const el=document.getElementById('whale-body');
-    // Handle different formats from copytrader module
-    let positions=[];
-    if(d.positions) positions=d.positions;
-    else if(d.whales) positions=d.whales;
-    else if(Array.isArray(d)) positions=d;
-    else if(d.traders) {
-      // Format: {traders: [{name, positions:[]}]}
-      d.traders.forEach(t => {
-        (t.positions||t.pos||[]).forEach(p => {
-          positions.push({
-            name: t.name||t.handle,
-            symbol: p.symbol||p.coin,
-            side: p.side||p.direction,
-            size: p.size||p.notional||p.qty,
-            pnl: p.pnl||p.unrealisedPnl||0,
-            leverage: p.leverage,
-          });
-        });
-      });
-    }
-    const traders = d.traders || [];
+  const d = await safeFetch('/api/whales', { traders:[], stats:{} });
+  const el = document.getElementById('whale-body');
+  const meta = document.getElementById('whale-meta');
 
-    if(!positions.length && !traders.length){
-      el.innerHTML = '<div class="empty">NO WHALE DATA — MONITORING ACTIVE</div>';
-      return;
-    }
+  if (meta && d.stats) {
+    const tracked = d.stats.tracked || d.traders?.length || 0;
+    const opens   = d.stats.opens  || 0;
+    const closes  = d.stats.closes || 0;
+    const updated = d.lastLeaderboardUpdate
+      ? new Date(d.lastLeaderboardUpdate).toLocaleString('ru-RU',{hour:'2-digit',minute:'2-digit'})
+      : '—';
+    meta.innerHTML = `<span style="color:var(--green)">● LIVE</span> · ${tracked} traders · +${opens}/-${closes} alerts · updated ${updated}`;
+  }
 
-    if(!positions.length){
-      // Show only traders without empty position columns
-      el.innerHTML = `<div style="margin-bottom:16px;padding:14px;background:var(--panel2);border:1px solid var(--border);font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim);letter-spacing:1px;line-height:1.6">
-        TRACKING <span style="color:var(--green)">${traders.length} WHALES</span> ON HYPERLIQUID & BINANCE — WAITING FOR LARGE POSITIONS TO OPEN.<br>
-        ALERTS WILL BE SENT TO TELEGRAM AUTOMATICALLY.
+  const traders = d.traders || [];
+
+  if (!traders.length) {
+    el.innerHTML = `<div style="padding:20px 0">
+      <div class="empty" style="margin-bottom:12px">NO WHALE DATA — MONITORING ACTIVE</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);line-height:1.8">
+        Bot is scanning Hyperliquid &amp; Bybit leaderboards.<br>
+        Data appears after first cycle (~5 min after deploy).<br>
+        Check Telegram for live alerts.
       </div>
-      <table class="tbl"><thead><tr><th>#</th><th>Trader Address</th><th>Platform</th><th>Status</th></tr></thead><tbody>${
-        traders.slice(0,15).map((t,i)=>{
-          const addr = t.name || t.handle || t.address || 'Whale';
-          const platform = t.platform || t.source || 'HL';
-          return `<tr>
-            <td style="color:var(--dim);font-family:'DM Mono',monospace;font-size:.55rem">${(i+1).toString().padStart(2,'0')}</td>
-            <td style="font-family:'DM Mono',monospace;font-size:.65rem">${addr.substring(0,24)}</td>
-            <td><span class="badge ${platform==='BN'?'b-yellow':'b-blue'}">${platform==='BN'?'BINANCE':'HYPERLIQUID'}</span></td>
-            <td><span class="badge b-green">ACTIVE</span></td>
-          </tr>`;
-        }).join('')
-      }</tbody></table>`;
-      return;
+    </div>`;
+    return;
+  }
+
+  const withPos    = traders.filter(t => t.positions?.length);
+  const withoutPos = traders.filter(t => !t.positions?.length);
+
+  let html = '';
+
+  if (withPos.length) {
+    html += `<div style="margin-bottom:20px">
+      <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--green);letter-spacing:2px;margin-bottom:10px">● OPEN POSITIONS</div>
+      <table class="tbl"><thead><tr>
+        <th>Trader</th><th>Platform</th><th>Coin</th><th>Side</th><th>Size</th><th>Entry</th><th>Lev</th>
+      </tr></thead><tbody>`;
+    for (const t of withPos) {
+      for (const p of t.positions) {
+        const sc = p.side === 'LONG' ? 'b-green' : 'b-red';
+        const src = t.source === 'hyperliquid' ? 'b-blue' : 'b-yellow';
+        const srcLabel = t.source === 'hyperliquid' ? 'HL' : 'BYBIT';
+        html += `<tr>
+          <td style="font-family:'DM Mono',monospace;font-size:.58rem"><strong>${t.name.substring(0,16)}</strong><br>
+            <span style="font-size:.45rem;color:var(--dim)">+${t.pnlMonth||0}%/mo</span></td>
+          <td><span class="badge ${src}">${srcLabel}</span></td>
+          <td><strong>${p.coin}</strong></td>
+          <td><span class="badge ${sc}">${p.side}</span></td>
+          <td style="font-family:'DM Mono',monospace">$${(p.sizeUsd/1000).toFixed(0)}K</td>
+          <td style="font-family:'DM Mono',monospace;font-size:.55rem">${p.entryPx ? '$'+Number(p.entryPx).toFixed(4) : '—'}</td>
+          <td style="font-family:'DM Mono',monospace">${p.leverage ? p.leverage+'x' : '—'}</td>
+        </tr>`;
+      }
     }
-    el.innerHTML=`<table class="tbl"><thead><tr><th>Trader</th><th>Symbol</th><th>Side</th><th>Size</th><th>PnL</th></tr></thead><tbody>${
-      positions.slice(0,20).map(t=>`<tr>
-        <td style="font-family:'DM Mono',monospace;font-size:.6rem">${(t.name||t.trader||'Whale').substring(0,14)}</td>
-        <td><strong>${t.symbol||t.coin||'—'}</strong></td>
-        <td><span class="badge ${t.side==='Buy'||t.side==='Long'||t.side==='long'?'b-green':'b-red'}">${t.side||'—'}</span></td>
-        <td style="font-family:'DM Mono',monospace">$${((Number(t.size)||0)/1e6).toFixed(1)}M</td>
-        <td class="${(t.pnl||0)>=0?'c-green':'c-red'}" style="font-family:'DM Mono',monospace">${(t.pnl||0)>=0?'+':''}${Number(t.pnl||0).toFixed(1)}%</td>
-      </tr>`).join('')
-    }</tbody></table>`;
+    html += `</tbody></table></div>`;
+  }
+
+  if (withoutPos.length) {
+    html += `<div>
+      <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:2px;margin-bottom:10px">WATCHING (NO OPEN POSITIONS)</div>
+      <table class="tbl"><thead><tr><th>#</th><th>Trader</th><th>Platform</th><th>Monthly PnL</th><th>WR</th><th>Status</th></tr></thead><tbody>`;
+    withoutPos.slice(0, 20).forEach((t, i) => {
+      const src = t.source === 'hyperliquid' ? 'b-blue' : 'b-yellow';
+      const srcLabel = t.source === 'hyperliquid' ? 'HYPERLIQUID' : 'BYBIT';
+      html += `<tr>
+        <td style="color:var(--dim);font-family:'DM Mono',monospace">${String(i+1).padStart(2,'0')}</td>
+        <td style="font-family:'DM Mono',monospace;font-size:.62rem">${t.name.substring(0,20)}</td>
+        <td><span class="badge ${src}">${srcLabel}</span></td>
+        <td class="c-green" style="font-family:'DM Mono',monospace">+${t.pnlMonth||0}%</td>
+        <td style="font-family:'DM Mono',monospace">${t.wr != null ? t.wr+'%' : '—'}</td>
+        <td><span class="badge b-dim">WATCHING</span></td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  el.innerHTML = html;
 }
+
 
 // ── NEWS ──────────────────────────────────────────────────────
 async function loadNews(){

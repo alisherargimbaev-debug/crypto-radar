@@ -2202,15 +2202,13 @@ document.addEventListener('click', function(e) {
 
 function showPageDD(pageId) {
   closeDropdowns();
-  // Убираем active-page
   document.querySelectorAll('.nav-dd-item').forEach(i => i.classList.remove('active-page'));
   document.querySelectorAll('.nav-dropdown-btn').forEach(b => b.classList.remove('active'));
 
-  // Подсвечиваем нужную группу
   const groups = {
     trading: ['overview','live','paper','strategies'],
     analysis: ['metrics','trackrecord','radar','whales'],
-    tools: ['calc','news','dca','investor'],
+    tools: ['calc','news','dca','investor','montecarlo','backtest'],
   };
   for (const [group, pages] of Object.entries(groups)) {
     if (pages.includes(pageId)) {
@@ -2220,6 +2218,8 @@ function showPageDD(pageId) {
     }
   }
   showPage(pageId);
+  // Запускаем анимацию investor страницы
+  if (pageId === 'investor') setTimeout(initInvestorAnimation, 50);
 }
 
 // ── TRACK RECORD FILTER ─────────────────────────────────────────
@@ -2427,7 +2427,6 @@ function renderBacktest(data, coin, period) {
 
 // ── INVESTOR ANIMATION ───────────────────────────────────────
 function initInvestorAnimation() {
-  // Animate in elements
   setTimeout(() => {
     const t = document.getElementById('inv-title');
     const s = document.getElementById('inv-sub');
@@ -2437,27 +2436,16 @@ function initInvestorAnimation() {
     if(b) { b.style.opacity='1'; }
   }, 100);
 
-  // Floating particles
   const container = document.getElementById('inv-particles');
   if (!container) return;
   container.innerHTML = '';
   for (let i = 0; i < 20; i++) {
     const dot = document.createElement('div');
     const size = Math.random() * 3 + 1;
-    dot.style.cssText = `
-      position:absolute;
-      width:${size}px;height:${size}px;
-      border-radius:50%;
-      background:rgba(255,255,255,${Math.random()*0.15+0.03});
-      left:${Math.random()*100}%;
-      top:${Math.random()*100}%;
-      animation:floatParticle ${Math.random()*8+6}s ease-in-out infinite;
-      animation-delay:${Math.random()*4}s;
-    `;
+    dot.style.cssText = `position:absolute;width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,${Math.random()*0.15+0.03});left:${Math.random()*100}%;top:${Math.random()*100}%;animation:floatParticle ${Math.random()*8+6}s ease-in-out infinite;animation-delay:${Math.random()*4}s;`;
     container.appendChild(dot);
   }
 
-  // Animated number counter for AUM
   const aumEl = document.getElementById('inv-aum');
   if (aumEl) {
     let start = 0, target = 9379, dur = 1500;
@@ -2469,13 +2457,6 @@ function initInvestorAnimation() {
     };
     requestAnimationFrame(step);
   }
-}
-
-// Запускаем анимацию когда открывается investor страница
-const origShowPageDD = showPageDD;
-function showPageDD(page, btn) {
-  origShowPageDD(page, btn);
-  if (page === 'investor') setTimeout(initInvestorAnimation, 50);
 }
 
 loadOverview();

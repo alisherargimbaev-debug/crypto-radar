@@ -13,6 +13,11 @@ try {
 
 // Delta Tracker — реальный Delta Profile через OKX WebSocket
 let deltaTracker = null;
+try { deltaTracker = require('./delta-tracker'); } catch(e) { console.log('[DELTA] delta-tracker не найден:', e.message); }
+
+// Footprint Engine — агрегация тиков по ценовым уровням (GEX confirmation)
+let footprint = null;
+try { footprint = require('./footprint'); } catch(e) { console.log('[FOOTPRINT] footprint.js не найден:', e.message); }
 try {
   deltaTracker = require('./delta-tracker');
   console.log('[DELTA] Tracker загружен ✅');
@@ -4533,67 +4538,65 @@ if (k1h.length >= 55) {
 
     // ════════════════════════════════════════════════════════
     // S14 — Whale Follow (15m) — PAPER ONLY (сбор данных)
-    // Следуем за крупными трейдерами с Hyperliquid + Bybit
+    // Следуем за крупными трейдерами с Hyperliquid
     // ════════════════════════════════════════════════════════
     try {
+      // Получаем недавние действия китов через copytrader модуль
       let whaleActions = [];
       try {
-        if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
-          const snapshot = copytrader.getTrackedWhalesSnapshot();
-          // snapshot = { whales: [{name, source, positions:[{coin,side,sizeUsd}]}, ...] }
-          const whales = snapshot?.whales || [];
-          whaleActions = whales.flatMap(w =>
-            (w.positions || []).map(p => ({
-              symbol:   p.coin,
-              side:     (p.side || '').toLowerCase(), // 'LONG'/'SHORT' → 'long'/'short'
-              size:     p.sizeUsd || 0,
-              trader:   w.name,
-              pnlMonth: w.pnlMonth || 0,
+        if (typeof copytrader?.getRecentActions === 'function') {
+          whaleActions = copytrader.getRecentActions(15) || [];
+        } else if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
+          const snapshot = copytrader.getTrackedWhalesSnapshot() || [];
+          whaleActions = snapshot.flatMap(w =>
+            Object.values(w.positions || {}).map(p => ({
+              symbol: p.coin,
+              side:   p.side?.toLowerCase(),
+              size:   p.sizeUsd || 0,
             }))
           );
         }
-      } catch(ce) { console.error('[S14] copytrader error:', ce.message); }
+      } catch(ce) { /* copytrader недоступен */ }
 
       if (whaleActions.length > 0) {
+        // Какой символ нас интересует (без -USDT-SWAP)
         const symbol = instId.replace('-USDT-SWAP', '').replace('-USDT', '');
 
+        // Ищем 2+ китов открывших одинаковое направление по этой монете
         const matching = whaleActions.filter(a => {
-          const aSym = (a.symbol || '').replace('-USDT-SWAP','').replace('-USDT','').replace('USDT','').toUpperCase();
-          return aSym === symbol.toUpperCase();
+          const aSym = (a.symbol || a.coin || '').replace('-USDT-SWAP', '').replace('-USDT', '').replace('USDT', '');
+          return aSym.toUpperCase() === symbol.toUpperCase();
         });
 
-        if (matching.length >= 1) {
+        if (matching.length >= 2) {
+          // Считаем направление: сколько лонгов, сколько шортов
           let longCnt = 0, shortCnt = 0, totalSize = 0;
-          let longSize = 0, shortSize = 0;
           for (const m of matching) {
-            const size = parseFloat(m.size || 0);
-            if (m.side === 'long') { longCnt++; longSize += size; totalSize += size; }
-            else if (m.side === 'short') { shortCnt++; shortSize += size; totalSize += size; }
+            const side = (m.side || m.direction || '').toLowerCase();
+            const size = parseFloat(m.size || m.notional || m.qty || 0);
+            if (side === 'long' || side === 'buy') { longCnt++; totalSize += size; }
+            else if (side === 'short' || side === 'sell') { shortCnt++; totalSize += size; }
           }
 
-          const dominantLong  = longSize  > shortSize * 1.5 && longCnt  >= 1;
-          const dominantShort = shortSize > longSize  * 1.5 && shortCnt >= 1;
-
-          if (totalSize >= 50000 && (dominantLong || dominantShort)) {
-            const dir  = dominantLong ? 'long' : 'short';
+          // Минимум 2 кита и общий размер $500k+
+          if (totalSize >= 500000 && (longCnt >= 2 || shortCnt >= 2)) {
+            const dir = longCnt > shortCnt ? 'long' : 'short';
             const sltp = calcSLTP(price, dir, '1️⃣4️⃣ Whale Follow (15m)');
 
-            let conf = 60;
-            if (matching.length >= 2) conf += 10;
+            // Confidence: больше китов и крупнее объём = выше уверенность
+            let conf = 65;
             if (matching.length >= 3) conf += 8;
-            if (totalSize >= 500000)  conf += 7;
-            if (totalSize >= 2000000) conf += 5;
-            const avgPnl = matching.reduce((s,m) => s + (m.pnlMonth||0), 0) / matching.length;
-            if (avgPnl >= 100) conf += 5;
-            if (avgPnl >= 200) conf += 3;
+            if (matching.length >= 5) conf += 5;
+            if (totalSize >= 1000000) conf += 5;
+            if (totalSize >= 5000000) conf += 7;
 
             signals.push({
-              strategy:   '1️⃣4️⃣ Whale Follow (15m)',
+              strategy:  '1️⃣4️⃣ Whale Follow (15m)',
               instId, direction: dir,
-              signal:     dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-              price, confidence: Math.min(conf, 90),
-              metrics:    `${matching.length} whale(s) · $${(totalSize/1e3).toFixed(0)}K · ${longCnt}L/${shortCnt}S · avgPnL+${avgPnl.toFixed(0)}%/mo`,
-              paperOnly:  true,
+              signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+              price, confidence: Math.min(conf, 92),
+              metrics:   `${matching.length} китов · $${(totalSize/1e6).toFixed(2)}M · ${longCnt}L/${shortCnt}S`,
+              paperOnly: true, // paper-only пока нет достаточно данных
               ...sltp,
             });
           }
@@ -4851,7 +4854,7 @@ function buildSignalAlert(sig) {
     ? Math.abs((parseFloat(sig.sl) - sig.price) / sig.price * 100).toFixed(2)
     : null;
   if (slPct) sig.slPctNote = `📏 ATR стоп: ${slPct}% от цены`;
-  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.mpocNote, sig.absNote, sig.deltaNote, sig.gexNote, sig.assetNote, sig.aiNote]
+  const notes = [sig.srNote, sig.slNote, sig.slPctNote, sig.fngNote, sig.sessionNote, sig.dowNote, sig.macroNote, sig.etfNote, sig.regimeNote, sig.lsrNote, sig.btcDomNote, sig.cbNote, sig.liqNote, sig.liqLevelNote, sig.patternNote, sig.chartPatNote, sig.newsNote, sig.whaleNote, sig.trendNote, sig.ma200Note, sig.vwapNote, sig.mtfNote, sig.obvNote, sig.bbNote, sig.volNote, sig.fvgNote, sig.fibNote, sig.pocNote, sig.mpocNote, sig.absNote, sig.deltaNote, sig.gexNote, sig.footprintNote, sig.assetNote, sig.aiNote]
     .filter(Boolean).map(n => `  ${n}`).join('\n');
   const duration = estimateTradeDuration(sig.strategy, sig.atr, sig.price);
 
@@ -6241,6 +6244,63 @@ if (!store.observeMode) {
             }
           }
         } catch(e) { /* GEX не критичен */ }
+
+        // 12. FOOTPRINT — подтверждение через тиковый анализ на GEX уровне
+        try {
+          if (footprint?.isReady()) {
+            footprint.addCoin(coin.instId);
+
+            const fp = footprint.getFootprint(coin.instId);
+            if (fp && fp.tradesCount >= 20) {
+
+              // ── Imbalance: покупатели/продавцы доминируют на уровнях ──
+              if (sig.direction === 'long' && fp.imbalanceBullish) {
+                sig.confidence   = Math.min(sig.confidence + 12, 100);
+                sig.footprintNote = `🦶 Footprint: ${fp.bullishImbalances.length} bullish imbalance zones → +12%`;
+              } else if (sig.direction === 'short' && fp.imbalanceBearish) {
+                sig.confidence   = Math.min(sig.confidence + 12, 100);
+                sig.footprintNote = `🦶 Footprint: ${fp.bearishImbalances.length} bearish imbalance zones → +12%`;
+              }
+
+              // ── Hidden pressure: цена растёт но продавцы скрыто давят ──
+              if (sig.direction === 'long' && fp.hiddenSelling) {
+                sig.confidence   = Math.max(sig.confidence - 12, 0);
+                sig.footprintNote = `⚠️ Footprint: hidden selling pressure → -12%`;
+              } else if (sig.direction === 'short' && fp.hiddenBuying) {
+                sig.confidence   = Math.max(sig.confidence - 12, 0);
+                sig.footprintNote = `⚠️ Footprint: hidden buying pressure → -12%`;
+              }
+
+              // ── Unfinished auction: цена вернётся к POC ──────────────
+              if (fp.unfinishedAuction && fp.poc) {
+                const priceNow = parseFloat(sig.price);
+                const pocDir   = fp.poc > priceNow ? 'long' : 'short';
+                if (pocDir === sig.direction) {
+                  sig.confidence   = Math.min(sig.confidence + 8, 100);
+                  sig.footprintNote = (sig.footprintNote || '') + ` 🎯 Unfinished auction POC $${fp.poc.toFixed(2)} → +8%`;
+                }
+              }
+
+              // ── GEX + Footprint комбо: максимальный бонус ────────────
+              if (sig.gexNote && sig.footprintNote && !fp.hiddenSelling && !fp.hiddenBuying) {
+                sig.confidence   = Math.min(sig.confidence + 5, 100);
+                sig.footprintNote = (sig.footprintNote || '') + ` ✅ GEX+FP combo → +5%`;
+              }
+
+              // ── Delta divergence через footprint ─────────────────────
+              const fpDiv = footprint.getFootprintDivergence(coin.instId);
+              if (fpDiv) {
+                if (fpDiv.type === 'bullish' && sig.direction === 'long') {
+                  sig.confidence   = Math.min(sig.confidence + 10, 100);
+                  sig.footprintNote = `🔄 FP Bullish Delta Div → разворот вверх → +10%`;
+                } else if (fpDiv.type === 'bearish' && sig.direction === 'short') {
+                  sig.confidence   = Math.min(sig.confidence + 10, 100);
+                  sig.footprintNote = `🔄 FP Bearish Delta Div → разворот вниз → +10%`;
+                }
+              }
+            }
+          }
+        } catch(e) { /* Footprint не критичен */ }
 
         filtered.push(sig);
       }
@@ -8078,6 +8138,16 @@ setTimeout(() => {
     ];
     deltaTracker.start(TOP_DELTA_COINS);
     console.log('[DELTA] Tracker запущен — подписан на', TOP_DELTA_COINS.length, 'монет');
+  }
+
+  // Запускаем Footprint Engine — те же монеты что и Delta
+  if (footprint) {
+    const TOP_FP_COINS = [
+      'BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP',
+      'BNB-USDT-SWAP', 'XRP-USDT-SWAP', 'DOGE-USDT-SWAP',
+    ];
+    footprint.start(TOP_FP_COINS);
+    console.log('[FOOTPRINT] Engine запущен — подписан на', TOP_FP_COINS.length, 'монет');
   }
 })();
 

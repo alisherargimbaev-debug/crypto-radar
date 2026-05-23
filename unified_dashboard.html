@@ -59,8 +59,13 @@ body::before{content:'';position:fixed;inset:0;background-image:url("data:image/
 /* ── HEADER ── */
 header{display:flex;align-items:center;justify-content:space-between;padding:12px 0 16px;flex-wrap:wrap;gap:10px;}
 .logo{display:flex;align-items:center;gap:12px;}
-.logo-svg{width:36px;height:36px;animation:spin 4s linear infinite;}
-@keyframes spin{to{transform:rotate(360deg);}}
+.logo-svg{width:44px;height:44px;}
+@keyframes apexPulse{0%,100%{filter:drop-shadow(0 0 3px rgba(255,255,255,0.15));}50%{filter:drop-shadow(0 0 8px rgba(255,255,255,0.35));}}
+@keyframes apexDraw{from{stroke-dashoffset:400;}to{stroke-dashoffset:0;}}
+[data-theme="light"] .logo-svg polygon, [data-theme="light"] .logo-svg polyline, [data-theme="light"] .logo-svg circle { stroke: #111; fill: none; }
+[data-theme="light"] .logo-svg circle[fill="white"] { fill: #111; stroke: none; }
+[data-theme="light"] .logo-svg { animation: apexPulseDark 3s ease-in-out infinite; }
+@keyframes apexPulseDark{0%,100%{filter:drop-shadow(0 0 3px rgba(0,0,0,0.1));}50%{filter:drop-shadow(0 0 6px rgba(0,0,0,0.25));}}
 .logo-text{display:flex;flex-direction:column;}
 .logo-title{font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:2px;color:var(--text);}
 .logo-sub{font-family:'DM Mono',monospace;font-size:0.5rem;color:var(--dim);letter-spacing:3px;text-transform:uppercase;}
@@ -519,7 +524,7 @@ nav::-webkit-scrollbar{display:none;}
 <body>
 
 <!-- GLOBAL PARTICLE BACKGROUND -->
-<canvas id="global-particles" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:0.55"></canvas>
+<canvas id="global-particles" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:0.85"></canvas>
 
 <!-- TICKER -->
 <div class="ticker-wrap"><div class="ticker" id="ticker"></div></div>
@@ -528,9 +533,19 @@ nav::-webkit-scrollbar{display:none;}
 <!-- HEADER -->
 <header>
   <div class="logo">
-    <svg class="logo-svg" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".3"/><circle cx="18" cy="18" r="10" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".5"/><circle cx="18" cy="18" r="4" fill="currentColor"/></svg>
+    <svg class="logo-svg" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation:apexPulse 3s ease-in-out infinite">
+      <!-- Outer triangle -->
+      <polygon points="22,4 42,40 2,40" stroke="white" stroke-width="1.5" stroke-linejoin="round" fill="none" stroke-dasharray="400" style="animation:apexDraw 1.8s ease forwards"/>
+      <!-- Inner ghost triangle -->
+      <polygon points="22,12 36,36 8,36" stroke="white" stroke-width="0.5" stroke-linejoin="round" fill="none" opacity="0.25"/>
+      <!-- Chart line inside -->
+      <polyline points="10,34 17,26 22,29 28,20 34,34" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9"/>
+      <!-- Dots on chart -->
+      <circle cx="22" cy="29" r="1.4" fill="white" opacity="0.9"/>
+      <circle cx="28" cy="20" r="1.6" fill="white"/>
+    </svg>
     <div class="logo-text">
-      <div class="logo-title">QUANTUM FUND</div>
+      <div class="logo-title">APEX ALGO FUND</div>
       <div class="logo-sub">AI HEDGE FUND · MULTI ASSET</div>
     </div>
   </div>
@@ -701,6 +716,16 @@ nav::-webkit-scrollbar{display:none;}
     <div id="paper-observe-since" style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);margin-left:4px"></div>
     <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)">Showing trades since last /observe</div>
   </div>
+  <!-- Date filter -->
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--panel);border:1px solid var(--border)">
+    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">PERIOD:</div>
+    <input type="date" id="date-from" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:'DM Mono',monospace;font-size:.58rem;outline:none;cursor:pointer">
+    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">—</div>
+    <input type="date" id="date-to" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:'DM Mono',monospace;font-size:.58rem;outline:none;cursor:pointer">
+    <button class="btn" onclick="applyDateFilter()" style="padding:5px 12px">APPLY</button>
+    <button class="btn" onclick="resetDateFilter()" style="padding:5px 12px;border-color:var(--dim);color:var(--dim)">RESET</button>
+    <div id="filter-info" style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--green);margin-left:auto"></div>
+  </div>
 
   <div class="stats-row" id="paper-stats"></div>
   <div class="grid-2">
@@ -752,15 +777,25 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- TRACK RECORD -->
 <div class="page" id="page-trackrecord">
-  <div style="display:flex;gap:8px;margin-bottom:16px">
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
     <button class="btn" id="tr-btn-all" onclick="setTrackFilter('all')" style="opacity:1">All</button>
     <button class="btn" id="tr-btn-live" onclick="setTrackFilter('live')" style="opacity:0.5">Live Bot</button>
     <button class="btn" id="tr-btn-paper" onclick="setTrackFilter('paper')" style="opacity:0.5">Paper</button>
     <div id="tr-filter-label" style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);align-self:center;margin-left:8px">ALL TRADES</div>
   </div>
+  <!-- Date range filter -->
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--panel);border:1px solid var(--border)">
+    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">PERIOD:</div>
+    <input type="date" id="tr-date-from" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:'DM Mono',monospace;font-size:.58rem;outline:none;cursor:pointer">
+    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">—</div>
+    <input type="date" id="tr-date-to" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:'DM Mono',monospace;font-size:.58rem;outline:none;cursor:pointer">
+    <button class="btn" onclick="applyTrDateFilter()" style="padding:5px 12px">APPLY</button>
+    <button class="btn" onclick="resetTrDateFilter()" style="padding:5px 12px;border-color:var(--dim);color:var(--dim)">RESET</button>
+    <div id="tr-filter-info" style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--green);margin-left:auto"></div>
+  </div>
   <div class="panel" style="margin-bottom:16px">
     <div class="sec-title">Equity Curve</div>
-    <div class="chart-wrap" style="height:280px"><canvas id="equityChart"></canvas></div>
+    <div class="chart-wrap" style="height:280px"><canvas id="tr-chart"></canvas></div>
   </div>
   <div class="grid-3" style="margin-bottom:16px">
     <div class="stat-card"><div class="stat-label">Total PnL</div><div class="stat-value" id="tr-pnl">—</div><div class="stat-sub">CUMULATIVE</div></div>
@@ -769,7 +804,7 @@ nav::-webkit-scrollbar{display:none;}
   </div>
   <div class="panel">
     <div class="sec-title">Monthly Performance</div>
-    <div class="chart-wrap" style="height:180px"><canvas id="monthlyChart"></canvas></div>
+    <div class="chart-wrap" style="height:180px"><canvas id="tr-monthly-chart"></canvas></div>
   </div>
 </div>
 
@@ -1104,6 +1139,8 @@ const SUPABASE_KEY = '%%SUPABASE_KEY%%';
 const DCA_KEY = 'cr_dca_v1';
 let dcaData = JSON.parse(localStorage.getItem(DCA_KEY) || '{"investments":[],"btcPrice":95000}');
 let equityChart, monthlyChart;
+let trackFilter = 'all';
+let trFilterFrom = null, trFilterTo = null;
 let currentLang = localStorage.getItem('cr_lang') || 'en';
 
 // ── THEME ────────────────────────────────────────────────────
@@ -1357,11 +1394,12 @@ function renderPaperPage(d) {
       const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
       const openTime  = t.ts       ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
       const closeTime = t.closedAt ? new Date(t.closedAt).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const stratShort = (t.strategy || '').split(' ').slice(0, 2).join(' ') || '—';
       return `<div class="sig-row" style="flex-wrap:wrap;gap:4px;padding:8px 0;border-bottom:1px solid var(--border)">
         <div class="sig-coin">${coin}</div>
         <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
         <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">
-          📅 ${openTime} → ${closeTime}
+          📅 ${openTime} → ${closeTime} · <span style="color:var(--text);opacity:.5">${stratShort}</span>
         </div>
         <div>${icon}</div>
         <div class="sig-conf ${pc}">${pnlStr} <span style="opacity:.5;font-size:.7em">(5x)</span></div>
@@ -1412,10 +1450,11 @@ function paperShowAll() {
     const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
     const openTime  = t.ts       ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
     const closeTime = t.closedAt ? new Date(t.closedAt).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const stratShort = (t.strategy || '').split(' ').slice(0, 2).join(' ') || '—';
     return `<div class="sig-row" style="flex-wrap:wrap;gap:4px;padding:8px 0;border-bottom:1px solid var(--border)">
       <div class="sig-coin">${coin}</div>
       <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
-      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">📅 ${openTime} → ${closeTime}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">📅 ${openTime} → ${closeTime} · <span style="color:var(--text);opacity:.5">${stratShort}</span></div>
       <div>${icon}</div>
       <div class="sig-conf ${pc}">${pnlStr} <span style="opacity:.5;font-size:.7em">(5x)</span></div>
     </div>`;
@@ -1596,13 +1635,21 @@ async function loadTrackRecord() {
   const liveClosed  = (liveData.closed  || []).filter(t => t.outcome && t.outcome !== 'open');
   const paperClosed = (paperData.closed || []).filter(t => t.outcome && t.outcome !== 'open');
 
-  // Выбираем данные в зависимости от фильтра
-  const f    = currentTrackFilter || 'all';
-  const data = f === 'live'  ? liveClosed
-             : f === 'paper' ? paperClosed
-             : [...liveClosed, ...paperClosed].sort((a,b) => (b.closedAt||0)-(a.closedAt||0));
+  const f = trackFilter || 'all';
+  let data = f === 'live'  ? liveClosed
+           : f === 'paper' ? paperClosed
+           : [...liveClosed, ...paperClosed].sort((a,b) => (b.closedAt||0)-(a.closedAt||0));
 
-  // Метки для заголовка
+  // Apply date filter
+  if (trFilterFrom || trFilterTo) {
+    data = data.filter(t => {
+      const ts = t.closedAt || t.ts || 0;
+      if (trFilterFrom && ts < trFilterFrom) return false;
+      if (trFilterTo   && ts > trFilterTo)   return false;
+      return true;
+    });
+  }
+
   const srcLabel = f === 'live' ? 'LIVE BOT' : f === 'paper' ? 'PAPER' : 'ALL';
 
   // Equity curve
@@ -1610,32 +1657,33 @@ async function loadTrackRecord() {
   const eqPoints = data.map(t => { eq += (t.pnl||0)*5; return parseFloat(eq.toFixed(2)); });
   const labels   = data.map((t,i) => '#'+(i+1));
 
-  if (equityChart) equityChart.destroy();
+  if (equityChart) { equityChart.destroy(); equityChart = null; }
   const ctx = document.getElementById('tr-chart');
-  if (!ctx) return;
-  equityChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        data: eqPoints,
-        borderColor: eq >= 0 ? '#22c55e' : '#ef4444',
-        borderWidth: 2,
-        pointRadius: data.length < 50 ? 3 : 0,
-        tension: 0.3,
-        fill: true,
-        backgroundColor: eq >= 0 ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.05)',
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } },
-        y: { ticks: { callback: v => v+'%', font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
+  if (ctx) {
+    equityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          data: eqPoints,
+          borderColor: eq >= 0 ? '#22c55e' : '#ef4444',
+          borderWidth: 2,
+          pointRadius: data.length < 50 ? 3 : 0,
+          tension: 0.3,
+          fill: true,
+          backgroundColor: eq >= 0 ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.05)',
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } },
+          y: { ticks: { callback: v => v+'%', font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
+        }
       }
-    }
-  });
+    });
+  }
 
   // Stats
   const wins   = data.filter(t => t.outcome==='tp1'||t.outcome==='tp2');
@@ -1655,18 +1703,50 @@ async function loadTrackRecord() {
     byS[k].total++;
   });
   const stratList = Object.entries(byS).filter(([,v])=>v.total>=2).map(([n,v])=>({n,wr:Math.round(v.wins/v.total*100),total:v.total}));
-  const bestS  = stratList.sort((a,b)=>b.wr-a.wr)[0];
-  const worstS = stratList.sort((a,b)=>a.wr-b.wr)[0];
+  const bestS  = [...stratList].sort((a,b)=>b.wr-a.wr)[0];
+  const worstS = [...stratList].sort((a,b)=>a.wr-b.wr)[0];
 
   const se = id => { const e=document.getElementById(id); return e ? (v,c)=>{e.textContent=v;if(c)e.className='m-val '+c;} : ()=>{}; };
-  se('tr-total')(data.length + ' (' + srcLabel + ')');
-  se('tr-wr')(wr + '%', wr>=55?'green':wr>=40?'yellow':'red');
   se('tr-pnl')((totalPnl>=0?'+':'')+totalPnl.toFixed(2)+'%', totalPnl>=0?'green':'red');
-  se('tr-pf')(pf);
-  se('tr-best')(bestS ? bestS.n + ' (' + bestS.wr + '% WR)' : '—');
+  se('tr-best')(bestS  ? bestS.n  + ' (' + bestS.wr  + '% WR)' : '—');
   se('tr-worst')(worstS ? worstS.n + ' (' + worstS.wr + '% WR)' : '—');
-}
 
+  // Monthly performance chart
+  const monthly = {};
+  data.forEach(t => {
+    const d = new Date(t.closedAt || t.ts || 0);
+    const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    if (!monthly[key]) monthly[key] = 0;
+    monthly[key] += (t.pnl||0)*5;
+  });
+  const mKeys = Object.keys(monthly).sort();
+  const mVals = mKeys.map(k => parseFloat(monthly[k].toFixed(2)));
+
+  if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
+  const mCtx = document.getElementById('tr-monthly-chart');
+  if (mCtx && mKeys.length) {
+    monthlyChart = new Chart(mCtx, {
+      type: 'bar',
+      data: {
+        labels: mKeys,
+        datasets: [{
+          data: mVals,
+          backgroundColor: mVals.map(v => v >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)'),
+          borderColor:     mVals.map(v => v >= 0 ? '#22c55e' : '#ef4444'),
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } },
+          y: { ticks: { callback: v => v+'%', font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
+        }
+      }
+    });
+  }
+}
 
 // ── STRATEGIES ────────────────────────────────────────────────
 async function loadStrategies() {
@@ -2294,7 +2374,6 @@ function showPageDD(pageId) {
 }
 
 // ── TRACK RECORD FILTER ─────────────────────────────────────────
-let trackFilter = 'all';
 function setTrackFilter(f) {
   trackFilter = f;
   ['all','live','paper'].forEach(k => {
@@ -2304,6 +2383,26 @@ function setTrackFilter(f) {
   const labels = {all:'ALL TRADES', live:'LIVE BOT ONLY', paper:'PAPER ONLY'};
   const el = document.getElementById('tr-filter-label');
   if (el) el.textContent = labels[f] || '';
+  loadTrackRecord();
+}
+
+function applyTrDateFilter() {
+  const from = document.getElementById('tr-date-from')?.value;
+  const to   = document.getElementById('tr-date-to')?.value;
+  trFilterFrom = from ? new Date(from).getTime() : null;
+  trFilterTo   = to   ? new Date(to + 'T23:59:59').getTime() : null;
+  const info = document.getElementById('tr-filter-info');
+  if (info) info.textContent = (trFilterFrom || trFilterTo) ? `${from||'...'} — ${to||'...'}` : '';
+  loadTrackRecord();
+}
+
+function resetTrDateFilter() {
+  trFilterFrom = null; trFilterTo = null;
+  const df = document.getElementById('tr-date-from');
+  const dt = document.getElementById('tr-date-to');
+  if (df) df.value = ''; if (dt) dt.value = '';
+  const info = document.getElementById('tr-filter-info');
+  if (info) info.textContent = '';
   loadTrackRecord();
 }
 
@@ -2547,11 +2646,11 @@ function initInvestorAnimation() {
     this.reset = function() {
       this.x  = Math.random() * W;
       this.y  = Math.random() * H;
-      this.r  = Math.random() * 1.6 + 0.3;
+      this.r  = Math.random() * 2.0 + 0.5;
       this.vx = (Math.random() - 0.5) * 0.22;
       this.vy = (Math.random() - 0.5) * 0.22 - 0.08;
-      this.alpha = Math.random() * 0.18 + 0.04;
-      this.da = (Math.random() * 0.003 + 0.001) * (Math.random() < 0.5 ? 1 : -1);
+      this.alpha = Math.random() * 0.28 + 0.10;
+      this.da = (Math.random() * 0.004 + 0.001) * (Math.random() < 0.5 ? 1 : -1);
       this.life = 0;
       this.maxLife = 600 + Math.random() * 400;
     };
@@ -2571,7 +2670,8 @@ function initInvestorAnimation() {
     ctx.clearRect(0, 0, W, H);
 
     // Draw subtle connection lines between close particles
-    ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.025)';
     ctx.lineWidth = 0.5;
     for (let i = 0; i < particles.length; i++) {
       for (let j = i + 1; j < particles.length; j++) {
@@ -2589,22 +2689,24 @@ function initInvestorAnimation() {
     }
 
     // Draw particles
+    const particleColor = isDark ? '#fff' : '#000';
+
     for (const p of particles) {
       p.x += p.vx;
       p.y += p.vy;
       p.life++;
       p.alpha += p.da;
-      if (p.alpha > 0.22) { p.alpha = 0.22; p.da *= -1; }
-      if (p.alpha < 0.03) { p.alpha = 0.03; p.da *= -1; }
+      if (p.alpha > 0.38) { p.alpha = 0.38; p.da *= -1; }
+      if (p.alpha < 0.06) { p.alpha = 0.06; p.da *= -1; }
 
       if (p.life > p.maxLife || p.x < -10 || p.x > W+10 || p.y < -10 || p.y > H+10) {
         p.reset();
       }
 
-      ctx.globalAlpha = p.alpha;
+      ctx.globalAlpha = isDark ? p.alpha : p.alpha * 0.5;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = particleColor;
       ctx.fill();
     }
 
@@ -2614,7 +2716,7 @@ function initInvestorAnimation() {
 
   resize();
   window.addEventListener('resize', () => { resize(); });
-  initParticles(70);
+  initParticles(100);
   draw();
 })();
 

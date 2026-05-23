@@ -4533,65 +4533,67 @@ if (k1h.length >= 55) {
 
     // ════════════════════════════════════════════════════════
     // S14 — Whale Follow (15m) — PAPER ONLY (сбор данных)
-    // Следуем за крупными трейдерами с Hyperliquid
+    // Следуем за крупными трейдерами с Hyperliquid + Bybit
     // ════════════════════════════════════════════════════════
     try {
-      // Получаем недавние действия китов через copytrader модуль
       let whaleActions = [];
       try {
-        if (typeof copytrader?.getRecentActions === 'function') {
-          whaleActions = copytrader.getRecentActions(15) || [];
-        } else if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
-          const snapshot = copytrader.getTrackedWhalesSnapshot() || [];
-          whaleActions = snapshot.flatMap(w =>
-            Object.values(w.positions || {}).map(p => ({
-              symbol: p.coin,
-              side:   p.side?.toLowerCase(),
-              size:   p.sizeUsd || 0,
+        if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
+          const snapshot = copytrader.getTrackedWhalesSnapshot();
+          // snapshot = { whales: [{name, source, positions:[{coin,side,sizeUsd}]}, ...] }
+          const whales = snapshot?.whales || [];
+          whaleActions = whales.flatMap(w =>
+            (w.positions || []).map(p => ({
+              symbol:   p.coin,
+              side:     (p.side || '').toLowerCase(), // 'LONG'/'SHORT' → 'long'/'short'
+              size:     p.sizeUsd || 0,
+              trader:   w.name,
+              pnlMonth: w.pnlMonth || 0,
             }))
           );
         }
-      } catch(ce) { /* copytrader недоступен */ }
+      } catch(ce) { console.error('[S14] copytrader error:', ce.message); }
 
       if (whaleActions.length > 0) {
-        // Какой символ нас интересует (без -USDT-SWAP)
         const symbol = instId.replace('-USDT-SWAP', '').replace('-USDT', '');
 
-        // Ищем 2+ китов открывших одинаковое направление по этой монете
         const matching = whaleActions.filter(a => {
-          const aSym = (a.symbol || a.coin || '').replace('-USDT-SWAP', '').replace('-USDT', '').replace('USDT', '');
-          return aSym.toUpperCase() === symbol.toUpperCase();
+          const aSym = (a.symbol || '').replace('-USDT-SWAP','').replace('-USDT','').replace('USDT','').toUpperCase();
+          return aSym === symbol.toUpperCase();
         });
 
-        if (matching.length >= 2) {
-          // Считаем направление: сколько лонгов, сколько шортов
+        if (matching.length >= 1) {
           let longCnt = 0, shortCnt = 0, totalSize = 0;
+          let longSize = 0, shortSize = 0;
           for (const m of matching) {
-            const side = (m.side || m.direction || '').toLowerCase();
-            const size = parseFloat(m.size || m.notional || m.qty || 0);
-            if (side === 'long' || side === 'buy') { longCnt++; totalSize += size; }
-            else if (side === 'short' || side === 'sell') { shortCnt++; totalSize += size; }
+            const size = parseFloat(m.size || 0);
+            if (m.side === 'long') { longCnt++; longSize += size; totalSize += size; }
+            else if (m.side === 'short') { shortCnt++; shortSize += size; totalSize += size; }
           }
 
-          // Минимум 2 кита и общий размер $500k+
-          if (totalSize >= 500000 && (longCnt >= 2 || shortCnt >= 2)) {
-            const dir = longCnt > shortCnt ? 'long' : 'short';
+          const dominantLong  = longSize  > shortSize * 1.5 && longCnt  >= 1;
+          const dominantShort = shortSize > longSize  * 1.5 && shortCnt >= 1;
+
+          if (totalSize >= 50000 && (dominantLong || dominantShort)) {
+            const dir  = dominantLong ? 'long' : 'short';
             const sltp = calcSLTP(price, dir, '1️⃣4️⃣ Whale Follow (15m)');
 
-            // Confidence: больше китов и крупнее объём = выше уверенность
-            let conf = 65;
+            let conf = 60;
+            if (matching.length >= 2) conf += 10;
             if (matching.length >= 3) conf += 8;
-            if (matching.length >= 5) conf += 5;
-            if (totalSize >= 1000000) conf += 5;
-            if (totalSize >= 5000000) conf += 7;
+            if (totalSize >= 500000)  conf += 7;
+            if (totalSize >= 2000000) conf += 5;
+            const avgPnl = matching.reduce((s,m) => s + (m.pnlMonth||0), 0) / matching.length;
+            if (avgPnl >= 100) conf += 5;
+            if (avgPnl >= 200) conf += 3;
 
             signals.push({
-              strategy:  '1️⃣4️⃣ Whale Follow (15m)',
+              strategy:   '1️⃣4️⃣ Whale Follow (15m)',
               instId, direction: dir,
-              signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-              price, confidence: Math.min(conf, 92),
-              metrics:   `${matching.length} китов · $${(totalSize/1e6).toFixed(2)}M · ${longCnt}L/${shortCnt}S`,
-              paperOnly: true, // paper-only пока нет достаточно данных
+              signal:     dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
+              price, confidence: Math.min(conf, 90),
+              metrics:    `${matching.length} whale(s) · $${(totalSize/1e3).toFixed(0)}K · ${longCnt}L/${shortCnt}S · avgPnL+${avgPnl.toFixed(0)}%/mo`,
+              paperOnly:  true,
               ...sltp,
             });
           }

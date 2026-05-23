@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quantum Fund</title>
+<title>Apex Algo Fund</title>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Bebas+Neue&family=Cinzel+Decorative:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/supabase/2.39.3/umd/supabase.min.js"></script>
@@ -518,6 +518,9 @@ nav::-webkit-scrollbar{display:none;}
 </head>
 <body>
 
+<!-- GLOBAL PARTICLE BACKGROUND -->
+<canvas id="global-particles" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:0.55"></canvas>
+
 <!-- TICKER -->
 <div class="ticker-wrap"><div class="ticker" id="ticker"></div></div>
 
@@ -691,15 +694,14 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- PAPER -->
 <div class="page" id="page-paper">
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:14px;background:var(--panel);border:1px solid var(--border)">
-    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">Период:</div>
-    <input type="date" id="date-from" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:'DM Mono',monospace;font-size:.6rem;outline:none;cursor:pointer">
-    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim)">—</div>
-    <input type="date" id="date-to" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:'DM Mono',monospace;font-size:.6rem;outline:none;cursor:pointer">
-    <button class="btn" onclick="applyDateFilter()" style="padding:6px 14px">ПРИМЕНИТЬ</button>
-    <button class="btn" onclick="resetDateFilter()" style="padding:6px 14px;border-color:var(--dim);color:var(--dim)">СБРОС</button>
-    <div id="filter-info" style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--green);margin-left:auto"></div>
+  <!-- Observe session banner -->
+  <div id="paper-observe-banner" style="display:none;padding:12px 16px;background:rgba(100,220,255,0.06);border:1px solid rgba(100,220,255,0.2);margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="width:7px;height:7px;border-radius:50%;background:#64dcff;animation:pulse 2s infinite;flex-shrink:0"></div>
+    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:#64dcff;letter-spacing:1px">OBSERVE SESSION ACTIVE</div>
+    <div id="paper-observe-since" style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);margin-left:4px"></div>
+    <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)">Showing trades since last /observe</div>
   </div>
+
   <div class="stats-row" id="paper-stats"></div>
   <div class="grid-2">
     <div class="panel">
@@ -707,8 +709,14 @@ nav::-webkit-scrollbar{display:none;}
       <div id="paper-open"><div class="empty">NO OPEN POSITIONS</div></div>
     </div>
     <div class="panel">
-      <div class="sec-title">Recent Closed</div>
+      <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Closed Trades</span>
+        <span id="paper-closed-count" style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim)"></span>
+      </div>
       <div id="paper-closed"><div class="empty">NO TRADES YET</div></div>
+      <div id="paper-show-more" style="display:none;text-align:center;padding:10px">
+        <button class="btn" onclick="paperShowAll()" style="padding:5px 16px;font-size:.5rem">SHOW ALL</button>
+      </div>
     </div>
   </div>
   <div class="panel">
@@ -1280,11 +1288,25 @@ function renderOverview(d) {
 
 function renderPaperPage(d) {
   const s = d.stats;
+
+  // Observe session banner
+  const banner = document.getElementById('paper-observe-banner');
+  const sinceEl = document.getElementById('paper-observe-since');
+  if (banner) {
+    if (d.observeMode && d.observeStartedAt) {
+      banner.style.display = 'flex';
+      const since = new Date(d.observeStartedAt);
+      const fmt = since.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      if (sinceEl) sinceEl.textContent = `С ${fmt}`;
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
   const se = document.getElementById('paper-stats');
   if (s) {
     const pc = s.totalPnl >= 0 ? 'green' : 'red';
     const wc = s.wr >= 55 ? 'green' : s.wr >= 40 ? 'yellow' : 'red';
-    // PnL в долларах: риск $47 (0.5% от ~$9,371), RR 1:2
     const riskUSD = 47;
     const pnlUSD = s.wins * riskUSD * 2 - s.losses * riskUSD;
     const pnlUSDStr = (pnlUSD >= 0 ? '+$' : '-$') + Math.abs(pnlUSD).toFixed(0);
@@ -1313,29 +1335,51 @@ function renderPaperPage(d) {
   }).join('') : '<div class="empty">NO OPEN POSITIONS</div>';
 
   const ce = document.getElementById('paper-closed');
-  const closed = (d.closed || []).slice(0, 20);
-  ce.innerHTML = closed.length ? closed.map(t => {
-    const coin = (t.instId||'').replace('-USDT-SWAP','');
-    const dc = t.direction === 'long' ? 'b-green' : 'b-red';
-    // PnL с плечом (5x) для отображения
-    const rawPnl = t.pnl || 0;
-    const levPnl = rawPnl * 5; // 5x leverage
-    const pnlStr = (levPnl >= 0 ? '+' : '') + levPnl.toFixed(2) + '%';
-    const pc = levPnl >= 0 ? 'c-green' : 'c-red';
-    const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
-    // Время открытия и закрытия
-    const openTime  = t.ts       ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-    const closeTime = t.closedAt ? new Date(t.closedAt).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-    return `<div class="sig-row" style="flex-wrap:wrap;gap:4px;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div class="sig-coin">${coin}</div>
-      <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
-      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">
-        📅 ${openTime} → ${closeTime}
-      </div>
-      <div>${icon}</div>
-      <div class="sig-conf ${pc}">${pnlStr} <span style="opacity:.5;font-size:.7em">(5x)</span></div>
-    </div>`;
-  }).join('') : '<div class="empty">NO CLOSED TRADES YET</div>';
+  const showMoreEl = document.getElementById('paper-show-more');
+  const countEl = document.getElementById('paper-closed-count');
+  const allClosed = d.closed || [];
+  const PREVIEW = 30;
+
+  // Store full data for show-all button
+  window._paperAllClosed = allClosed;
+  window._paperPreview = PREVIEW;
+
+  if (countEl) countEl.textContent = allClosed.length ? `${allClosed.length} trades` : '';
+
+  function renderClosedTrades(trades) {
+    return trades.map(t => {
+      const coin = (t.instId||'').replace('-USDT-SWAP','');
+      const dc = t.direction === 'long' ? 'b-green' : 'b-red';
+      const rawPnl = t.pnl || 0;
+      const levPnl = rawPnl * 5;
+      const pnlStr = (levPnl >= 0 ? '+' : '') + levPnl.toFixed(2) + '%';
+      const pc = levPnl >= 0 ? 'c-green' : 'c-red';
+      const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+      const openTime  = t.ts       ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const closeTime = t.closedAt ? new Date(t.closedAt).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      return `<div class="sig-row" style="flex-wrap:wrap;gap:4px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div class="sig-coin">${coin}</div>
+        <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
+        <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">
+          📅 ${openTime} → ${closeTime}
+        </div>
+        <div>${icon}</div>
+        <div class="sig-conf ${pc}">${pnlStr} <span style="opacity:.5;font-size:.7em">(5x)</span></div>
+      </div>`;
+    }).join('');
+  }
+
+  if (allClosed.length) {
+    ce.innerHTML = renderClosedTrades(allClosed.slice(0, PREVIEW));
+    if (allClosed.length > PREVIEW) {
+      if (showMoreEl) showMoreEl.style.display = 'block';
+    } else {
+      if (showMoreEl) showMoreEl.style.display = 'none';
+    }
+  } else {
+    ce.innerHTML = '<div class="empty">NO CLOSED TRADES YET</div>';
+    if (showMoreEl) showMoreEl.style.display = 'none';
+  }
 
   // By strategy table
   const bse = document.getElementById('paper-strats');
@@ -1351,6 +1395,33 @@ function renderPaperPage(d) {
       <td class="${pnlc}" style="font-family:'DM Mono',monospace">${v.pnl>=0?'+':''}${v.pnl.toFixed(2)}%</td></tr>`;
   }).join('');
   bse.innerHTML = `<table class="tbl"><thead><tr><th>Strategy</th><th>Trades</th><th>WR</th><th>Wins</th><th>Losses</th><th>PnL</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function paperShowAll() {
+  const ce = document.getElementById('paper-closed');
+  const showMoreEl = document.getElementById('paper-show-more');
+  const all = window._paperAllClosed || [];
+  if (!all.length) return;
+  const trades = all.map(t => {
+    const coin = (t.instId||'').replace('-USDT-SWAP','');
+    const dc = t.direction === 'long' ? 'b-green' : 'b-red';
+    const rawPnl = t.pnl || 0;
+    const levPnl = rawPnl * 5;
+    const pnlStr = (levPnl >= 0 ? '+' : '') + levPnl.toFixed(2) + '%';
+    const pc = levPnl >= 0 ? 'c-green' : 'c-red';
+    const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+    const openTime  = t.ts       ? new Date(t.ts).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const closeTime = t.closedAt ? new Date(t.closedAt).toLocaleString('ru-RU',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    return `<div class="sig-row" style="flex-wrap:wrap;gap:4px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div class="sig-coin">${coin}</div>
+      <span class="badge ${dc}">${t.direction?.toUpperCase()}</span>
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);flex:1">📅 ${openTime} → ${closeTime}</div>
+      <div>${icon}</div>
+      <div class="sig-conf ${pc}">${pnlStr} <span style="opacity:.5;font-size:.7em">(5x)</span></div>
+    </div>`;
+  }).join('');
+  ce.innerHTML = trades;
+  if (showMoreEl) showMoreEl.style.display = 'none';
 }
 
 function renderRadar(d) {
@@ -2458,6 +2529,94 @@ function initInvestorAnimation() {
     requestAnimationFrame(step);
   }
 }
+
+// ── GLOBAL PARTICLE BACKGROUND ───────────────────────────────────────────
+(function initGlobalParticles() {
+  const canvas = document.getElementById('global-particles');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  let W, H, particles = [], animId;
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function Particle() {
+    this.reset = function() {
+      this.x  = Math.random() * W;
+      this.y  = Math.random() * H;
+      this.r  = Math.random() * 1.6 + 0.3;
+      this.vx = (Math.random() - 0.5) * 0.22;
+      this.vy = (Math.random() - 0.5) * 0.22 - 0.08;
+      this.alpha = Math.random() * 0.18 + 0.04;
+      this.da = (Math.random() * 0.003 + 0.001) * (Math.random() < 0.5 ? 1 : -1);
+      this.life = 0;
+      this.maxLife = 600 + Math.random() * 400;
+    };
+    this.reset();
+  }
+
+  function initParticles(n) {
+    particles = [];
+    for (let i = 0; i < n; i++) {
+      const p = new Particle();
+      p.life = Math.random() * p.maxLife; // stagger start
+      particles.push(p);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Draw subtle connection lines between close particles
+    ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 120) {
+          ctx.globalAlpha = (1 - dist / 120) * 0.06;
+          ctx.beginPath();
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Draw particles
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life++;
+      p.alpha += p.da;
+      if (p.alpha > 0.22) { p.alpha = 0.22; p.da *= -1; }
+      if (p.alpha < 0.03) { p.alpha = 0.03; p.da *= -1; }
+
+      if (p.life > p.maxLife || p.x < -10 || p.x > W+10 || p.y < -10 || p.y > H+10) {
+        p.reset();
+      }
+
+      ctx.globalAlpha = p.alpha;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+    animId = requestAnimationFrame(draw);
+  }
+
+  resize();
+  window.addEventListener('resize', () => { resize(); });
+  initParticles(70);
+  draw();
+})();
 
 loadOverview();
 loadPaper();

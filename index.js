@@ -447,8 +447,9 @@ const store = {
   riskPct:        1.0,   // риск на сделку % (менять через /setrisk)
   emergencyStop:  false, // аварийная остановка (kill switch)
   blockWeekends:  true,  // не торговать в субботу-воскресенье
-  observeMode:    false, // реальная торговля по умолчанию
-  peakBalance:    0,     // макс баланс для расчёта drawdown
+  observeMode:      false, // реальная торговля по умолчанию
+  observeStartedAt: null,  // timestamp последнего включения /observe
+  peakBalance:      0,     // макс баланс для расчёта drawdown
 };
 
 // ── DRAWDOWN-AWARE RISK SIZING ────────────────────────────
@@ -563,28 +564,30 @@ function loadSettings() {
 function saveSettings() {
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify({
-      accountBalance: store.accountBalance,
-      leverage:       store.leverage,
-      riskPct:        store.riskPct,
-      propMode:       store.propMode,
-      emergencyStop:  store.emergencyStop,
-      blockWeekends:  store.blockWeekends,
-      observeMode:    store.observeMode,
-      peakBalance:    store.peakBalance,
+      accountBalance:   store.accountBalance,
+      leverage:         store.leverage,
+      riskPct:          store.riskPct,
+      propMode:         store.propMode,
+      emergencyStop:    store.emergencyStop,
+      blockWeekends:    store.blockWeekends,
+      observeMode:      store.observeMode,
+      observeStartedAt: store.observeStartedAt,
+      peakBalance:      store.peakBalance,
     }, null, 2));
   } catch(e) { console.error('[SETTINGS] Ошибка сохранения файла:', e.message); }
   // Supabase — сохраняем между деплоями
   supabase.from('bot_settings').upsert({
     id: 1,
-    account_balance: store.accountBalance,
-    leverage:        store.leverage,
-    risk_pct:        store.riskPct,
-    prop_mode:       store.propMode,
-    emergency_stop:  store.emergencyStop,
-    block_weekends:  store.blockWeekends,
-    observe_mode:    store.observeMode,
-    peak_balance:    store.peakBalance,
-    updated_at:      new Date().toISOString(),
+    account_balance:    store.accountBalance,
+    leverage:           store.leverage,
+    risk_pct:           store.riskPct,
+    prop_mode:          store.propMode,
+    emergency_stop:     store.emergencyStop,
+    block_weekends:     store.blockWeekends,
+    observe_mode:       store.observeMode,
+    observe_started_at: store.observeStartedAt,
+    peak_balance:       store.peakBalance,
+    updated_at:         new Date().toISOString(),
   }).then(({ error }) => {
     if (error) console.error('[SETTINGS] Supabase error:', error.message);
     else console.log(`[SETTINGS] Saved: prop=${store.propMode} observe=${store.observeMode}`);
@@ -603,6 +606,7 @@ async function loadSettingsFromSupabase() {
     if (typeof data.emergency_stop  === 'boolean') store.emergencyStop = data.emergency_stop;
     if (typeof data.block_weekends  === 'boolean') store.blockWeekends = data.block_weekends;
     if (typeof data.observe_mode    === 'boolean') store.observeMode   = data.observe_mode;
+    if (data.observe_started_at != null)           store.observeStartedAt = data.observe_started_at;
     if (typeof data.peak_balance    === 'number') store.peakBalance    = data.peak_balance;
     console.log(`[SETTINGS] Supabase: balance=$${store.accountBalance} prop=${store.propMode} observe=${store.observeMode}`);
   } catch(e) { console.error('[SETTINGS] Supabase load error:', e.message); }
@@ -1170,6 +1174,7 @@ async function handleTelegramCommand(text, chatId) {
 
   else if (cmd === '/observe') {
     store.observeMode = !store.observeMode;
+    if (store.observeMode) store.observeStartedAt = Date.now();
     saveSettings();
     if (store.observeMode) {
       await sendTelegramTo(chatId,
@@ -4814,13 +4819,19 @@ app.get('/api/paper', async (req, res) => {
   try {
     const open = (global.paperTrades || []).filter(t => !t.outcome);
 
-    // Закрытые — из Supabase (хранятся вечно)
-    const { data: closedDB } = await supabase
+    // Закрытые — из Supabase, фильтруем с момента последнего /observe
+    let query = supabase
       .from('paper_trades')
       .select('*')
       .not('outcome', 'is', null)
       .order('closed_at', { ascending: false })
-      .limit(200);
+      .limit(500);
+
+    if (store.observeStartedAt) {
+      query = query.gte('ts', store.observeStartedAt);
+    }
+
+    const { data: closedDB } = await query;
 
     const closed = (closedDB || []).map(r => ({
       instId:    r.inst_id,
@@ -4864,8 +4875,9 @@ app.get('/api/paper', async (req, res) => {
       })),
       closed,
       stats: closed.length ? { total: closed.length, wins: wins.length, losses: losses.length, expired: expired.length, wr, totalPnl: parseFloat(totalPnl.toFixed(2)), byStrat } : null,
-      observeMode: store.observeMode,
-      timestamp:   Date.now(),
+      observeMode:      store.observeMode,
+      observeStartedAt: store.observeStartedAt || null,
+      timestamp:        Date.now(),
     });
   } catch(e) {
     console.error('[API/paper]', e.message);
@@ -6164,7 +6176,7 @@ if (!store.observeMode) {
               sl_price:   best.sl,
               tp_price:   best.tp1,
               reason:     best.strategy,
-              source:     'quantum-fund',
+              source:     'apex-algo-fund',
             });
             console.log(`[AutoExec] Сигнал отправлен: ${sym} ${best.direction} conf=${best.confidence}%`);
           } catch(e) { console.error('[AutoExec] emit error:', e.message); }

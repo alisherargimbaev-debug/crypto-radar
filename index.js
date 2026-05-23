@@ -6317,8 +6317,7 @@ if (!store.observeMode) {
           // Обязательно должен быть instId
           if (!s.instId) { s.instId = coin.instId; }
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const isS1sig = s.strategy.startsWith('1️⃣ ');
-          const threshold = store.observeMode ? 50 : isS1sig ? 50 : 65;
+          const threshold = store.observeMode ? 50 : 65;
           return s.confidence >= threshold;
         })
         .sort((a, b) => {

@@ -7317,7 +7317,7 @@ async function checkOutcomes() {
   store.openTrades   = stillOpen;
 store.tradeHistory = [...store.tradeHistory, ...closed].slice(-500);
 
-// Сохраняем закрытые сделки в базу
+// Сохраняем закрытые сделки в базу + удаляем из open_trades
 for (const trade of closed) {
   try {
     await supabase.from('trades').insert({
@@ -7337,6 +7337,9 @@ for (const trade of closed) {
       pnl:         trade.pnl,
     });
   } catch(e) { console.error('[DB] trade save error:', e.message); }
+  supabase.from('open_trades').delete()
+    .eq('inst_id', trade.instId).eq('ts', trade.ts)
+    .catch(e => console.error('[DB] open_trades delete error:', e.message));
 }
 }
 
@@ -7937,7 +7940,10 @@ cron.schedule('*/3 * * * *', async () => {
       for (const trade of toClose) {
         trade.outcome='closed_on_exchange'; trade.closedAt=Date.now(); trade.pnl=0;
         pushTradeHistory(trade);
-        console.log('[Bybit Sync] '+trade.instId+' закрыта → убрана из store');
+        supabase.from('open_trades').delete()
+          .eq('inst_id', trade.instId).eq('ts', trade.ts)
+          .catch(e => console.error('[Bybit Sync] open_trades delete error:', e.message));
+        console.log('[Bybit Sync] '+trade.instId+' закрыта → убрана из store и Supabase');
       }
       store.openTrades = stillOpen;
     }
@@ -8077,21 +8083,56 @@ cron.schedule('*/15 * * * *', async () => {
   }
 });
 
-// Загружаем открытые сделки из Supabase при старте
-supabase.from('open_trades').select('*').then(({ data }) => {
+// Загружаем открытые сделки из Supabase при старте + Bybit reconciliation
+supabase.from('open_trades').select('*').then(async ({ data }) => {
   if (data?.length) {
-    // Берём только сделки за последние 4 часа
-    const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
-    const recent = data.filter(t => +t.ts >= fourHoursAgo);
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = data.filter(t => +t.ts >= dayAgo);
     store.openTrades = recent.map(t => ({
       ts: t.ts, instId: t.inst_id, symbol: t.symbol,
       strategy: t.strategy, direction: t.direction,
       price: t.price, sl: t.sl, tp1: t.tp1, tp2: t.tp2,
       confidence: t.confidence,
     }));
-    console.log(`[START] Загружено ${recent.length} из ${data.length} открытых сделок (только за 4ч)`);
+    // Удаляем из Supabase строки старше 24ч (они уже закрыты)
+    const stale = data.filter(t => +t.ts < dayAgo);
+    for (const t of stale) {
+      supabase.from('open_trades').delete()
+        .eq('inst_id', t.inst_id).eq('ts', t.ts)
+        .catch(() => {});
+    }
+    console.log(`[START] Загружено ${recent.length} из ${data.length} открытых сделок (24ч)`);
   }
-});
+
+  // Bybit reconciliation — убираем сделки, закрытые пока бот не работал
+  if (!store.openTrades?.length) return;
+  try {
+    const BybitClient = require('./bybit-client');
+    const bybit = new BybitClient();
+    const positions = await bybit.getPositions();
+    const openOnBybit = new Set((positions||[]).filter(p => parseFloat(p.size) > 0).map(p => p.symbol));
+    const stillOpen = [], staleBybit = [];
+    for (const trade of store.openTrades) {
+      const sym = (trade.instId||'').replace('-USDT-SWAP','USDT');
+      if (openOnBybit.has(sym)) stillOpen.push(trade);
+      else staleBybit.push(trade);
+    }
+    if (staleBybit.length > 0) {
+      for (const trade of staleBybit) {
+        supabase.from('open_trades').delete()
+          .eq('inst_id', trade.instId).eq('ts', trade.ts)
+          .catch(() => {});
+        console.log(`[START Bybit Recon] ${trade.instId} не найдена на Bybit → убрана`);
+      }
+      store.openTrades = stillOpen;
+      console.log(`[START Bybit Recon] убрано ${staleBybit.length} устаревших сделок`);
+    } else {
+      console.log(`[START Bybit Recon] все ${stillOpen.length} сделок подтверждены на Bybit`);
+    }
+  } catch(e) {
+    console.log('[START Bybit Recon] недоступен — пропуск:', e.message);
+  }
+}).catch(e => console.error('[START] open_trades load error:', e.message));
 
 // Восстанавливаем cooldowns из недавних сигналов (защита от повторных входов после рестарта)
 supabase.from('signals')

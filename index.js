@@ -2958,6 +2958,41 @@ function calcVolumeProfile(candles, zones = 50) {
     vah: parseFloat((priceLow + (vaHigh + 1) * zoneSize).toFixed(6)),
     val: parseFloat((priceLow + vaLow * zoneSize).toFixed(6)),
     ts:  Date.now(),
+    // Low Volume Nodes — зоны с объёмом < 30% от среднего (быстро проходимые)
+    // High Volume Nodes — зоны с объёмом > 150% от среднего (магниты, поддержки)
+    lvn: (() => {
+      const avg = totalVol / zones;
+      const nodes = [];
+      for (let z = 0; z < zones; z++) {
+        if (volumeByZone[z] < avg * 0.30) {
+          nodes.push({
+            price: parseFloat((priceLow + (z + 0.5) * zoneSize).toFixed(6)),
+            low:   parseFloat((priceLow + z * zoneSize).toFixed(6)),
+            high:  parseFloat((priceLow + (z + 1) * zoneSize).toFixed(6)),
+            vol:   volumeByZone[z],
+          });
+        }
+      }
+      return nodes;
+    })(),
+    hvn: (() => {
+      const avg = totalVol / zones;
+      const nodes = [];
+      for (let z = 0; z < zones; z++) {
+        if (volumeByZone[z] > avg * 1.50) {
+          nodes.push({
+            price: parseFloat((priceLow + (z + 0.5) * zoneSize).toFixed(6)),
+            low:   parseFloat((priceLow + z * zoneSize).toFixed(6)),
+            high:  parseFloat((priceLow + (z + 1) * zoneSize).toFixed(6)),
+            vol:   volumeByZone[z],
+          });
+        }
+      }
+      return nodes;
+    })(),
+    volumeByZone,
+    zoneSize,
+    priceLow,
   };
 }
 
@@ -4604,88 +4639,101 @@ if (k1h.length >= 55) {
     } catch(e) { console.error('S18 error:', e.message); }
 
     // ════════════════════════════════════════════════════════
-    // S19: Value Area Reversal — PAPER ONLY (сбор данных)
-    // Цена дипает ниже Value Area → возвращается → LONG
-    // Стратегия от World Champion трейдеров (Volume Profile)
+    // S19: Value Area Reversal (1H) — PAPER ONLY (сбор данных)
+    // Цена дипает ниже VAL через LVN → возвращается → LONG
+    // Улучшение: используем calcVolumeProfile (зонный VP) + LVN как фильтр
+    // LVN = Low Volume Node = быстропроходимая зона = сильное отталкивание
     // ════════════════════════════════════════════════════════
     try {
       const k1h_s19 = await getOKXKlinesCached(instId, '1H', 48);
       const k15_s19 = await getOKXKlinesCached(instId, '15m', 20);
 
       if (k1h_s19.length >= 24 && k15_s19.length >= 10) {
-        // Считаем Value Area за последние 24 часа
-        const session = k1h_s19.slice(-24);
-        const totalVol = session.reduce((s, k) => s + (k.quoteVolume || 0), 0);
-        const sorted   = [...session].sort((a, b) => (b.quoteVolume || 0) - (a.quoteVolume || 0));
+        // Строим Volume Profile за последние 24 часа (100 зон — точнее)
+        const session24 = k1h_s19.slice(-24);
+        const vp = calcVolumeProfile(session24, 100);
+        if (!vp) throw new Error('VP calc failed');
 
-        // POC = свеча с максимальным объёмом
-        const poc = sorted[0]?.close || 0;
-
-        // Value Area = 70% объёма вокруг POC
-        let vaVol = 0, vaCandles = [];
-        for (const k of sorted) {
-          vaVol += k.quoteVolume || 0;
-          vaCandles.push(k);
-          if (vaVol >= totalVol * 0.70) break;
-        }
-        const prices = vaCandles.map(k => k.close);
-        const vah = Math.max(...prices); // Value Area High
-        const val = Math.min(...prices); // Value Area Low
+        const { poc, vah, val, lvn, hvn } = vp;
 
         // Последние 3 свечи 15m
-        const last3  = k15_s19.slice(-3);
-        const prev   = last3[0]; // 2 свечи назад
-        const mid    = last3[1]; // предыдущая
-        const curr   = last3[2]; // текущая
+        const last3     = k15_s19.slice(-3);
+        const mid       = last3[1]; // предыдущая
+        const curr      = last3[2]; // текущая
         const price_s19 = curr.close;
 
-        // Объём на дипе и на возврате
-        const dipVol    = mid.quoteVolume || 0;
+        // Объём
+        const dipVol    = mid.quoteVolume  || 0;
         const returnVol = curr.quoteVolume || 0;
-        const avgVol    = k15_s19.slice(-10).reduce((s,k) => s+(k.quoteVolume||0), 0) / 10;
+        const avgVol    = k15_s19.slice(-10).reduce((s, k) => s + (k.quoteVolume || 0), 0) / 10;
 
-        // ── LONG условие ───────────────────────────────────
-        // 1. Предыдущая свеча ушла ниже VAL (дип)
-        // 2. Текущая свеча закрылась ВЫШЕ VAL (возврат)
-        // 3. Объём на дипе низкий (нет продавцов)
-        // 4. Объём на возврате высокий (покупатели входят)
+        // ── Проверка LVN: дип прошёл через Low Volume Node ──────
+        // LVN под VAL = "тонкая" зона, цена быстро её пробивает и отталкивается
+        const dipLow  = mid.low;
+        const dipHigh = mid.high;
+
+        const lvnBelowVAL = lvn.filter(n => n.high <= val && n.high >= val * 0.98);  // LVN прямо под VAL
+        const lvnAboveVAH = lvn.filter(n => n.low >= vah && n.low <= vah * 1.02);   // LVN прямо над VAH
+        const dipHitLVN   = lvn.some(n => dipLow <= n.high && dipHigh >= n.low);    // дип попал в LVN
+
+        // HVN near POC: подтверждение что VAL/VAH — реальный уровень поддержки
+        const hvnNearPOC = hvn.some(n => Math.abs(n.price - poc) / poc < 0.01);
+
+        // ── LONG: дип ниже VAL + возврат выше VAL ───────────────
         const longCondition =
-          mid.low < val &&            // был дип ниже VAL
-          curr.close > val &&         // закрылись обратно выше VAL
-          dipVol < avgVol * 0.8 &&   // объём дипа слабый
-          returnVol > avgVol * 1.2;  // объём возврата сильный
+          mid.low  < val &&
+          curr.close > val &&
+          dipVol    < avgVol * 0.8 &&
+          returnVol > avgVol * 1.2;
 
-        // ── SHORT условие (зеркальное) ──────────────────────
+        // ── SHORT: пробой выше VAH + возврат ────────────────────
         const shortCondition =
-          mid.high > vah &&
+          mid.high  > vah &&
           curr.close < vah &&
-          dipVol < avgVol * 0.8 &&
+          dipVol    < avgVol * 0.8 &&
           returnVol > avgVol * 1.2;
 
         if (longCondition || shortCondition) {
-          const dir = longCondition ? 'long' : 'short';
-          const atr_s19 = calcATR(k15_s19, 10);
+          const dir      = longCondition ? 'long' : 'short';
+          const atr_s19  = calcATR(k15_s19, 10);
+          const lvnNodes = longCondition ? lvnBelowVAL : lvnAboveVAH;
 
-          // Confidence: выше если Value Area строится в нашу сторону
+          // ── Confidence ──────────────────────────────────────────
+          // База: 60
+          // +15 если дип прошёл через LVN (ключевое улучшение)
+          // +10 если LVN прямо у границы VA
+          // +8  если возврат сильный (>2x avgVol)
+          // +8  если цена близко к POC (магнит)
+          // +5  если есть HVN у POC (подтверждение уровня)
+          // +7  если VA строится в нашу сторону
           const vaBuilding = longCondition
-            ? vah > k1h_s19[k1h_s19.length-12]?.close  // VAH растёт
-            : val < k1h_s19[k1h_s19.length-12]?.close; // VAL падает
+            ? vah > (k1h_s19[k1h_s19.length - 12]?.close || 0)
+            : val < (k1h_s19[k1h_s19.length - 12]?.close || 0);
+
           const conf = Math.min(
             60 +
-            (vaBuilding ? 15 : 0) +
-            (returnVol / avgVol > 2 ? 10 : 5) +
-            (Math.abs(price_s19 - poc) / poc < 0.02 ? 10 : 0), // близко к POC
-            88
+            (dipHitLVN              ? 15 : 0) +
+            (lvnNodes.length > 0    ? 10 : 0) +
+            (returnVol / avgVol > 2 ?  8 : 4) +
+            (Math.abs(price_s19 - poc) / poc < 0.015 ? 8 : 0) +
+            (hvnNearPOC             ?  5 : 0) +
+            (vaBuilding             ?  7 : 0),
+            90
           );
+
+          // ── LVN описание для metrics ────────────────────────────
+          const lvnDesc = dipHitLVN
+            ? `LVN✅(${lvn.filter(n => dipLow <= n.high && dipHigh >= n.low).length} nodes hit)`
+            : 'LVN❌';
 
           signals.push({
             instId, direction: dir,
-            strategy: '1️⃣9️⃣ Value Area Reversal (1H)',
+            strategy:   '1️⃣9️⃣ Value Area Reversal (1H)',
             confidence: Math.round(conf),
-            price: price_s19,
-            paperOnly: true,
+            price:      price_s19,
+            paperOnly:  true,
             ...calcSLTP(price_s19, dir, '1️⃣9️⃣ Value Area Reversal (1H)', atr_s19),
-            metrics: `VAL:${val.toFixed(3)} VAH:${vah.toFixed(3)} POC:${poc.toFixed(3)} RetVol:${(returnVol/avgVol).toFixed(1)}x`,
+            metrics: `VAL:${val.toFixed(4)} VAH:${vah.toFixed(4)} POC:${poc.toFixed(4)} ${lvnDesc} RetVol:${(returnVol / avgVol).toFixed(1)}x`,
           });
         }
       }

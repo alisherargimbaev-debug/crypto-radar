@@ -594,6 +594,7 @@ nav::-webkit-scrollbar{display:none;}
         <button class="nav-dd-item" onclick="showPageDD('calc')">Calculator</button>
         <button class="nav-dd-item" onclick="showPageDD('news')">News</button>
         <button class="nav-dd-item" onclick="showPageDD('dca')">DCA</button>
+        <button class="nav-dd-item" onclick="showPageDD('flashcrash')">Flash Crash</button>
         <button class="nav-dd-item" onclick="showPageDD('investor')">Investor</button>
       </div>
     </div>
@@ -1080,6 +1081,23 @@ nav::-webkit-scrollbar{display:none;}
   </div>
 </div>
 
+<!-- FLASH CRASH STRESS TEST -->
+<div class="page" id="page-flashcrash">
+  <div class="panel" style="margin-bottom:16px">
+    <div class="sec-title">⚡ Flash Crash Stress Test</div>
+    <div style="font-family:'DM Mono',monospace;font-size:.52rem;color:var(--dim);margin-bottom:16px;line-height:1.7">
+      Симуляция что произойдёт с твоим балансом при резком падении рынка.<br>
+      Учитывает: риск на сделку, плечо, количество позиций, проскальзывание.
+    </div>
+    <div class="stats-row" id="fc-params"></div>
+  </div>
+  <div id="fc-scenarios" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:16px"></div>
+  <div class="panel" id="fc-advice" style="display:none">
+    <div class="sec-title">Выводы</div>
+    <div id="fc-advice-text" style="font-family:'DM Mono',monospace;font-size:.55rem;line-height:1.8;color:var(--dim)"></div>
+  </div>
+</div>
+
 <!-- INVESTOR -->
 <div class="page" id="page-investor">
   <div class="inv-hero" style="position:relative;overflow:hidden;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 20px">
@@ -1188,7 +1206,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   if (btn) btn.classList.add('active');
-  const loaders = { paper: loadPaper, live: loadLive, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadOverview };
+  const loaders = { paper: loadPaper, live: loadLive, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, flashcrash: loadFlashCrash, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadOverview };
   if (loaders[id]) loaders[id]();
 }
 
@@ -1919,6 +1937,64 @@ async function loadWhales(){
   el.innerHTML = html;
 }
 
+
+async function loadFlashCrash() {
+  const d = await safeFetch('/api/flashcrash', { ok: false, scenarios: [] });
+  if (!d.ok) return;
+
+  // Params bar
+  const pe = document.getElementById('fc-params');
+  if (pe && d.params) {
+    const p = d.params;
+    pe.innerHTML = `
+      <div class="stat-card blue"><div class="stat-label">Balance</div><div class="stat-value">$${Number(p.balance).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="stat-label">Risk/Trade</div><div class="stat-value">${p.riskPct}%</div></div>
+      <div class="stat-card"><div class="stat-label">Leverage</div><div class="stat-value">${p.leverage}x</div></div>
+      <div class="stat-card"><div class="stat-label">Max Positions</div><div class="stat-value">${p.maxPositions}</div></div>
+      <div class="stat-card yellow"><div class="stat-label">Daily Limit</div><div class="stat-value">-$${Number(d.limits?.daily).toLocaleString()}</div></div>
+      <div class="stat-card red"><div class="stat-label">Weekly Limit</div><div class="stat-value">-$${Number(d.limits?.weekly).toLocaleString()}</div></div>`;
+  }
+
+  // Scenario cards
+  const se = document.getElementById('fc-scenarios');
+  if (se && d.scenarios?.length) {
+    se.innerHTML = d.scenarios.map(s => {
+      const survived = s.survived;
+      const color    = survived ? 'var(--green)' : 'var(--red)';
+      const bg       = survived ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.08)';
+      const icon     = survived ? '✅' : '💀';
+      const dLimit   = s.hitsDaily ? '<span style="color:var(--red)">⚠️ Daily limit пробит</span>' : '<span style="color:var(--green)">✓ Daily limit OK</span>';
+      const wLimit   = s.hitsWeekly ? '<span style="color:var(--red)">⚠️ Weekly limit пробит</span>' : '<span style="color:var(--green)">✓ Weekly limit OK</span>';
+      return `<div style="padding:16px;background:${bg};border:1px solid ${survived ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'};position:relative">
+        <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.5px;margin-bottom:10px">${icon} ${s.name}</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:${color}">-$${Number(s.estimatedLoss).toLocaleString()}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:.7rem;color:${color}">-${s.lossPct}%</div>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);margin-bottom:6px">
+          Баланс после: <span style="color:var(--text)">$${Number(s.balanceAfter).toLocaleString()}</span>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:.48rem;line-height:1.8">
+          ${dLimit}<br>${wLimit}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Advice
+  const adv = document.getElementById('fc-advice');
+  const advT = document.getElementById('fc-advice-text');
+  if (adv && advT) {
+    adv.style.display = 'block';
+    advT.innerHTML = `
+      При текущих настройках (${d.params?.riskPct}% риска, ${d.params?.maxPositions} позиции, ${d.params?.leverage}x плечо):<br><br>
+      • Мягкий обвал до -20% — система выживает, daily limit может сработать<br>
+      • Обвал -30% (как май 2021) — ${d.scenarios?.[2]?.survived ? 'выживаем, но painful' : 'критически опасно'}<br>
+      • Обвал -50% (FTX коллапс) — ${d.scenarios?.[3]?.survived ? 'выживаем' : '💀 потеря более 50% депозита'}<br><br>
+      <span style="color:var(--yellow)">Совет:</span> При flash crash закрывай позиции вручную — SL на мелких монетах может проскользнуть на 2-5%.
+    `;
+  }
+}
 
 // ── NEWS ──────────────────────────────────────────────────────
 async function loadNews(){

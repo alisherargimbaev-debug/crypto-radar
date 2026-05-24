@@ -2916,7 +2916,35 @@ async function getDVOL() {
   }
 }
 
-// ── WEEKLY POC (Point of Control) ────────────────────────────
+// ── SLIPPAGE MODEL ───────────────────────────────────────────
+// Реалистичные потери при входе/выходе (аудит v2.0)
+// Top liquid coins: 0.05-0.08% | Mid: 0.12-0.18% | Small: 0.25-0.5%
+const SLIPPAGE_TIERS = {
+  // Топ ликвидные — минимальный slippage
+  TOP: new Set(['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','TRX','TON','LINK','DOT']),
+  // Средние — умеренный slippage
+  MID: new Set(['NEAR','SUI','APT','OP','ARB','INJ','WLD','HYPE','JUP','PENGU',
+                'TRUMP','ONDO','AAVE','UNI','LTC','BCH','ETC','XLM','ATOM','FIL',
+                'XAU','XAG','CL','BZ','NVDA','TSLA','AAPL']),
+};
+
+function getSlippagePct(instId) {
+  const coin = (instId || '').replace('-USDT-SWAP','').replace('-USDT','').toUpperCase();
+  if (SLIPPAGE_TIERS.TOP.has(coin)) return 0.07;  // 0.07% — топ монеты
+  if (SLIPPAGE_TIERS.MID.has(coin)) return 0.15;  // 0.15% — средние
+  return 0.35;                                      // 0.35% — мелкие/неизвестные
+}
+
+// Применяем slippage к PnL — вычитаем при входе И выходе
+function applySlippage(pnl, instId, direction) {
+  const slip = getSlippagePct(instId);
+  // Slippage при входе + при выходе = 2x
+  // Для лонга: покупаем дороже + продаём дешевле
+  // Для шорта: продаём дешевле + покупаем дороже
+  return parseFloat((pnl - slip * 2).toFixed(3));
+}
+
+
 // Самый торгуемый уровень за текущую неделю — магнит для цены
 let weeklyPocCache  = new Map();
 let monthlyPocCache = new Map();
@@ -5220,6 +5248,50 @@ app.get('/api/news', async (req, res) => {
 });
 
 // ── WHALES API (Copy Trading Tracker) ─────────────────────────
+app.get('/api/regime', (req, res) => {
+  const r = regime ? regime.get() : null;
+  res.json({ ok: true, mode: r?.mode || 'UNKNOWN', data: r || {} });
+});
+
+// ── FLASH CRASH STRESS TEST ──────────────────────────────────
+app.get('/api/flashcrash', (req, res) => {
+  try {
+    const balance  = store.accountBalance || 9200;
+    const riskPct  = store.riskPct || 0.5;
+    const leverage = store.leverage || 5;
+    const maxPos   = 2;
+    const dailyLimit  = balance * 0.03;
+    const weeklyLimit = balance * 0.08;
+
+    const scenarios = [
+      { name: 'Мягкий (-10%)',              drop: 10, slipMult: 1.3 },
+      { name: 'Средний (-20%)',             drop: 20, slipMult: 2.5 },
+      { name: 'Жёсткий (-30%, май 2021)',   drop: 30, slipMult: 4.0 },
+      { name: 'Крах (-50%, FTX ноябрь 2022)', drop: 50, slipMult: 6.0 },
+    ].map(s => {
+      const loss    = parseFloat((balance * riskPct / 100 * maxPos * s.slipMult).toFixed(0));
+      const lossPct = parseFloat((riskPct * maxPos * s.slipMult).toFixed(1));
+      return {
+        name:          s.name,
+        drop:          s.drop,
+        estimatedLoss: loss,
+        lossPct,
+        survived:      loss < balance * 0.5,
+        hitsDaily:     loss >= dailyLimit,
+        hitsWeekly:    loss >= weeklyLimit,
+        balanceAfter:  Math.max(0, balance - loss).toFixed(0),
+      };
+    });
+
+    res.json({
+      ok: true,
+      params:   { balance, riskPct, leverage, maxPositions: maxPos },
+      limits:   { daily: dailyLimit.toFixed(0), weekly: weeklyLimit.toFixed(0) },
+      scenarios,
+    });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+});
+
 app.get('/api/cot', (req, res) => {
   res.json({
     ok:        true,
@@ -6563,41 +6635,41 @@ async function checkPaperTrades() {
         trade.outcome    = 'tp2';
         trade.closePrice = price;
         trade.closedAt   = Date.now();
-        const pnl = trade.direction === 'long'
+        const rawPnl2 = trade.direction === 'long'
           ? (price - trade.price) / trade.price * 100
           : (trade.price - price) / trade.price * 100;
-        trade.pnl = parseFloat(pnl.toFixed(2));
-        console.log(`[PAPER TP2] ${trade.instId} +${trade.pnl}%`);
+        trade.pnl = applySlippage(rawPnl2, trade.instId, trade.direction);
+        console.log(`[PAPER TP2] ${trade.instId} +${trade.pnl}% (slip -${(getSlippagePct(trade.instId)*2).toFixed(2)}%)`);
 
       } else if (tp1Hit) {
         trade.outcome    = 'tp1';
         trade.closePrice = price;
         trade.closedAt   = Date.now();
-        const pnl = trade.direction === 'long'
+        const rawPnl1 = trade.direction === 'long'
           ? (price - trade.price) / trade.price * 100
           : (trade.price - price) / trade.price * 100;
-        trade.pnl = parseFloat(pnl.toFixed(2));
-        console.log(`[PAPER TP1] ${trade.instId} +${trade.pnl}%`);
+        trade.pnl = applySlippage(rawPnl1, trade.instId, trade.direction);
+        console.log(`[PAPER TP1] ${trade.instId} +${trade.pnl}% (slip -${(getSlippagePct(trade.instId)*2).toFixed(2)}%)`);
 
       } else if (slHit) {
         trade.outcome    = 'sl';
         trade.closePrice = price;
         trade.closedAt   = Date.now();
-        const pnl = trade.direction === 'long'
+        const rawPnlSL = trade.direction === 'long'
           ? (price - trade.price) / trade.price * 100
           : (trade.price - price) / trade.price * 100;
-        trade.pnl = parseFloat(pnl.toFixed(2));
-        console.log(`[PAPER SL] ${trade.instId} ${trade.pnl}%`);
+        trade.pnl = applySlippage(rawPnlSL, trade.instId, trade.direction);
+        console.log(`[PAPER SL] ${trade.instId} ${trade.pnl}% (slip -${(getSlippagePct(trade.instId)*2).toFixed(2)}%)`);
 
       } else if (ageMin > 480) {
         // Таймаут 8 часов
         trade.outcome    = 'expired';
         trade.closePrice = price;
         trade.closedAt   = Date.now();
-        const pnl = trade.direction === 'long'
+        const rawPnlExp = trade.direction === 'long'
           ? (price - trade.price) / trade.price * 100
           : (trade.price - price) / trade.price * 100;
-        trade.pnl = parseFloat(pnl.toFixed(2));
+        trade.pnl = applySlippage(rawPnlExp, trade.instId, trade.direction);
         console.log(`[PAPER EXPIRED] ${trade.instId} ${trade.pnl}%`);
       }
       // Если сделка закрылась — сохраняем в Supabase

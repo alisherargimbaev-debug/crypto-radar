@@ -18,6 +18,9 @@ try { deltaTracker = require('./delta-tracker'); } catch(e) { console.log('[DELT
 // Footprint Engine — агрегация тиков по ценовым уровням (GEX confirmation)
 let footprint = null;
 try { footprint = require('./footprint'); } catch(e) { console.log('[FOOTPRINT] footprint.js не найден:', e.message); }
+
+// Regime Detector — ADX/ATR market state classification
+const { calcADX, calcATR, calcAtrAvg, detectRegime, neutralRegime } = require('./regime');
 try {
   deltaTracker = require('./delta-tracker');
   console.log('[DELTA] Tracker загружен ✅');
@@ -168,27 +171,27 @@ function getCoinSector(instId) {
   return COIN_SECTORS[coin] || 'OTHER';
 }
 
-function checkCorrelation(instId) {
-  if (!store.openTrades?.length) return { ok: true };
+// Unified correlation check — accepts instId string OR signal object.
+// Returns { ok, allowed, reason } — both ok and allowed are set for compat.
+function checkCorrelation(instIdOrSig, direction) {
+  if (!store.openTrades?.length) return { ok: true, allowed: true };
+  const instId = typeof instIdOrSig === 'string'
+    ? instIdOrSig
+    : (instIdOrSig?.instId || '');
+  const dir = direction || (typeof instIdOrSig === 'object' ? instIdOrSig?.direction : null);
   const newSector = getCoinSector(instId);
+  if (newSector === 'OTHER') return { ok: true, allowed: true };
 
-  // Проверяем открытые сделки
   for (const trade of store.openTrades) {
     const openSector = getCoinSector(trade.instId || '');
-    if (newSector === openSector && newSector !== 'OTHER') {
-      return {
-        ok: false,
-        reason: 'Уже открыта позиция в секторе ' + newSector + ' (' + (trade.instId||'').replace('-USDT-SWAP','') + ')',
-      };
-    }
-    if (newSector === 'L1' && openSector === 'L1') {
-      return {
-        ok: false,
-        reason: 'L1 корреляция: уже открыта ' + (trade.instId||'').replace('-USDT-SWAP',''),
-      };
-    }
+    if (openSector !== newSector) continue;
+    // When direction is known, only block same-direction trades
+    if (dir && trade.direction && trade.direction !== dir) continue;
+    const sym = (trade.instId || '').replace('-USDT-SWAP', '');
+    const reason = `Корреляция: уже открыт ${sym} (${newSector})${dir ? ' в ' + dir : ''}`;
+    return { ok: false, allowed: false, reason };
   }
-  return { ok: true };
+  return { ok: true, allowed: true };
 }
 
 // ── КЛАССИФИКАЦИЯ АКТИВОВ ────────────────────────────────────
@@ -3610,37 +3613,7 @@ async function applyMA200(sig, instId) {
 // ============================================================
 //  РЕЖИМ РЫНКА
 // ============================================================
-function calcADX(klines, period = 14) {
-  if (!klines || klines.length < period + 1) return 0;
-  const trs = [], plusDMs = [], minusDMs = [];
-  for (let i = 1; i < klines.length; i++) {
-    const h = klines[i].high, l = klines[i].low, pc = klines[i-1].close;
-    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
-    const upMove   = h - klines[i-1].high;
-    const downMove = klines[i-1].low - l;
-    plusDMs.push(upMove > downMove && upMove > 0 ? upMove : 0);
-    minusDMs.push(downMove > upMove && downMove > 0 ? downMove : 0);
-  }
-  const smooth = (arr, p) => {
-    let s = arr.slice(0, p).reduce((a,b) => a+b, 0);
-    const res = [s];
-    for (let i = p; i < arr.length; i++) {
-      s = s - s/p + arr[i];
-      res.push(s);
-    }
-    return res;
-  };
-  const atrS    = smooth(trs, period);
-  const plusS   = smooth(plusDMs, period);
-  const minusS  = smooth(minusDMs, period);
-  const dxArr   = atrS.map((a, i) => {
-    const di_plus  = a ? plusS[i]  / a * 100 : 0;
-    const di_minus = a ? minusS[i] / a * 100 : 0;
-    const sum = di_plus + di_minus;
-    return sum ? Math.abs(di_plus - di_minus) / sum * 100 : 0;
-  });
-  return dxArr.slice(-period).reduce((a,b) => a+b, 0) / period;
-}
+// calcADX and calcATR are provided by regime.js (imported above)
 
 async function getMarketRegime(instId) {
   try {
@@ -3648,33 +3621,18 @@ async function getMarketRegime(instId) {
     const k4h = await getOKXKlinesCached(instId, '4H', 30);
     const k1d = await getOKXKlinesCached(instId, '1D', 210);
 
-    const adx1h = calcADX(k1h, 14);
-    const adx4h = calcADX(k4h, 14);
-    // Используем среднее — 4H весит больше (надёжнее)
-    const adx = adx1h * 0.35 + adx4h * 0.65;
-
+    const adx1h  = calcADX(k1h, 14);
+    const adx4h  = calcADX(k4h, 14);
     const atr    = calcATR(k1h, 14);
-    const atrAvg = k1h.slice(-20).reduce((s,c,i,a) => {
-      if (i === 0) return s;
-      return s + Math.abs(c.close - a[i-1].close);
-    }, 0) / 19;
+    const atrAvg = calcAtrAvg(k1h, 20);
+    const ma200  = k1d?.length >= 200 ? calcSMA(k1d, 200) : null;
+    const price  = k1h?.[k1h.length - 1]?.close || 0;
 
-    const ma200   = k1d.length >= 200 ? calcSMA(k1d, 200) : null;
-    const price   = k1h[k1h.length-1]?.close || 0;
-
-    const isTrending = adx > 25;
-    const isSideways = adx < 20;
-    const isHighVol  = atr > atrAvg * 1.8;
-    const isBearMkt  = ma200 ? price < ma200 : false;
-
-    // Дополнительно: если 4H сильно трендовый — усиливаем сигнал
-    const isStrongTrend = adx4h > 30;
-
-    console.log(`[REGIME] ${instId} ADX 1H:${adx1h.toFixed(1)} 4H:${adx4h.toFixed(1)} Avg:${adx.toFixed(1)} ${isTrending?'TREND':isSideways?'SIDEWAYS':'NEUTRAL'} ${isBearMkt?'BEAR':''}`);
-
-    return { adx, adx1h, adx4h, isTrending, isSideways, isHighVol, isBearMkt, isStrongTrend, ma200, price };
+    const regime = detectRegime(adx1h, adx4h, atr, atrAvg, price, ma200);
+    console.log(`[REGIME] ${instId} ADX 1H:${adx1h.toFixed(1)} 4H:${adx4h.toFixed(1)} Avg:${regime.adx.toFixed(1)} ${regime.isTrending?'TREND':regime.isSideways?'SIDEWAYS':'NEUTRAL'} ${regime.isBearMkt?'BEAR':''}`);
+    return regime;
   } catch(e) {
-    return { adx: 0, adx1h: 0, adx4h: 0, isTrending: false, isSideways: true, isHighVol: false, isBearMkt: false, isStrongTrend: false };
+    return neutralRegime();
   }
 }
 
@@ -3793,17 +3751,7 @@ function applyMarketRegime(sig, regime) {
   return sig;
 }
 
-function calcATR(klines, period = 14) {
-  if (klines.length < period + 1) return 0;
-  const trs = [];
-  for (let i = 1; i < klines.length; i++) {
-    const high  = klines[i].high;
-    const low   = klines[i].low;
-    const prev  = klines[i-1].close;
-    trs.push(Math.max(high - low, Math.abs(high - prev), Math.abs(low - prev)));
-  }
-  return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
-}
+// calcATR is provided by regime.js (imported above)
 
 
 // ============================================================
@@ -4790,7 +4738,7 @@ if (k1h.length >= 55) {
         const bbWidth = (std20 * 4) / ma20 * 100; // ширина BB в %
         const price_s17 = closes[closes.length-1];
         const atr_s17 = calcATR(k1h_s17, 14);
-        const adx_s17 = calcADX ? calcADX(k1h_s17, 14)?.adx || 0 : 0;
+        const adx_s17 = calcADX(k1h_s17, 14);
 
         // BB сжаты (ширина < 3%) + ADX растёт → ожидаем пробой
         if (bbWidth < 3 && adx_s17 > 20) {
@@ -6813,34 +6761,7 @@ async function getBTCBenchmark(daysSince = 7) {
 // ============================================================
 //  КОРРЕЛЯЦИОННЫЙ КОНТРОЛЬ
 // ============================================================
-const CORR_SECTORS = {
-  'BTC': 'btc',   'ETH': 'eth',
-  'SOL': 'l1',    'AVAX': 'l1',   'ADA': 'l1',   'DOT': 'l1',
-  'LINK': 'defi', 'UNI': 'defi',  'AAVE': 'defi', 'CRV': 'defi',
-  'DOGE': 'meme', 'SHIB': 'meme', 'PEPE': 'meme', 'FLOKI': 'meme',
-  'BNB': 'cex',   'OKB': 'cex',
-  'OP': 'l2',     'ARB': 'l2',    'MATIC': 'l2',  'IMX': 'l2',
-};
-
-function checkCorrelation(newSig) {
-  if (!store.openTrades?.length) return { allowed: true };
-  const newSymbol = (newSig.instId||'').replace('-USDT-SWAP', '');
-  const newSector = CORR_SECTORS[newSymbol] || 'other';
-  const newDir    = newSig.direction;
-
-  for (const trade of store.openTrades) {
-    const sym    = trade.instId?.replace('-USDT-SWAP', '');
-    const sector = CORR_SECTORS[sym] || 'other';
-    // Блокируем если: тот же сектор И то же направление
-    if (sector === newSector && trade.direction === newDir && sector !== 'other') {
-      return {
-        allowed: false,
-        reason:  `Корреляция: уже открыт ${sym} (${sector}) в ${newDir}`,
-      };
-    }
-  }
-  return { allowed: true };
-}
+// checkCorrelation is defined at the top of the file (unified version)
 
 // ============================================================
 //  ЕЖЕНЕДЕЛЬНЫЙ P&L ОТЧЁТ В $$$

@@ -63,8 +63,9 @@ class FootprintEngine extends EventEmitter {
     this.candles  = {};       // { instId: [candle, ...] }
     this.current  = {};       // { instId: candle } — текущая незакрытая свеча
     this.ready    = false;
-    this._reconnectTimer = null;
-    this._pingInterval   = null;
+    this._reconnectTimer  = null;
+    this._pingInterval    = null;
+    this._reconnectDelay  = 1000;  // exponential backoff: starts at 1s
   }
 
   // ── Запуск ────────────────────────────────────────────────
@@ -92,6 +93,7 @@ class FootprintEngine extends EventEmitter {
       this.ws.on('open', () => {
         console.log('[FOOTPRINT] WebSocket connected');
         this.ready = true;
+        this._reconnectDelay = 1000; // reset backoff on successful connect
         this._subscribe([...this.coins]);
         this._startPing();
       });
@@ -106,14 +108,18 @@ class FootprintEngine extends EventEmitter {
       });
 
       this.ws.on('close', () => {
-        console.log('[FOOTPRINT] WS closed — reconnecting in 5s');
         this.ready = false;
         this._stopPing();
-        this._reconnectTimer = setTimeout(() => this._connect(), 5000);
+        const delay = this._reconnectDelay;
+        this._reconnectDelay = Math.min(this._reconnectDelay * 2, 60000);
+        console.log(`[FOOTPRINT] WS closed — reconnecting in ${delay / 1000}s`);
+        this._reconnectTimer = setTimeout(() => this._connect(), delay);
       });
     } catch(e) {
       console.error('[FOOTPRINT] connect error:', e.message);
-      setTimeout(() => this._connect(), 5000);
+      const delay = this._reconnectDelay;
+      this._reconnectDelay = Math.min(this._reconnectDelay * 2, 60000);
+      setTimeout(() => this._connect(), delay);
     }
   }
 
@@ -151,12 +157,13 @@ class FootprintEngine extends EventEmitter {
 
   _processTrade(instId, trade) {
     // OKX trade format: { tradeId, instId, px, sz, side, ts }
+    if (!trade || trade.px == null || trade.sz == null) return;
     const price = parseFloat(trade.px);
     const size  = parseFloat(trade.sz);  // contracts
     const side  = trade.side;            // 'buy' или 'sell'
-    const ts    = parseInt(trade.ts);
+    const ts    = parseInt(trade.ts) || Date.now();
 
-    if (!price || !size || !side) return;
+    if (!price || !size || !side || !isFinite(price) || !isFinite(size)) return;
 
     // Инициализируем если нужно
     if (!this.current[instId]) {
@@ -313,8 +320,9 @@ class FootprintEngine extends EventEmitter {
 
     // Скрытое давление (hidden pressure)
     // Свеча растёт, но delta отрицательная → скрытые продавцы → опасно
-    const hiddenSelling = candle.close > candle.open && candle.totalDelta < -candle.totalAsk * 0.3;
-    const hiddenBuying  = candle.close < candle.open && candle.totalDelta > candle.totalBid * 0.3;
+    const hasOHLC = candle.open != null && candle.close != null;
+    const hiddenSelling = hasOHLC && candle.close > candle.open && candle.totalDelta < -candle.totalAsk * 0.3;
+    const hiddenBuying  = hasOHLC && candle.close < candle.open && candle.totalDelta > candle.totalBid * 0.3;
 
     const totalVol = candle.totalBid + candle.totalAsk;
 

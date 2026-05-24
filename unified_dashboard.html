@@ -553,6 +553,7 @@ nav::-webkit-scrollbar{display:none;}
     <div class="live-dot"></div>
     <div class="live-info">ACTIVE · 50 COINS</div>
     <div class="live-time" id="liveTime"></div>
+    <div id="regime-badge" style="font-family:'DM Mono',monospace;font-size:.46rem;padding:3px 9px;border:1px solid var(--border);letter-spacing:1.5px;border-radius:2px;display:none"></div>
     <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☾ Night</button>
     <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
   </div>
@@ -2744,6 +2745,32 @@ function initInvestorAnimation() {
   draw();
 })();
 
+// ── REGIME BADGE ──────────────────────────────────────────────
+async function loadRegimeBadge() {
+  try {
+    const d = await safeFetch('/api/regime', { mode: 'UNKNOWN', data: {} });
+    const badge = document.getElementById('regime-badge');
+    if (!badge) return;
+
+    const mode = d.mode || 'UNKNOWN';
+    if (mode === 'UNKNOWN') { badge.style.display = 'none'; return; }
+
+    const cfg = {
+      TREND:    { label: '📈 TREND',    color: 'var(--green)',  border: 'rgba(34,197,94,0.3)'  },
+      RANGE:    { label: '📊 RANGE',    color: 'var(--yellow)', border: 'rgba(234,179,8,0.3)'  },
+      VOLATILE: { label: '⚡ VOLATILE', color: 'var(--red)',    border: 'rgba(239,68,68,0.3)'  },
+    };
+    const c = cfg[mode] || { label: mode, color: 'var(--dim)', border: 'var(--border)' };
+    const adx = d.data?.adx ? ` ADX:${d.data.adx}` : '';
+
+    badge.style.display   = 'block';
+    badge.style.color     = c.color;
+    badge.style.borderColor = c.border;
+    badge.textContent     = c.label + adx;
+    badge.title           = d.data?.reason || '';
+  } catch(e) { /* не критично */ }
+}
+
 loadOverview();
 loadPaper();
 loadLive();
@@ -2753,6 +2780,8 @@ setInterval(loadOverview, 30000);
 setInterval(loadPaper, 30000);
 setInterval(loadLive, 30000);
 setInterval(loadTicker, 60000);
+setInterval(loadRegimeBadge, 5 * 60 * 1000); // каждые 5 минут
+loadRegimeBadge();
 </script>
 </body>
 </html>

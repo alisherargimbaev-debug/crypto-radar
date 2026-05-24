@@ -7827,8 +7827,79 @@ async function dailyReport() {
 console.log('🚀 Крипто Радар v4.0 запущен');
 console.log(`⏰ Время Алматы: ${getAlmatyTime()}`);
 console.log(`📊 Сессия: ${getCurrentSession()}`);
+logToSupabase('startup', 'info', `Бот запущен. Сессия: ${getCurrentSession()}. Observe: ${store.observeMode}`);
 
 // Каждые 5 минут
+// ── PROCESS MONITORING — умные алерты при ошибках ───────────
+const errorCounts  = {};   // { errorKey: { count, firstTs, lastTs, alerted } }
+const ERROR_THRESHOLD = 3; // алерт после 3 одинаковых ошибок за 10 минут
+const ERROR_WINDOW_MS = 10 * 60 * 1000;
+
+function trackError(category, message) {
+  const key  = `${category}:${message.substring(0, 60)}`;
+  const now  = Date.now();
+
+  if (!errorCounts[key]) {
+    errorCounts[key] = { count: 0, firstTs: now, lastTs: now, alerted: false };
+  }
+
+  const e = errorCounts[key];
+
+  // Сбрасываем если окно истекло
+  if (now - e.firstTs > ERROR_WINDOW_MS) {
+    e.count = 0; e.firstTs = now; e.alerted = false;
+  }
+
+  e.count++;
+  e.lastTs = now;
+
+  // Алерт при достижении порога
+  if (e.count >= ERROR_THRESHOLD && !e.alerted) {
+    e.alerted = true;
+    sendTelegram(
+      `🚨 *Process Alert*\n\n` +
+      `Категория: \`${category}\`\n` +
+      `Ошибка: \`${message.substring(0, 120)}\`\n` +
+      `Повторений: ${e.count} за последние 10 мин\n\n` +
+      `_Проверь логи Render_`
+    ).catch(() => {});
+    console.error(`[MONITOR] АЛЕРТ отправлен: ${key}`);
+  }
+
+  // Пишем в Supabase bot_logs
+  supabase.from('bot_logs').insert({
+    ts:       now,
+    category,
+    level:    'error',
+    message:  message.substring(0, 500),
+  }).catch(() => {}); // не критично если не записалось
+}
+
+// Перехватываем необработанные ошибки
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT]', err.message);
+  trackError('uncaughtException', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason?.message || String(reason);
+  console.error('[UNHANDLED]', msg);
+  trackError('unhandledRejection', msg);
+});
+
+// Функция для логирования важных событий
+async function logToSupabase(category, level, message, data = null) {
+  try {
+    await supabase.from('bot_logs').insert({
+      ts:       Date.now(),
+      category,
+      level,    // 'info' | 'warn' | 'error'
+      message:  message.substring(0, 500),
+      data:     data ? JSON.stringify(data).substring(0, 1000) : null,
+    });
+  } catch(e) { /* не критично */ }
+}
+
 // ── HEALTH MONITOR ─────────────────────────────────────────
 let lastCheckTime = Date.now();
 let totalChecks = 0;
@@ -7841,7 +7912,7 @@ cron.schedule('*/30 * * * *', async () => {
   }
 });
 
-cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => console.error('checkSignals error:', e.message)); });
+cron.schedule('*/5 * * * *', () => { checkSignals().catch(e => { console.error('checkSignals error:', e.message); trackError('checkSignals', e.message); }); });
 
 // Синхронизация с Bybit каждые 3 минуты (только при AutoExec)
 cron.schedule('*/3 * * * *', async () => {
@@ -7868,7 +7939,7 @@ cron.schedule('*/3 * * * *', async () => {
       }
       store.openTrades = stillOpen;
     }
-  } catch(e) { console.error('[Bybit Sync]', e.message); }
+  } catch(e) { console.error('[Bybit Sync]', e.message); trackError('BybitSync', e.message); }
 });
 
 // Paper trading — проверяем виртуальные сделки каждые 5 минут

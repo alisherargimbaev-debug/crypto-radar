@@ -2906,16 +2906,32 @@ async function fetchCOTReport() {
     const url  = `https://www.cftc.gov/dea/newcot/fut_fin_xls_${year}.zip`;
 
     // Fallback: используем прямой CSV (без zip для простоты)
-    const csvUrl = `https://www.cftc.gov/dea/newcot/FinFutYY.txt`;
+    // CFTC URLs — пробуем несколько
+    const COT_URLS = [
+      'https://www.cftc.gov/dea/newcot/FinFutYY.txt',
+      'https://www.cftc.gov/files/dea/history/fut_fin_xls_2025.zip',
+      'https://www.cftc.gov/dea/newcot/fut_disagg_xls.zip',
+    ];
 
-    const resp = await axios.get(csvUrl, {
-      timeout: 20000,
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      responseType: 'text',
-    });
+    let csvText = null;
+    for (const csvUrl of COT_URLS) {
+      try {
+        const resp = await axios.get(csvUrl, {
+          timeout: 20000,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          responseType: 'text',
+        });
+        if (resp.data && resp.data.length > 100) {
+          csvText = resp.data;
+          console.log('[COT] Загружено с:', csvUrl);
+          break;
+        }
+      } catch(urlErr) {
+        console.log('[COT] URL недоступен:', csvUrl);
+      }
+    }
 
-    const csvText = resp.data;
-    if (!csvText || csvText.length < 100) throw new Error('Empty response');
+    if (!csvText) throw new Error('Все COT URLs недоступны');
 
     const result = {};
     for (const [asset, code] of Object.entries(COT_CODES)) {
@@ -6507,15 +6523,17 @@ if (!store.observeMode) {
       };
 
       if (store.observeMode || best.paperOnly) {
-        // paper mode или paper-only стратегия
         savePaperTrade(best);
 
-        // В observe mode — уведомляем по ВСЕМ стратегиям
-        // Это позволяет увидеть какие стратегии работают
         if (store.observeMode) {
           await sendTelegram(buildSignalAlert(best));
+
+          // В канал тоже шлём — помечаем как paper/observe
+          const channelPost = buildChannelSignal(best);
+          if (channelPost) {
+            sendToChannel(channelPost).catch(e => console.error('[CHANNEL] error:', e.message));
+          }
         } else if (best.paperOnly) {
-          // Не в observe mode, но paper-only — тихо логируем
           console.log(`[PAPER ONLY] ${best.instId} ${best.strategy} conf=${best.confidence}%`);
         }
       } else {
@@ -7410,7 +7428,7 @@ for (const trade of closed) {
   } catch(e) { console.error('[DB] trade save error:', e.message); }
   supabase.from('open_trades').delete()
     .eq('inst_id', trade.instId).eq('ts', trade.ts)
-    .catch(e => console.error('[DB] open_trades delete error:', e.message));
+    .then(() => {}).catch(e => console.error('[DB] open_trades delete error:', e.message));
 }
 }
 
@@ -8084,7 +8102,7 @@ cron.schedule('*/3 * * * *', async () => {
         pushTradeHistory(trade);
         supabase.from('open_trades').delete()
           .eq('inst_id', trade.instId).eq('ts', trade.ts)
-          .catch(e => console.error('[Bybit Sync] open_trades delete error:', e.message));
+          .then(() => {}).catch(e => console.error('[Bybit Sync] open_trades delete error:', e.message));
         console.log('[Bybit Sync] '+trade.instId+' закрыта → убрана из store и Supabase');
       }
       store.openTrades = stillOpen;
@@ -8241,7 +8259,7 @@ supabase.from('open_trades').select('*').then(async ({ data }) => {
     for (const t of stale) {
       supabase.from('open_trades').delete()
         .eq('inst_id', t.inst_id).eq('ts', t.ts)
-        .catch(() => {});
+        .then(() => {}).catch(() => {});
     }
     console.log(`[START] Загружено ${recent.length} из ${data.length} открытых сделок (24ч)`);
   }
@@ -8263,7 +8281,7 @@ supabase.from('open_trades').select('*').then(async ({ data }) => {
       for (const trade of staleBybit) {
         supabase.from('open_trades').delete()
           .eq('inst_id', trade.instId).eq('ts', trade.ts)
-          .catch(() => {});
+          .then(() => {}).catch(() => {});
         console.log(`[START Bybit Recon] ${trade.instId} не найдена на Bybit → убрана`);
       }
       store.openTrades = stillOpen;

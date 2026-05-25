@@ -19,6 +19,16 @@ try { deltaTracker = require('./delta-tracker'); } catch(e) { console.log('[DELT
 let footprint = null;
 try { footprint = require('./footprint'); } catch(e) { console.log('[FOOTPRINT] footprint.js не найден:', e.message); }
 
+// Regime Detector instance (класс с .get(), .isStrategyAllowed())
+let regimeDetector = null;
+try {
+  const _regimeMod = require('./regime');
+  if (_regimeMod && typeof _regimeMod.get === 'function') {
+    regimeDetector = _regimeMod;
+    console.log('[REGIME] RegimeDetector загружен');
+  }
+} catch(e) { console.log('[REGIME] regime.js не найден:', e.message); }
+
 // Regime Detector — ADX/ATR market state classification
 const { calcADX, calcATR, calcAtrAvg, detectRegime, neutralRegime } = require('./regime');
 try {
@@ -5295,8 +5305,12 @@ app.get('/api/news', async (req, res) => {
 
 // ── WHALES API (Copy Trading Tracker) ─────────────────────────
 app.get('/api/regime', (req, res) => {
-  const r = regime ? regime.get() : null;
-  res.json({ ok: true, mode: r?.mode || 'UNKNOWN', data: r || {} });
+  try {
+    const r = regimeDetector ? regimeDetector.get() : null;
+    res.json({ ok: true, mode: r?.mode || 'UNKNOWN', data: r || {} });
+  } catch(e) {
+    res.json({ ok: true, mode: 'UNKNOWN', data: {} });
+  }
 });
 
 // ── FLASH CRASH STRESS TEST ──────────────────────────────────
@@ -6498,9 +6512,9 @@ if (!store.observeMode) {
         fng:           store.fngCache?.value      ?? null,
         fngLabel:      store.fngCache?.label      ?? null,
         dvol:          dvolCache?.btc             ?? null,
-        regime:        regime?.get()?.mode        ?? null,
-        adx:           regime?.get()?.adx         ?? null,
-        trendDir:      regime?.get()?.trendDir    ?? null,
+        regime:        regimeDetector?.get()?.mode     ?? null,
+        adx:           regimeDetector?.get()?.adx      ?? null,
+        trendDir:      regimeDetector?.get()?.trendDir ?? null,
         session:       getCurrentSession()        ?? null,
         btcTrend: (() => {
           const b = store.btcPrice; const p = store.btcPrice24h;

@@ -8170,40 +8170,75 @@ cron.schedule('0 11 * * *', async () => {
   } catch(e) { console.error('[CHANNEL] best signal error:', e.message); }
 });
 
-// 20:00 Алматы = 15:00 UTC — вечерний итог дня в канал
+// 20:00 Алматы = 15:00 UTC — лучший результат дня в канал
 cron.schedule('0 15 * * *', async () => {
   try {
-    const today = getAlmatyDate();
-    // Берём paper сделки за сегодня из Supabase
+    const today    = getAlmatyDate();
     const dayStart = new Date(today + 'T00:00:00+05:00').getTime();
+
     const { data: todayTrades } = await supabase
       .from('paper_trades')
-      .select('outcome, pnl, strategy')
+      .select('inst_id, direction, outcome, pnl, strategy, price, ts, closed_at')
       .gte('ts', dayStart)
-      .not('outcome', 'is', null);
+      .not('outcome', 'is', null)
+      .order('pnl', { ascending: false });
 
-    const trades  = todayTrades || [];
-    const wins    = trades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
-    const losses  = trades.filter(t => t.outcome === 'sl').length;
-    const expired = trades.filter(t => t.outcome === 'expired').length;
-    const total   = trades.length;
-    const wr      = total ? Math.round(wins / total * 100) : 0;
-    const totalPnl = trades.reduce((s, t) => s + ((t.pnl || 0) * 5), 0);
+    const closed  = (todayTrades || []).filter(t => t.outcome !== 'open');
+    const wins    = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses  = closed.filter(t => t.outcome === 'sl');
+    const total   = closed.length;
+    const wr      = total ? Math.round(wins.length / total * 100) : 0;
+    const totalPnl = closed.reduce((s, t) => s + ((t.pnl || 0) * 5), 0);
     const pnlStr  = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(1) + '%';
     const wrEmoji = wr >= 60 ? '🟢' : wr >= 45 ? '🟡' : '🔴';
 
-    const post =
-      `📊 *Итог дня — ${today}*\n` +
-      `━━━━━━━━━━━━━━━\n` +
-      `Сигналов: ${total}\n` +
-      `${wrEmoji} Win Rate: *${wr}%* (${wins}W / ${losses}L / ${expired}E)\n` +
-      `💹 PnL: \`${pnlStr}\` (с 5x)\n` +
-      `━━━━━━━━━━━━━━━\n` +
-      `_Apex Algo Fund — building from demo to fund_\n` +
-      `@ApexAlgoFund`;
+    const best = wins.sort((a, b) => (b.pnl || 0) - (a.pnl || 0))[0];
+    let post = '';
+
+    if (best) {
+      const coin      = (best.inst_id || '').replace('-USDT-SWAP', '');
+      const dir       = best.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+      const pnlBest   = ((best.pnl || 0) * 5);
+      const pnlBestStr = (pnlBest >= 0 ? '+' : '') + pnlBest.toFixed(2) + '%';
+      const stratName = (best.strategy || '').replace(/[0-9️⃣🔟]/g, '').trim().split('(')[0].trim();
+      const durationMs  = (best.closed_at || Date.now()) - (best.ts || Date.now());
+      const durationMin = Math.round(durationMs / 60000);
+      const durationStr = durationMin >= 60
+        ? `${Math.floor(durationMin/60)}ч ${durationMin%60}мин`
+        : `${durationMin}мин`;
+      const outcomeLabel = best.outcome === 'tp2' ? 'TP2 🏆' : 'TP1 ✅';
+
+      post =
+        `🏆 *Лучшая сделка дня — ${today}*\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `*${coin}/USDT — ${dir}*\n\n` +
+        `💰 Вход:  \`$${best.price}\`\n` +
+        `🎯 Выход: ${outcomeLabel}\n` +
+        `📈 P&L:   \`${pnlBestStr}\` (5x)\n` +
+        `⏱ Время: ${durationStr}\n` +
+        `📌 ${stratName}\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `📊 *Итог дня:*\n` +
+        `${wrEmoji} Win Rate: *${wr}%* (${wins.length}✅ / ${losses.length}❌)\n` +
+        `💹 PnL: \`${pnlStr}\`\n` +
+        `Сигналов: ${total}\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `_Apex Algo Fund — building from demo to fund_\n` +
+        `@ApexAlgoFund`;
+    } else {
+      post =
+        `📊 *Итог дня — ${today}*\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `${wrEmoji} Win Rate: *${wr}%* (${wins.length}✅ / ${losses.length}❌)\n` +
+        `💹 PnL: \`${pnlStr}\`\n` +
+        `Сигналов: ${total}\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `_Бывают и плохие дни. Система продолжает работать._\n` +
+        `@ApexAlgoFund`;
+    }
 
     await sendToChannel(post);
-    console.log(`[CHANNEL] Вечерний итог опубликован: ${total} сделок WR=${wr}%`);
+    console.log(`[CHANNEL] Итог дня: WR=${wr}% best=${best?.inst_id || 'none'}`);
   } catch(e) { console.error('[CHANNEL] evening summary error:', e.message); }
 });
 

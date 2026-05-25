@@ -21,13 +21,6 @@ try { footprint = require('./footprint'); } catch(e) { console.log('[FOOTPRINT] 
 
 // Regime Detector — ADX/ATR market state classification
 const { calcADX, calcATR, calcAtrAvg, detectRegime, neutralRegime } = require('./regime');
-// Новый Regime Detector (класс с .get(), .start(), .isStrategyAllowed())
-let regimeDetector = null;
-try {
-  regimeDetector = require('./regime');
-  // Если это класс-инстанс (новый формат) — используем его
-  if (typeof regimeDetector.get !== 'function') regimeDetector = null;
-} catch(e) { regimeDetector = null; }
 try {
   deltaTracker = require('./delta-tracker');
   console.log('[DELTA] Tracker загружен ✅');
@@ -5302,7 +5295,7 @@ app.get('/api/news', async (req, res) => {
 
 // ── WHALES API (Copy Trading Tracker) ─────────────────────────
 app.get('/api/regime', (req, res) => {
-  const r = regimeDetector ? regimeDetector.get() : null;
+  const r = regime ? regime.get() : null;
   res.json({ ok: true, mode: r?.mode || 'UNKNOWN', data: r || {} });
 });
 
@@ -6505,9 +6498,9 @@ if (!store.observeMode) {
         fng:           store.fngCache?.value      ?? null,
         fngLabel:      store.fngCache?.label      ?? null,
         dvol:          dvolCache?.btc             ?? null,
-        regime:        regimeDetector?.get()?.mode        ?? null,
-        adx:           regimeDetector?.get()?.adx         ?? null,
-        trendDir:      regimeDetector?.get()?.trendDir    ?? null,
+        regime:        regime?.get()?.mode        ?? null,
+        adx:           regime?.get()?.adx         ?? null,
+        trendDir:      regime?.get()?.trendDir    ?? null,
         session:       getCurrentSession()        ?? null,
         btcTrend: (() => {
           const b = store.btcPrice; const p = store.btcPrice24h;
@@ -6535,12 +6528,7 @@ if (!store.observeMode) {
 
         if (store.observeMode) {
           await sendTelegram(buildSignalAlert(best));
-
-          // В канал тоже шлём — помечаем как paper/observe
-          const channelPost = buildChannelSignal(best);
-          if (channelPost) {
-            sendToChannel(channelPost).catch(e => console.error('[CHANNEL] error:', e.message));
-          }
+          // Канал — только в 16:00 через cron (лучший сигнал дня)
         } else if (best.paperOnly) {
           console.log(`[PAPER ONLY] ${best.instId} ${best.strategy} conf=${best.confidence}%`);
         }
@@ -6571,12 +6559,7 @@ if (!store.observeMode) {
 
         // Telegram — параллельно с emit (не ждём)
         sendTelegram(buildSignalAlert(best)).catch(e => console.error('[TG] signal alert error:', e.message));
-
-        // ── Публикуем в канал @ApexAlgoFund ────────────────
-        const channelPost = buildChannelSignal(best);
-        if (channelPost) {
-          sendToChannel(channelPost).catch(e => console.error('[CHANNEL] error:', e.message));
-        }
+        // Канал — только в 16:00 через cron (лучший сигнал дня)
       }
     }
   } finally {
@@ -7399,14 +7382,7 @@ async function checkOutcomes() {
       // Уведомление только если AutoExec выключен — иначе он сам уже уведомил
       if (!autoExecSignals) {
         await sendTelegram(buildOutcomeAlert(trade));
-        // Публикуем итог в канал
-        const outcomeEmoji = outcome === 'tp2' ? '🏆' : outcome === 'tp1' ? '✅' : outcome === 'sl' ? '❌' : '⏰';
-        const coin = (trade.instId || '').replace('-USDT-SWAP', '');
-        const pnlStr = (trade.pnl >= 0 ? '+' : '') + (trade.pnl * 5).toFixed(2) + '% (5x)';
-        const channelOutcome = `${outcomeEmoji} *${coin}/USDT — ${outcome.toUpperCase()}*\n` +
-          `P&L: \`${pnlStr}\`\n` +
-          `_@ApexAlgoFund_`;
-        sendToChannel(channelOutcome).catch(() => {});
+        // Итоги сделок — только в личку, не в канал
       }
     } else { stillOpen.push(trade); }
   }

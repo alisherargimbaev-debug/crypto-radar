@@ -6384,7 +6384,7 @@ if (!store.observeMode) {
           if (!s.instId) { s.instId = coin.instId; }
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
           // S1=70% в live (WR 73% на 52 сд), S10=65%, остальные=65%
-          const isS1live  = best.strategy.startsWith('1️⃣ ');
+          const isS1live  = s.strategy.startsWith('1️⃣ ');
           const threshold = store.observeMode ? 50 : isS1live ? 70 : 65;
           return s.confidence >= threshold;
         })
@@ -8041,7 +8041,7 @@ function trackError(category, message) {
     category,
     level:    'error',
     message:  message.substring(0, 500),
-  }).catch(() => {}); // не критично если не записалось
+  }).then(() => {}).catch(() => {}); // не критично если не записалось
 }
 
 // Перехватываем необработанные ошибки

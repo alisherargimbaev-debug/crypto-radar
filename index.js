@@ -100,6 +100,59 @@ function anyoneSubscribed(module) {
 
 // ── Настройки ──────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const CHANNEL_ID = process.env.CHANNEL_ID || '@ApexAlgoFund'; // публичный канал
+
+// ── Отправка в публичный канал ────────────────────────────────
+async function sendToChannel(text) {
+  if (!TELEGRAM_TOKEN) return;
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+    await httpPost(url, {
+      chat_id:    CHANNEL_ID,
+      text,
+      parse_mode: 'Markdown',
+    });
+    console.log('[CHANNEL] Пост отправлен в', CHANNEL_ID);
+  } catch(e) {
+    console.error('[CHANNEL] Ошибка отправки:', e.message);
+  }
+}
+
+// ── Формат сигнала для публичного канала ─────────────────────
+function buildChannelSignal(sig) {
+  if (!sig?.instId) return null;
+  const coin    = (sig.instId || '').replace('-USDT-SWAP', '');
+  const dir     = sig.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+  const emoji   = sig.direction === 'long' ? '📈' : '📉';
+  const regime  = sig.regimeNote ? sig.regimeNote.split('(')[0].trim() : '';
+  const session = sig.sessionNote ? sig.sessionNote.split('→')[0].trim() : '';
+
+  const filled = Math.round(sig.confidence / 10);
+  const bar    = '█'.repeat(filled) + '░'.repeat(10 - filled);
+
+  // Короткое название стратегии
+  const stratName = (sig.strategy || '')
+    .replace(/[0-9️⃣]/g, '').trim()
+    .split('(')[0].trim();
+
+  return (
+    `${emoji} *${coin}/USDT — ${dir}*\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `💰 Entry:  \`$${sig.price}\`\n` +
+    `🎯 TP1:    \`$${sig.tp1}\`\n` +
+    `🎯 TP2:    \`$${sig.tp2}\`\n` +
+    `🛡 SL:     \`$${sig.sl}\`\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `📊 Confidence: ${sig.confidence}%\n` +
+    `[${bar}]\n` +
+    `📌 ${stratName}\n` +
+    (regime  ? `🌐 ${regime}\n`  : '') +
+    (session ? `⏰ ${session}\n` : '') +
+    `━━━━━━━━━━━━━━━\n` +
+    `_Apex Algo Fund — automated 24/7_\n` +
+    `@ApexAlgoFund`
+  );
+}
 const CHAT_ID        = process.env.CHAT_ID;
 const CHAT_IDS       = [process.env.CHAT_ID, process.env.CHAT_ID_2].filter(Boolean);
 const GROQ_KEY       = process.env.GROQ_KEY;
@@ -6492,6 +6545,12 @@ if (!store.observeMode) {
 
         // Telegram — параллельно с emit (не ждём)
         sendTelegram(buildSignalAlert(best)).catch(e => console.error('[TG] signal alert error:', e.message));
+
+        // ── Публикуем в канал @ApexAlgoFund ────────────────
+        const channelPost = buildChannelSignal(best);
+        if (channelPost) {
+          sendToChannel(channelPost).catch(e => console.error('[CHANNEL] error:', e.message));
+        }
       }
     }
   } finally {
@@ -7314,6 +7373,14 @@ async function checkOutcomes() {
       // Уведомление только если AutoExec выключен — иначе он сам уже уведомил
       if (!autoExecSignals) {
         await sendTelegram(buildOutcomeAlert(trade));
+        // Публикуем итог в канал
+        const outcomeEmoji = outcome === 'tp2' ? '🏆' : outcome === 'tp1' ? '✅' : outcome === 'sl' ? '❌' : '⏰';
+        const coin = (trade.instId || '').replace('-USDT-SWAP', '');
+        const pnlStr = (trade.pnl >= 0 ? '+' : '') + (trade.pnl * 5).toFixed(2) + '% (5x)';
+        const channelOutcome = `${outcomeEmoji} *${coin}/USDT — ${outcome.toUpperCase()}*\n` +
+          `P&L: \`${pnlStr}\`\n` +
+          `_@ApexAlgoFund_`;
+        sendToChannel(channelOutcome).catch(() => {});
       }
     } else { stillOpen.push(trade); }
   }

@@ -6491,6 +6491,7 @@ if (!store.observeMode) {
 
       setCoinCooldown(coin.instId);
       logSignal(best);
+      updateBestSignalOfDay(best); // обновляем лучший сигнал дня
 
       // ── Snapshot всех фильтров для feature importance анализа ──
       best.filters = {
@@ -8129,6 +8130,100 @@ cron.schedule('*/15 * * * *', () => {
 cron.schedule('0 */2 * * *', () => { checkAnomalies().catch(e => console.error('checkAnomalies error:', e.message)); });
 
 // Ежедневный отчёт в 21:00 Алматы (16:00 UTC)
+// ── ЛУЧШИЙ СИГНАЛ ДНЯ — накапливаем и публикуем в 16:00 Алматы ──
+let bestSignalOfDay = null; // { sig, confidence, ts }
+
+function updateBestSignalOfDay(sig) {
+  if (!sig || !sig.confidence) return;
+  const today = getAlmatyDate();
+  // Сбрасываем если новый день
+  if (bestSignalOfDay && bestSignalOfDay.date !== today) {
+    bestSignalOfDay = null;
+  }
+  if (!bestSignalOfDay || sig.confidence > bestSignalOfDay.confidence) {
+    bestSignalOfDay = { sig, confidence: sig.confidence, date: today, ts: Date.now() };
+    console.log(`[BEST SIGNAL] Новый лучший за ${today}: ${sig.instId} conf=${sig.confidence}%`);
+  }
+}
+
+// 16:00 Алматы = 11:00 UTC — публикуем лучший сигнал дня
+cron.schedule('0 11 * * *', async () => {
+  try {
+    const today = getAlmatyDate();
+    if (!bestSignalOfDay || bestSignalOfDay.date !== today) {
+      console.log('[CHANNEL] Нет лучшего сигнала за сегодня');
+      return;
+    }
+    const sig = bestSignalOfDay.sig;
+    const coin = (sig.instId || '').replace('-USDT-SWAP', '');
+    const dir  = sig.direction === 'long' ? '🟢 LONG' : '🔴 SHORT';
+    const emoji = sig.direction === 'long' ? '📈' : '📉';
+    const filled = Math.round(sig.confidence / 10);
+    const bar    = '█'.repeat(filled) + '░'.repeat(10 - filled);
+    const stratName = (sig.strategy || '').replace(/[0-9️⃣]/g, '').trim().split('(')[0].trim();
+    const signalTime = new Date(bestSignalOfDay.ts + 5*3600*1000)
+      .toISOString().substr(11, 5);
+
+    const post =
+      `${emoji} *Сигнал дня — ${today}*\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `*${coin}/USDT — ${dir}*\n\n` +
+      `💰 Entry:  \`$${sig.price}\`\n` +
+      `🎯 TP1:    \`$${sig.tp1}\`\n` +
+      `🎯 TP2:    \`$${sig.tp2}\`\n` +
+      `🛡 SL:     \`$${sig.sl}\`\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `📊 Confidence: *${sig.confidence}%*\n` +
+      `[${bar}]\n` +
+      `📌 ${stratName}\n` +
+      `🕐 Сигнал в ${signalTime} ALM\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `_Лучший сигнал бота за сегодня_\n` +
+      `_Apex Algo Fund — automated 24/7_\n` +
+      `@ApexAlgoFund`;
+
+    await sendToChannel(post);
+    console.log(`[CHANNEL] Лучший сигнал дня опубликован: ${coin} conf=${sig.confidence}%`);
+  } catch(e) { console.error('[CHANNEL] best signal error:', e.message); }
+});
+
+// 20:00 Алматы = 15:00 UTC — вечерний итог дня в канал
+cron.schedule('0 15 * * *', async () => {
+  try {
+    const today = getAlmatyDate();
+    // Берём paper сделки за сегодня из Supabase
+    const dayStart = new Date(today + 'T00:00:00+05:00').getTime();
+    const { data: todayTrades } = await supabase
+      .from('paper_trades')
+      .select('outcome, pnl, strategy')
+      .gte('ts', dayStart)
+      .not('outcome', 'is', null);
+
+    const trades  = todayTrades || [];
+    const wins    = trades.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2').length;
+    const losses  = trades.filter(t => t.outcome === 'sl').length;
+    const expired = trades.filter(t => t.outcome === 'expired').length;
+    const total   = trades.length;
+    const wr      = total ? Math.round(wins / total * 100) : 0;
+    const totalPnl = trades.reduce((s, t) => s + ((t.pnl || 0) * 5), 0);
+    const pnlStr  = (totalPnl >= 0 ? '+' : '') + totalPnl.toFixed(1) + '%';
+    const wrEmoji = wr >= 60 ? '🟢' : wr >= 45 ? '🟡' : '🔴';
+
+    const post =
+      `📊 *Итог дня — ${today}*\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `Сигналов: ${total}\n` +
+      `${wrEmoji} Win Rate: *${wr}%* (${wins}W / ${losses}L / ${expired}E)\n` +
+      `💹 PnL: \`${pnlStr}\` (с 5x)\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `_Apex Algo Fund — building from demo to fund_\n` +
+      `@ApexAlgoFund`;
+
+    await sendToChannel(post);
+    console.log(`[CHANNEL] Вечерний итог опубликован: ${total} сделок WR=${wr}%`);
+  } catch(e) { console.error('[CHANNEL] evening summary error:', e.message); }
+});
+
 cron.schedule('0 16 * * *', async () => {
   try {
     const today = new Date().toISOString().split('T')[0];

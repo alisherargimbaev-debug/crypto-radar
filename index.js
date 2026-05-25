@@ -21,6 +21,13 @@ try { footprint = require('./footprint'); } catch(e) { console.log('[FOOTPRINT] 
 
 // Regime Detector — ADX/ATR market state classification
 const { calcADX, calcATR, calcAtrAvg, detectRegime, neutralRegime } = require('./regime');
+// Новый Regime Detector (класс с .get(), .start(), .isStrategyAllowed())
+let regimeDetector = null;
+try {
+  regimeDetector = require('./regime');
+  // Если это класс-инстанс (новый формат) — используем его
+  if (typeof regimeDetector.get !== 'function') regimeDetector = null;
+} catch(e) { regimeDetector = null; }
 try {
   deltaTracker = require('./delta-tracker');
   console.log('[DELTA] Tracker загружен ✅');
@@ -5295,7 +5302,7 @@ app.get('/api/news', async (req, res) => {
 
 // ── WHALES API (Copy Trading Tracker) ─────────────────────────
 app.get('/api/regime', (req, res) => {
-  const r = regime ? regime.get() : null;
+  const r = regimeDetector ? regimeDetector.get() : null;
   res.json({ ok: true, mode: r?.mode || 'UNKNOWN', data: r || {} });
 });
 
@@ -6498,9 +6505,9 @@ if (!store.observeMode) {
         fng:           store.fngCache?.value      ?? null,
         fngLabel:      store.fngCache?.label      ?? null,
         dvol:          dvolCache?.btc             ?? null,
-        regime:        regime?.get()?.mode        ?? null,
-        adx:           regime?.get()?.adx         ?? null,
-        trendDir:      regime?.get()?.trendDir    ?? null,
+        regime:        regimeDetector?.get()?.mode        ?? null,
+        adx:           regimeDetector?.get()?.adx         ?? null,
+        trendDir:      regimeDetector?.get()?.trendDir    ?? null,
         session:       getCurrentSession()        ?? null,
         btcTrend: (() => {
           const b = store.btcPrice; const p = store.btcPrice24h;

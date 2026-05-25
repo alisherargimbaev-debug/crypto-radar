@@ -314,6 +314,29 @@ function checkPortfolioRisk(sig) {
     }
   }
 
+  // ── ЭМПИРИЧЕСКИЕ ФИЛЬТРЫ (из анализа 442 сделок) ─────────
+  // Вторник UTC: WR 23% на 61 сделке — статистически значимо
+  const dayUTC = new Date().getUTCDay();
+  if (dayUTC === 2) { // 2 = вторник
+    console.log(`[TUESDAY BLOCK] ${sig.instId} — вторник WR 23% → блок`);
+    sig.confidence = Math.max(sig.confidence - 25, 0);
+    sig.dowNote = '⚠️ Вторник (WR 23%) → -25%';
+    // Жёсткий блок если confidence упал ниже порога
+  }
+
+  // Confidence < 60 → блок (WR 31% на 127 сделках)
+  if (sig.confidence < 60) {
+    console.log(`[CONF BLOCK] ${sig.instId} — confidence ${sig.confidence}% < 60% (WR 31%) → блок`);
+    return { allowed: false, reason: `Confidence ${sig.confidence}% < 60% (empirical threshold)` };
+  }
+
+  // Азиатская ночь UTC 1-5: снижаем confidence
+  const hourUTC = new Date().getUTCHours();
+  if (hourUTC >= 1 && hourUTC <= 5) {
+    sig.confidence = Math.max(sig.confidence - 10, 0);
+    sig.sessionNote = (sig.sessionNote || '') + ' 🌙 Азия ночь → -10%';
+  }
+
   // ── ПРОП-РЕЖИМ: только S1 + S10 (на основе 442 paper trades) ──
   // S1 Volume Spike: WR 73% на 52 сделках → порог 70%
   // S10 4H Range:   WR 64% на 95 сделках → порог 65%

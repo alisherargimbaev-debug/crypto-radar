@@ -6400,6 +6400,36 @@ if (!store.observeMode) {
       setCoinCooldown(coin.instId);
       logSignal(best);
 
+      // ── Snapshot всех фильтров для feature importance анализа ──
+      best.filters = {
+        fng:           store.fngCache?.value      ?? null,
+        fngLabel:      store.fngCache?.label      ?? null,
+        dvol:          dvolCache?.btc             ?? null,
+        regime:        regime?.get()?.mode        ?? null,
+        adx:           regime?.get()?.adx         ?? null,
+        trendDir:      regime?.get()?.trendDir    ?? null,
+        session:       getCurrentSession()        ?? null,
+        btcTrend: (() => {
+          const b = store.btcPrice; const p = store.btcPrice24h;
+          if (!b || !p) return null;
+          const ch = (b - p) / p * 100;
+          return ch > 1 ? 'up' : ch < -1 ? 'down' : 'flat';
+        })(),
+        cotSignal:     cotCache?.data?.[(best.instId||'').replace('-USDT-SWAP','')]?.signal ?? null,
+        hasGex:        !!(best.gexNote && !best.gexNote.includes('нет')),
+        hasDelta:      !!(best.deltaNote && best.deltaNote.includes('+')),
+        hasFootprint:  !!(best.footprintNote && !best.footprintNote.includes('⚠️')),
+        hasAbsorption: !!(best.absNote),
+        hasPoc:        !!(best.pocNote),
+        hasMtf:        !!(best.mtfNote && !best.mtfNote.includes('против')),
+        hasVwap:       !!(best.vwapNote),
+        regimeNote:    best.regimeNote    || null,
+        gexNote:       best.gexNote       || null,
+        deltaNote:     best.deltaNote     || null,
+        footprintNote: best.footprintNote || null,
+        cotNote:       best.cotNote       || null,
+      };
+
       if (store.observeMode || best.paperOnly) {
         // paper mode или paper-only стратегия
         savePaperTrade(best);
@@ -6504,6 +6534,7 @@ async function savePaperTradeToSupabase(sig) {
       tp2:        parseFloat(sig.tp2),
       confidence: sig.confidence,
       outcome:    null,
+      filters:    sig.filters ? JSON.parse(JSON.stringify(sig.filters)) : null,
     }).select().single();
     if (!error && data) return data.id;
   } catch(e) {
@@ -6546,7 +6577,8 @@ function savePaperTrade(sig) {
     closedAt:   null,
     closePrice: null,
     pnl:        null,
-    _id:        null, // будет заполнен из Supabase
+    filters:    sig.filters || null,
+    _id:        null,
   };
   global.paperTrades.push(trade);
   if (global.paperTrades.length > 500) {

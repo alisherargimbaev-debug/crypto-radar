@@ -314,27 +314,30 @@ function checkPortfolioRisk(sig) {
     }
   }
 
-  // ── ПРОП-РЕЖИМ: только S1 + S4 (на основе 200 paper trades) ──
-  // S1 Volume Spike: WR 85% на 40 сделках → без порога confidence
-  // S4 MA20/MA50:   WR 30% → порог 65% + строгие фильтры
+  // ── ПРОП-РЕЖИМ: только S1 + S10 (на основе 442 paper trades) ──
+  // S1 Volume Spike: WR 73% на 52 сделках → порог 70%
+  // S10 4H Range:   WR 64% на 95 сделках → порог 65%
+  // S4 MA20/MA50:   WR 0% → полностью убрана
+  // S17 BB Squeeze: WR 24% → полностью убрана
   if (store.propMode) {
-    const isS1 = sig.strategy.startsWith('1️⃣ ');
-    const isS4 = sig.strategy.startsWith('4️⃣ ');
+    const isS1  = sig.strategy.startsWith('1️⃣ ');
+    const isS10 = sig.strategy.includes('4H Range');
 
-    if (!isS1 && !isS4) {
-      console.log(`[PROP BLOCK] ${sig.instId} — "${sig.strategy}" заблокирована (только S1+S4)`);
-      return { allowed: false, reason: 'Проп-режим: только S1 Volume Spike + S4 MA20/MA50' };
+    if (!isS1 && !isS10) {
+      console.log(`[PROP BLOCK] ${sig.instId} — "${sig.strategy}" заблокирована (только S1+S10)`);
+      return { allowed: false, reason: 'Проп-режим: только S1 Volume Spike + S10 4H Range' };
     }
 
-    // S1: без порога confidence — даже 50% давали WR 85%
-    if (isS1) {
-      console.log(`[PROP S1 ✅] ${sig.instId} — conf=${sig.confidence}% → пропускаем`);
+    // S1: порог 70% (анализ 52 сделок — ниже 70% WR падает)
+    if (isS1 && sig.confidence < 70) {
+      console.log(`[PROP S1 BLOCK] ${sig.instId} — conf=${sig.confidence}% < 70%`);
+      return { allowed: false, reason: `S1: низкий confidence ${sig.confidence}% < 70%` };
     }
 
-    // S4: порог 65% — только чёткие сигналы
-    if (isS4 && sig.confidence < 65) {
-      console.log(`[PROP S4 BLOCK] ${sig.instId} — conf=${sig.confidence}% < 65%`);
-      return { allowed: false, reason: `S4: низкий confidence ${sig.confidence}% < 65%` };
+    // S10: порог 65%
+    if (isS10 && sig.confidence < 65) {
+      console.log(`[PROP S10 BLOCK] ${sig.instId} — conf=${sig.confidence}% < 65%`);
+      return { allowed: false, reason: `S10: низкий confidence ${sig.confidence}% < 65%` };
     }
   }
 
@@ -3939,57 +3942,8 @@ async function runStrategies(instId, coinData, asianSession) {
       // Вычисляем FVG зоны один раз для всех стратегий
     const fvgZones1h  = detectFVG(k1h.slice(-30));
     const fvgZones15m = detectFVG(k15m.slice(-20));
-  // S4: MA20/MA50 + RSI — улучшенная версия
-if (k1h.length >= 55) {
-  const cross  = calcMACross(k1h, 20, 50);
-  const rsi    = calcRSI(k1h, 14);
-  const ma20   = calcSMA(k1h, 20);
-  const ma50   = calcSMA(k1h, 50);
-  const macd   = calcMACD(k1h);
-  const bb     = calcBollinger(k1h);
-  const closes = k1h.map(c => c.close);
-  const price  = coinData.price;
+  // S4: MA20/MA50 + RSI — ОТКЛЮЧЕНА (WR 0% на 15 сделках)
 
-  // Расстояние между MA — чем меньше тем свежее крест
-  const maDist = Math.abs(ma20 - ma50) / ma50 * 100;
-  const freshCross = maDist < 0.5; // крест произошёл недавно
-
-  // Цена не должна быть далеко от MA20 — значит мы не опоздали
-  const priceNearMA = Math.abs(price - ma20) / ma20 * 100 < 1.5;
-
-  // RSI дивергенция как подтверждение разворота
-  const lows   = k1h.map(c => c.low);
-  const rsiPrev = calcRSI(k1h.slice(0, -5), 14);
-  const bullDiv = lows[lows.length-1] < Math.min(...lows.slice(-20,-1)) && rsi > rsiPrev + 2; // 20 свечей — лучше качество дивергенции
-  const bearDiv = closes[closes.length-1] > Math.max(...closes.slice(-20,-1)) && rsi < rsiPrev - 2;
-
-  const iL = cross === 'bullish' && rsi < 55 && rsi > 30 && macd.hist > 0;
-  const iS = cross === 'bearish' && rsi > 45 && rsi < 70 && macd.hist < 0;
-
-  if ((iL || iS) && (freshCross || priceNearMA)) {
-    const dir = iL ? 'long' : 'short';
-    let conf  = 58; // снижаем базовый с 68 до 58
-
-    // Бонусы за подтверждения
-    if (freshCross)  conf += 8;  // свежий крест
-    if (priceNearMA) conf += 5;  // цена рядом с MA
-    if (iL && bullDiv) conf += 10; // бычья дивергенция RSI
-    if (iS && bearDiv) conf += 10; // медвежья дивергенция RSI
-    if (iL && rsi < 45) conf += 7; // RSI перепродан
-    if (iS && rsi > 55) conf += 7; // RSI перекуплен
-    if (iL && price < bb.lower * 1.01) conf += 5; // цена у нижней BB
-    if (iS && price > bb.upper * 0.99) conf += 5; // цена у верхней BB
-
-    signals.push({
-      strategy:  '4️⃣ MA20/MA50+RSI (1h)',
-      instId, direction: dir,
-      signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-      price, confidence: Math.min(conf, 100),
-      metrics:   `MA20:${ma20.toFixed(4)} MA50:${ma50.toFixed(4)} RSI:${rsi} MACD:${macd.hist > 0 ? '▲' : '▼'} Dist:${maDist.toFixed(2)}% ${cross === 'bullish' ? '🔀 Golden Cross' : '🔀 Death Cross'}`,
-      ...calcSLTP(price, dir, '4️⃣ MA20/MA50+RSI (1h)', atr1h),
-    });
-  }
-}
 
     // S5: RSI Дивергенция (1h) v2 — только в боковике (ADX < 30)
     // Урок апреля 2026: в трендовом рынке RSI div = ловушка
@@ -4513,9 +4467,8 @@ if (k1h.length >= 55) {
     // S11: Elliott+Fib+SMA — УДАЛЕНА (сложная, редко срабатывает)
 
     // ════════════════════════════════════════════════════════
-    // S14 — Whale Follow (15m) — PAPER ONLY (сбор данных)
-    // Следуем за крупными трейдерами с Hyperliquid
-    // ════════════════════════════════════════════════════════
+    // S14 — Whale Follow (15m) — ОТКЛЮЧЕНА (WR 0% на 8 сделках)
+    if (false) { // S14 disabled
     try {
       // Получаем недавние действия китов через copytrader модуль
       let whaleActions = [];
@@ -4579,6 +4532,7 @@ if (k1h.length >= 55) {
         }
       }
     } catch(e) { console.error('S14 error:', e.message); }
+    } // end S14 disabled
 
     // ════════════════════════════════════════════════════════
     // S15: Liquidation Hunt — УДАЛЕНА (OKX API недоступен)
@@ -4754,9 +4708,8 @@ if (k1h.length >= 55) {
     } catch(e) { console.error('S16 error:', e.message); }
 
     // ════════════════════════════════════════════════════════
-    // S17: BB Squeeze (1H) — PAPER ONLY (сбор данных)
-    // Bollinger Bands сжимаются → пробой в сторону тренда
-    // ════════════════════════════════════════════════════════
+    // S17: BB Squeeze (1H) — ОТКЛЮЧЕНА (WR 24% на 178 сделках = антисигнал)
+    /* S17 disabled
     try {
       const k1h_s17 = await getOKXKlinesCached(instId, '1H', 30);
       if (k1h_s17.length >= 20) {
@@ -4784,6 +4737,7 @@ if (k1h.length >= 55) {
         }
       }
     } catch(e) { console.error('S17 error:', e.message); }
+    */ // end S17 disabled
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;
@@ -6337,7 +6291,9 @@ if (!store.observeMode) {
           // Обязательно должен быть instId
           if (!s.instId) { s.instId = coin.instId; }
           // В режиме наблюдения — порог ниже чтобы видеть больше сигналов
-          const threshold = store.observeMode ? 50 : 65;
+          // S1=70% в live (WR 73% на 52 сд), S10=65%, остальные=65%
+          const isS1live  = best.strategy.startsWith('1️⃣ ');
+          const threshold = store.observeMode ? 50 : isS1live ? 70 : 65;
           return s.confidence >= threshold;
         })
         .sort((a, b) => {

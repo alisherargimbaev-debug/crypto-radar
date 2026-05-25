@@ -8256,9 +8256,8 @@ cron.schedule('0 7 * * *', () => { dailyReport().catch(e => console.error('daily
 
 // Вечерний дебрифинг — 16:00 UTC = 21:00 Алматы
 
-// Агент Психолог — проверяет после каждого закрытия сделки (каждые 15 мин)
-// Психолог — раз в день в 20:00 Алматы (15:00 UTC)
-cron.schedule('0 15 * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
+// Агент Психолог — раз в день в 19:00 Алматы (14:00 UTC)
+cron.schedule('0 14 * * *', () => { psychologistAgent().catch(e => console.error('psychologist error:', e.message)); });
 
 // Агент Аудитор — каждое воскресенье в 10:00 UTC (15:00 Алматы)
 cron.schedule('0 10 * * 0', () => { auditorAgent().catch(e => console.error('auditor error:', e.message)); });

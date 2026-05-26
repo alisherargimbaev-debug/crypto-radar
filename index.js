@@ -384,7 +384,6 @@ function checkPortfolioRisk(sig) {
     console.log(`[TUESDAY BLOCK] ${sig.instId} — вторник WR 23% → блок`);
     sig.confidence = Math.max(sig.confidence - 25, 0);
     sig.dowNote = '⚠️ Вторник (WR 23%) → -25%';
-    // Жёсткий блок если confidence упал ниже порога
   }
 
   // Confidence < 60 → блок (WR 31% на 127 сделках)
@@ -398,6 +397,51 @@ function checkPortfolioRisk(sig) {
   if (hourUTC >= 1 && hourUTC <= 5) {
     sig.confidence = Math.max(sig.confidence - 10, 0);
     sig.sessionNote = (sig.sessionNote || '') + ' 🌙 Азия ночь → -10%';
+  }
+
+  // ── ЭМПИРИЧЕСКИЕ ФИЛЬТРЫ v2 (из анализа 180 сделок с filters) ──
+  // Данные: Delta=true → WR 82%, Delta=false → WR 25-36%
+  //         POC=true → WR 67-100%, POC=false → WR 33%
+  //         US+EU без Delta → WR 25% (12 сделок)
+  //         Off-hours → WR 79% (14 сделок)
+
+  const hasDelta = sig.deltaNote && sig.deltaNote.includes('+');
+  const hasPoc   = !!(sig.pocNote || sig.mpocNote);
+  const session  = getCurrentSession();
+
+  // US+EU сессия: WR 41% в целом, без delta → 25% → штраф
+  if (session === 'US+EU' || session === 'America') {
+    if (!hasDelta) {
+      sig.confidence = Math.max(sig.confidence - 20, 0);
+      sig.sessionNote = (sig.sessionNote || '') + ' ⚠️ US+EU без Delta → -20%';
+      console.log(`[SESSION BLOCK] ${sig.instId} — US+EU без Delta WR 25% → -20%`);
+    }
+  }
+
+  // ЖЁСТКИЕ ВОРОТА: Delta + POC — главные предикторы из 180 сделок
+  if (!hasDelta && !hasPoc) {
+    // Оба отсутствуют — WR ~30% → блок
+    console.log(`[GATE BLOCK] ${sig.instId} — нет Delta и POC → WR ~30% → блок`);
+    return { allowed: false, reason: 'Нет Delta и POC — WR ~30% по данным 180 сделок' };
+  }
+
+  if (!hasDelta) {
+    // Нет Delta — WR 25-36% → серьёзный штраф
+    sig.confidence = Math.max(sig.confidence - 15, 0);
+    sig.deltaNote  = (sig.deltaNote || '') + ' ⚠️ Нет Delta → -15%';
+    console.log(`[DELTA GATE] ${sig.instId} — нет Delta WR 25-36% → -15%`);
+  }
+
+  if (!hasPoc) {
+    // Нет POC — WR падает до 33% → штраф
+    sig.confidence = Math.max(sig.confidence - 12, 0);
+    sig.pocNote    = (sig.pocNote || '') + ' ⚠️ Нет POC → -12%';
+    console.log(`[POC GATE] ${sig.instId} — нет POC WR 33% → -12%`);
+  }
+
+  // Повторная проверка confidence после штрафов
+  if (sig.confidence < 60) {
+    return { allowed: false, reason: `После фильтров Delta/POC confidence упал до ${sig.confidence}%` };
   }
 
   // ── ПРОП-РЕЖИМ: только S1 + S10 (на основе 442 paper trades) ──

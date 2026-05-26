@@ -403,45 +403,41 @@ function checkPortfolioRisk(sig) {
   // Данные: Delta=true → WR 82%, Delta=false → WR 25-36%
   //         POC=true → WR 67-100%, POC=false → WR 33%
   //         US+EU без Delta → WR 25% (12 сделок)
-  //         Off-hours → WR 79% (14 сделок)
 
   const hasDelta = sig.deltaNote && sig.deltaNote.includes('+');
   const hasPoc   = !!(sig.pocNote || sig.mpocNote);
   const session  = getCurrentSession();
 
-  // US+EU сессия: WR 41% в целом, без delta → 25% → штраф
+  // US+EU сессия: без delta → 25% → штраф (в любом режиме)
   if (session === 'US+EU' || session === 'America') {
     if (!hasDelta) {
       sig.confidence = Math.max(sig.confidence - 20, 0);
       sig.sessionNote = (sig.sessionNote || '') + ' ⚠️ US+EU без Delta → -20%';
-      console.log(`[SESSION BLOCK] ${sig.instId} — US+EU без Delta WR 25% → -20%`);
     }
   }
 
-  // ЖЁСТКИЕ ВОРОТА: Delta + POC — главные предикторы из 180 сделок
-  if (!hasDelta && !hasPoc) {
-    // Оба отсутствуют — WR ~30% → блок
-    console.log(`[GATE BLOCK] ${sig.instId} — нет Delta и POC → WR ~30% → блок`);
-    return { allowed: false, reason: 'Нет Delta и POC — WR ~30% по данным 180 сделок' };
-  }
-
-  if (!hasDelta) {
-    // Нет Delta — WR 25-36% → серьёзный штраф
-    sig.confidence = Math.max(sig.confidence - 15, 0);
-    sig.deltaNote  = (sig.deltaNote || '') + ' ⚠️ Нет Delta → -15%';
-    console.log(`[DELTA GATE] ${sig.instId} — нет Delta WR 25-36% → -15%`);
-  }
-
-  if (!hasPoc) {
-    // Нет POC — WR падает до 33% → штраф
-    sig.confidence = Math.max(sig.confidence - 12, 0);
-    sig.pocNote    = (sig.pocNote || '') + ' ⚠️ Нет POC → -12%';
-    console.log(`[POC GATE] ${sig.instId} — нет POC WR 33% → -12%`);
-  }
-
-  // Повторная проверка confidence после штрафов
-  if (sig.confidence < 60) {
-    return { allowed: false, reason: `После фильтров Delta/POC confidence упал до ${sig.confidence}%` };
+  // ЖЁСТКИЕ ВОРОТА — только в live/prop mode (не в observe)
+  // В observe mode только помечаем для статистики
+  if (!store.observeMode) {
+    if (!hasDelta && !hasPoc) {
+      console.log(`[GATE BLOCK] ${sig.instId} — нет Delta и POC → WR ~30% → блок`);
+      return { allowed: false, reason: 'Нет Delta и POC — WR ~30% по данным 180 сделок' };
+    }
+    if (!hasDelta) {
+      sig.confidence = Math.max(sig.confidence - 15, 0);
+      sig.deltaNote  = (sig.deltaNote || '') + ' ⚠️ Нет Delta → -15%';
+    }
+    if (!hasPoc) {
+      sig.confidence = Math.max(sig.confidence - 12, 0);
+      sig.pocNote    = (sig.pocNote || '') + ' ⚠️ Нет POC → -12%';
+    }
+    if (sig.confidence < 60) {
+      return { allowed: false, reason: `После фильтров Delta/POC confidence упал до ${sig.confidence}%` };
+    }
+  } else {
+    // Observe mode — только помечаем для будущего анализа
+    if (!hasDelta) sig.deltaNote = (sig.deltaNote || '') + ' 📊 [no delta]';
+    if (!hasPoc)   sig.pocNote   = (sig.pocNote   || '') + ' 📊 [no poc]';
   }
 
   // ── ПРОП-РЕЖИМ: только S1 + S10 (на основе 442 paper trades) ──

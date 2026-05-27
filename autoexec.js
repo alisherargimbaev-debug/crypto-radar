@@ -41,6 +41,7 @@ let bybit = null;             // инстанс BybitClient
 let bot = null;               // Telegram bot (из index.js)
 let chatId = null;            // Telegram chat ID
 let supabase = null;          // Supabase client (из index.js)
+let isPropMode = false;       // Prop mode — ограниченное кол-во позиций (2 макс)
 
 const activePositions = new Map();  // symbol → { signal, orderId, entryPrice, ... }
 let dailyPnl = 0;
@@ -69,10 +70,11 @@ function init() {
     signals.on('telegram_command', handleTelegramCommand);
 
     // Принимаем зависимости из index.js
-    signals.on('inject_deps', ({ telegramBot, telegramChatId, supabaseClient }) => {
+    signals.on('inject_deps', ({ telegramBot, telegramChatId, supabaseClient, propMode }) => {
       bot = telegramBot;
       chatId = telegramChatId;
       supabase = supabaseClient;
+      if (typeof propMode === 'boolean') isPropMode = propMode;
       console.log('[AutoExec] Dependencies injected (bot, chatId, supabase)');
     });
 
@@ -126,10 +128,10 @@ async function handleSignal(signal) {
       return;
     }
 
-    // Макс позиций
-    if (activePositions.size >= MAX_POSITIONS) {
-      console.log(`${tag} Max positions (${MAX_POSITIONS}) reached`);
-      await notify(`⚠️ Макс. позиций (${MAX_POSITIONS}) достигнут. Пропускаю ${signal.symbol}`);
+    // Макс позиций — только в prop mode
+    if (isPropMode && activePositions.size >= MAX_POSITIONS) {
+      console.log(`${tag} [PROP] Max positions (${MAX_POSITIONS}) reached`);
+      await notify(`⚠️ [PROP] Макс. позиций (${MAX_POSITIONS}) достигнут. Пропускаю ${signal.symbol}`);
       return;
     }
 

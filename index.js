@@ -975,6 +975,16 @@ async function handleTelegramCommand(text, chatId) {
     store.propMode = !store.propMode;
     saveSettings();
 
+    // Обновляем autoexec
+    if (autoExecSignals) {
+      autoExecSignals.emit('inject_deps', {
+        telegramBot:    null,
+        telegramChatId: CHAT_ID,
+        supabaseClient: supabase,
+        propMode:       store.propMode,
+      });
+    }
+
     if (store.propMode) {
       await sendTelegramTo(chatId,
         `🏆 ПРОП-РЕЖИМ ВКЛЮЧЁН\n` +
@@ -8585,9 +8595,10 @@ if (autoExecSignals) {
 if (autoExecSignals) {
   // Передаём зависимости в autoexec
   autoExecSignals.emit('inject_deps', {
-    telegramBot:    null, // используем sendTelegram напрямую
+    telegramBot:    null,
     telegramChatId: CHAT_ID,
     supabaseClient: supabase,
+    propMode:       store.propMode, // передаём prop mode
   });
 
   // Переопределяем notify в autoexec через наш sendTelegram

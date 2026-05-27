@@ -771,7 +771,7 @@ const SESSION_USA    = { from: 13, to: 22 };
 // ============================================================
 async function httpGet(url) {
   try {
-    await new Promise(r => setTimeout(r, 1500)); // пауза 1500ms
+    await new Promise(r => setTimeout(r, 300)); // пауза 300ms (было 1500ms)
     const resp = await axios.get(url, { timeout: 30000 });
     return resp.data;
   } catch(e) {
@@ -5963,9 +5963,20 @@ app.listen(process.env.PORT || 3000);
 
 // Каждые 5 минут — поиск сигналов
 let isRunning = false;
+let isRunningStartedAt = 0;
+const IS_RUNNING_TIMEOUT_MS = 4 * 60 * 1000; // 4 минуты — максимум на цикл
 
 async function checkSignals() {
-  if (isRunning) { console.log('[SKIP] checkSignals уже выполняется'); return; }
+  // Защита от вечного зависания — сбрасываем если висит > 4 минут
+  if (isRunning) {
+    if (Date.now() - isRunningStartedAt > IS_RUNNING_TIMEOUT_MS) {
+      console.log('[SKIP] checkSignals завис > 4 мин — принудительный сброс');
+      isRunning = false;
+    } else {
+      console.log('[SKIP] checkSignals уже выполняется');
+      return;
+    }
+  }
 
   // ── ПРОП-ЗАЩИТА: автостоп при 3 SL подряд ──────────────────
   if (store.propMode) {
@@ -5989,6 +6000,7 @@ async function checkSignals() {
   }
 
   isRunning = true;
+  isRunningStartedAt = Date.now();
   try {
     console.log(`[${getAlmatyTime()}] checkSignals запущен`);
   lastCheckTime = Date.now();

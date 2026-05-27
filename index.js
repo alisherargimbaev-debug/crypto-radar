@@ -402,40 +402,47 @@ function checkPortfolioRisk(sig) {
   // ── ЭМПИРИЧЕСКИЕ ФИЛЬТРЫ v2 (из анализа 180 сделок с filters) ──
   // Данные: Delta=true → WR 82%, Delta=false → WR 25-36%
   //         POC=true → WR 67-100%, POC=false → WR 33%
-  //         US+EU без Delta → WR 25% (12 сделок)
 
-  const hasDelta = sig.deltaNote && sig.deltaNote.includes('+');
-  const hasPoc   = !!(sig.pocNote || sig.mpocNote);
-  const session  = getCurrentSession();
+  // hasDelta=true: delta подтверждает ('+' в note)
+  // hasDelta=false + deltaNote непустой: delta противоречит ('⚠️')
+  // hasDelta=false + deltaNote пустой: нет данных delta (не блокируем)
+  const hasDelta    = !!(sig.deltaNote && sig.deltaNote.includes('+'));
+  const deltaAgainst = !!(sig.deltaNote && sig.deltaNote.includes('⚠️') && !sig.deltaNote.includes('[no delta]'));
+  const noDeltaData  = !sig.deltaNote; // нет данных вообще — не штрафуем
+  const hasPoc      = !!(sig.pocNote || sig.mpocNote);
+  const session     = getCurrentSession();
 
-  // US+EU сессия: без delta → 25% → штраф (в любом режиме)
+  // US+EU сессия: без delta подтверждения → штраф
   if (session === 'US+EU' || session === 'America') {
-    if (!hasDelta) {
+    if (!hasDelta && !noDeltaData) {
       sig.confidence = Math.max(sig.confidence - 20, 0);
       sig.sessionNote = (sig.sessionNote || '') + ' ⚠️ US+EU без Delta → -20%';
     }
   }
 
-  // ЖЁСТКИЕ ВОРОТА — только в live/prop mode (не в observe)
-  // В observe mode только помечаем для статистики
+  // ЖЁСТКИЕ ВОРОТА — только в live/prop mode
   if (!store.observeMode) {
-    if (!hasDelta && !hasPoc) {
-      console.log(`[GATE BLOCK] ${sig.instId} — нет Delta и POC → WR ~30% → блок`);
-      return { allowed: false, reason: 'Нет Delta и POC — WR ~30% по данным 180 сделок' };
+    // Блок только если delta АКТИВНО ПРОТИВОРЕЧИТ сигналу
+    if (deltaAgainst && !hasPoc) {
+      console.log(`[GATE BLOCK] ${sig.instId} — Delta против + нет POC → блок`);
+      return { allowed: false, reason: 'Delta противоречит сигналу и нет POC' };
     }
-    if (!hasDelta) {
+    // Delta против сигнала — штраф
+    if (deltaAgainst) {
       sig.confidence = Math.max(sig.confidence - 15, 0);
-      sig.deltaNote  = (sig.deltaNote || '') + ' ⚠️ Нет Delta → -15%';
+      console.log(`[DELTA GATE] ${sig.instId} — Delta против сигнала → -15%`);
     }
+    // Нет POC — штраф
     if (!hasPoc) {
       sig.confidence = Math.max(sig.confidence - 12, 0);
-      sig.pocNote    = (sig.pocNote || '') + ' ⚠️ Нет POC → -12%';
+      sig.pocNote = (sig.pocNote || '') + ' ⚠️ Нет POC → -12%';
+      console.log(`[POC GATE] ${sig.instId} — нет POC → -12%`);
     }
+    // Повторная проверка после штрафов
     if (sig.confidence < 60) {
-      return { allowed: false, reason: `После фильтров Delta/POC confidence упал до ${sig.confidence}%` };
+      return { allowed: false, reason: `После фильтров confidence упал до ${sig.confidence}%` };
     }
   } else {
-    // Observe mode — только помечаем для будущего анализа
     if (!hasDelta) sig.deltaNote = (sig.deltaNote || '') + ' 📊 [no delta]';
     if (!hasPoc)   sig.pocNote   = (sig.pocNote   || '') + ' 📊 [no poc]';
   }

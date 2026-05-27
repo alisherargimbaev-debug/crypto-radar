@@ -7157,25 +7157,26 @@ async function checkTrailingStop() {
     if (trade.direction === 'long') {
       const pnlPct = (currentPrice - entry) / entry * 100;
 
-      // Уровень 1: достигли TP1 → переносим SL на безубыток
-      if (currentPrice >= tp1 && !trade.trailingActive) {
+      // Уровень 1: прошли 50% пути до TP → безубыток
+      const halfway = entry + (tp1 - entry) * 0.5;
+      if (currentPrice >= halfway && !trade.trailingActive) {
         const newSL = (entry * 1.001).toFixed(4); // чуть выше входа
         if (parseFloat(newSL) > sl) {
-          trade.sl            = newSL;
+          trade.sl             = newSL;
           trade.trailingActive = true;
           trade.trailingHigh   = currentPrice;
-          console.log(`[TRAIL] ${trade.instId} — SL → безубыток $${newSL}`);
+          console.log(`[TRAIL] ${trade.instId} — 50% до TP → SL → безубыток $${newSL}`);
           supabase.from('open_trades').update({ sl: newSL, trailing_active: true })
             .eq('ts', trade.ts).eq('inst_id', trade.instId)
             .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
           await sendTelegram(
-            `🔄 TRAILING STOP — ${trade.symbol}/USDT\n` +
+            `🛡 БЕЗУБЫТОК — ${trade.instId.replace('-USDT-SWAP','')}/USDT\n` +
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `✅ TP1 достигнут — SL перенесён на безубыток\n` +
+            `📍 50% пути до TP пройдено\n` +
             `💰 Вход: $${trade.price}\n` +
-            `🛡 Новый SL: $${newSL}\n` +
-            `📍 Цена: $${currentPrice.toFixed(4)}\n` +
-            `📈 PnL: +${pnlPct.toFixed(2)}%\n` +
+            `🛡 SL → безубыток: $${newSL}\n` +
+            `🎯 TP: $${tp1}\n` +
+            `📈 Цена: $${currentPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)\n` +
             `━━━━━━━━━━━━━━━━━━━━━━`
           );
         }
@@ -7184,11 +7185,11 @@ async function checkTrailingStop() {
       // Уровень 2: trailing — SL следует за ценой с отступом 1.5%
       if (trade.trailingActive && currentPrice > (trade.trailingHigh || entry)) {
         trade.trailingHigh = currentPrice;
-        const trailSL = (currentPrice * 0.985).toFixed(4); // -1.5% от максимума
+        const trailSL = (currentPrice * 0.985).toFixed(4);
         if (parseFloat(trailSL) > parseFloat(trade.sl)) {
           const oldSL = trade.sl;
           trade.sl    = trailSL;
-          console.log(`[TRAIL] ${trade.instId} — SL поднят $${oldSL} → $${trailSL} (цена $${currentPrice.toFixed(4)})`);
+          console.log(`[TRAIL] ${trade.instId} — SL поднят $${oldSL} → $${trailSL}`);
           supabase.from('open_trades').update({ sl: trailSL })
             .eq('ts', trade.ts).eq('inst_id', trade.instId)
             .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
@@ -7198,25 +7199,26 @@ async function checkTrailingStop() {
     } else { // SHORT
       const pnlPct = (entry - currentPrice) / entry * 100;
 
-      // Уровень 1: достигли TP1 → безубыток
-      if (currentPrice <= tp1 && !trade.trailingActive) {
+      // Уровень 1: прошли 50% пути до TP → безубыток
+      const halfway = entry - (entry - tp1) * 0.5;
+      if (currentPrice <= halfway && !trade.trailingActive) {
         const newSL = (entry * 0.999).toFixed(4); // чуть ниже входа
         if (parseFloat(newSL) < sl) {
           trade.sl             = newSL;
           trade.trailingActive = true;
           trade.trailingLow    = currentPrice;
-          console.log(`[TRAIL] ${trade.instId} SHORT — SL → безубыток $${newSL}`);
+          console.log(`[TRAIL] ${trade.instId} SHORT — 50% до TP → SL → безубыток $${newSL}`);
           supabase.from('open_trades').update({ sl: newSL, trailing_active: true })
             .eq('ts', trade.ts).eq('inst_id', trade.instId)
             .then(() => {}).catch(e => console.error('[TRAIL DB]', e.message));
           await sendTelegram(
-            `🔄 TRAILING STOP — ${trade.symbol}/USDT\n` +
+            `🛡 БЕЗУБЫТОК — ${trade.instId.replace('-USDT-SWAP','')}/USDT\n` +
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `✅ TP1 достигнут — SL перенесён на безубыток\n` +
+            `📍 50% пути до TP пройдено\n` +
             `💰 Вход: $${trade.price}\n` +
-            `🛡 Новый SL: $${newSL}\n` +
-            `📍 Цена: $${currentPrice.toFixed(4)}\n` +
-            `📉 PnL: +${pnlPct.toFixed(2)}%\n` +
+            `🛡 SL → безубыток: $${newSL}\n` +
+            `🎯 TP: $${tp1}\n` +
+            `📉 Цена: $${currentPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)\n` +
             `━━━━━━━━━━━━━━━━━━━━━━`
           );
         }
@@ -7225,7 +7227,7 @@ async function checkTrailingStop() {
       // Уровень 2: trailing — SL следует за ценой с отступом 1.5%
       if (trade.trailingActive && currentPrice < (trade.trailingLow || entry)) {
         trade.trailingLow = currentPrice;
-        const trailSL = (currentPrice * 1.015).toFixed(4); // +1.5% от минимума
+        const trailSL = (currentPrice * 1.015).toFixed(4);
         if (parseFloat(trailSL) < parseFloat(trade.sl)) {
           const oldSL = trade.sl;
           trade.sl    = trailSL;

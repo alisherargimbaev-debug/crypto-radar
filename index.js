@@ -3153,6 +3153,70 @@ function applySlippage(pnl, instId, direction) {
 
 
 // Самый торгуемый уровень за текущую неделю — магнит для цены
+// ── OPTIONS UNUSUAL ACTIVITY — крупные опционные сделки ──────
+let optionsFlowCache = { btc: null, eth: null, ts: 0 };
+const OPTIONS_FLOW_TTL = 30 * 60 * 1000;
+
+async function getOptionsUnusualActivity(coin) {
+  if (!['BTC','ETH'].includes(coin)) return null;
+  const key = coin.toLowerCase();
+  if (optionsFlowCache[key] && Date.now() - optionsFlowCache.ts < OPTIONS_FLOW_TTL) {
+    return optionsFlowCache[key];
+  }
+  try {
+    const data = await httpGet(
+      `https://www.deribit.com/api/v2/public/get_last_trades_by_currency?currency=${coin}&kind=option&count=100&include_old=false`
+    );
+    if (!data?.result?.trades) return null;
+    const trades = data.result.trades;
+    const MIN_NOTIONAL = 1_000_000;
+    const large = trades.filter(t => {
+      const notional = (t.price||0) * (t.amount||0) * (t.underlying_price||0);
+      return notional >= MIN_NOTIONAL;
+    }).map(t => ({
+      instrument: t.instrument_name,
+      direction:  t.direction,
+      notional:   Math.round((t.price||0) * (t.amount||0) * (t.underlying_price||0)),
+      isCall:     t.instrument_name.includes('-C'),
+    }));
+
+    const callBuys = large.filter(t => t.isCall && t.direction === 'buy');
+    const putBuys  = large.filter(t => !t.isCall && t.direction === 'buy');
+    const totalCallNotional = callBuys.reduce((s,t) => s + t.notional, 0);
+    const totalPutNotional  = putBuys.reduce((s,t) => s + t.notional, 0);
+
+    let signal = 'neutral';
+    if (totalCallNotional > totalPutNotional * 2) signal = 'bullish';
+    else if (totalPutNotional > totalCallNotional * 2) signal = 'bearish';
+
+    const result = { signal, totalCallNotional, totalPutNotional, count: large.length };
+    optionsFlowCache[key] = result;
+    optionsFlowCache.ts   = Date.now();
+    if (signal !== 'neutral') console.log(`[OPTIONS FLOW] ${coin}: ${signal} calls=$${(totalCallNotional/1e6).toFixed(1)}M puts=$${(totalPutNotional/1e6).toFixed(1)}M`);
+    return result;
+  } catch(e) { return null; }
+}
+
+// ── ORDER BOOK IMBALANCE — топ-10 уровней стакана OKX ─────────
+async function getOrderBookImbalance(instId) {
+  try {
+    const data = await httpGet(`https://www.okx.com/api/v5/market/books?instId=${instId}&sz=20`);
+    if (!data?.data?.[0]) return null;
+    const book = data.data[0];
+    const bidVol = (book.bids||[]).slice(0,10).reduce((s,b) => s + parseFloat(b[1]||0), 0);
+    const askVol = (book.asks||[]).slice(0,10).reduce((s,a) => s + parseFloat(a[1]||0), 0);
+    const total  = bidVol + askVol;
+    if (!total) return null;
+    const imbalance = (bidVol - askVol) / total;
+    return {
+      imbalance: parseFloat(imbalance.toFixed(3)),
+      bidPct:    Math.round(bidVol / total * 100),
+      askPct:    Math.round(askVol / total * 100),
+      signal:    imbalance > 0.2 ? 'bullish' : imbalance < -0.2 ? 'bearish' : 'neutral',
+    };
+  } catch(e) { return null; }
+}
+
 let weeklyPocCache  = new Map();
 let monthlyPocCache = new Map();
 
@@ -3278,28 +3342,26 @@ let gexCache = { btc: null, eth: null, ts: 0 };
 async function getGEXLevels(coin) {
   if (!['BTC','ETH'].includes(coin)) return null;
   const key = coin.toLowerCase();
-
   if (gexCache[key] && Date.now() - gexCache.ts < 3600000) return gexCache[key];
 
   try {
-    // Получаем все активные опционы
     const instruments = await httpGet(
       `https://www.deribit.com/api/v2/public/get_instruments?currency=${coin}&kind=option&expired=false`
     );
     if (!instruments?.result) return null;
 
-    // Берём только ближайшие экспирации (до 30 дней)
     const now30d = Date.now() + 30 * 86400000;
     const near = instruments.result.filter(i =>
       i.expiration_timestamp < now30d && i.strike
     );
     if (!near.length) return null;
 
-    // Группируем по страйку и считаем нетто-гамму
     const strikes = {};
-    for (const ins of near.slice(0, 100)) { // берём первые 100
+    let totalNetGEX = 0;
+
+    for (const ins of near.slice(0, 150)) {
       const strike = ins.strike;
-      if (!strikes[strike]) strikes[strike] = { gex: 0, oi: 0 };
+      if (!strikes[strike]) strikes[strike] = { callGEX: 0, putGEX: 0, callOI: 0, putOI: 0 };
       try {
         const ticker = await httpGet(
           `https://www.deribit.com/api/v2/public/ticker?instrument_name=${ins.instrument_name}`
@@ -3307,31 +3369,67 @@ async function getGEXLevels(coin) {
         const gamma = ticker?.result?.greeks?.gamma || 0;
         const oi    = ticker?.result?.open_interest || 0;
         const price = ticker?.result?.underlying_price || 1;
-        // GEX = gamma × OI × price² × 0.01 (нормализация)
-        const gex = gamma * oi * price * price * 0.01;
-        // Колл = позитивный GEX, Пут = негативный
-        strikes[strike].gex += ins.instrument_name.includes('-C') ? gex : -gex;
-        strikes[strike].oi  += oi;
+        const gex   = gamma * oi * price * price * 0.01;
+
+        const isCall = ins.instrument_name.includes('-C');
+        if (isCall) {
+          strikes[strike].callGEX += gex;
+          strikes[strike].callOI  += oi;
+          totalNetGEX += gex;  // calls = positive GEX
+        } else {
+          strikes[strike].putGEX  += gex;
+          strikes[strike].putOI   += oi;
+          totalNetGEX -= gex;  // puts = negative GEX
+        }
       } catch(_) {}
     }
 
-    // Находим ключевые уровни
+    // Net GEX per strike (call - put)
     const levels = Object.entries(strikes)
-      .map(([strike, data]) => ({ strike: parseFloat(strike), ...data }))
-      .filter(l => Math.abs(l.gex) > 0)
-      .sort((a,b) => Math.abs(b.gex) - Math.abs(a.gex))
-      .slice(0, 5); // топ-5 уровней
+      .map(([strike, d]) => ({
+        strike:  parseFloat(strike),
+        netGEX:  d.callGEX - d.putGEX,
+        callGEX: d.callGEX,
+        putGEX:  d.putGEX,
+        totalOI: d.callOI + d.putOI,
+      }))
+      .filter(l => l.totalOI > 0)
+      .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX));
+
+    // GEX Flip Level — where net GEX crosses zero (most important level)
+    const sorted = [...levels].sort((a, b) => a.strike - b.strike);
+    let flipLevel = null;
+    for (let i = 1; i < sorted.length; i++) {
+      if (Math.sign(sorted[i-1].netGEX) !== Math.sign(sorted[i].netGEX)) {
+        flipLevel = (sorted[i-1].strike + sorted[i].strike) / 2;
+        break;
+      }
+    }
+
+    // Largest positive GEX = support wall (MM buy here)
+    const wallUp   = levels.filter(l => l.netGEX > 0).sort((a,b) => a.strike - b.strike)[0]?.strike || null;
+    // Largest negative GEX = resistance wall (MM sell here)
+    const wallDown = levels.filter(l => l.netGEX < 0).sort((a,b) => b.strike - a.strike)[0]?.strike || null;
+
+    // Put/Call Ratio from OI
+    const totalCallOI = Object.values(strikes).reduce((s,d) => s + d.callOI, 0);
+    const totalPutOI  = Object.values(strikes).reduce((s,d) => s + d.putOI, 0);
+    const pcRatio     = totalCallOI > 0 ? parseFloat((totalPutOI / totalCallOI).toFixed(2)) : null;
 
     const result = {
-      levels,
-      wallUp:   levels.filter(l => l.gex > 0).sort((a,b) => a.strike - b.strike)[0]?.strike || null,
-      wallDown: levels.filter(l => l.gex < 0).sort((a,b) => b.strike - a.strike)[0]?.strike || null,
+      levels: levels.slice(0, 5),
+      wallUp,
+      wallDown,
+      flipLevel,
+      netGEX:    parseFloat(totalNetGEX.toFixed(0)),
+      pcRatio,   // >1 = bearish (more puts), <0.7 = bullish (more calls)
+      regime:    totalNetGEX > 0 ? 'POSITIVE' : 'NEGATIVE', // positive = stable, negative = volatile
       ts: Date.now(),
     };
 
     gexCache[key] = result;
     gexCache.ts   = Date.now();
-    console.log(`[GEX] ${coin}: Wall↑${result.wallUp} Wall↓${result.wallDown}`);
+    console.log(`[GEX] ${coin}: NetGEX=${result.netGEX} Flip=$${flipLevel} Wall↑$${wallUp} Wall↓$${wallDown} P/C=${pcRatio}`);
     return result;
   } catch(e) {
     console.error('[GEX]', coin, e.message);
@@ -6455,42 +6553,141 @@ if (!store.observeMode) {
           }
         } catch(e) { /* Delta не критичен */ }
 
-        // 10. GEX — Gamma Exposure (только BTC и ETH)
+        // 10. GEX — Full Net GEX + Flip Level + Put/Call Ratio
         try {
           const coin_name = coin.instId.replace('-USDT-SWAP','');
           if (['BTC','ETH'].includes(coin_name)) {
             const gex = await getGEXLevels(coin_name);
             if (gex?.levels?.length) {
               const price = parseFloat(sig.price);
-              // Проверяем ближайший GEX уровень
+
+              // Flip level — самый важный уровень
+              if (gex.flipLevel) {
+                const distToFlip = Math.abs(gex.flipLevel - price) / price * 100;
+                if (distToFlip < 1.5) {
+                  sig.confidence = Math.max(sig.confidence - 8, 0);
+                  sig.gexNote = `⚡ GEX Flip Level $${gex.flipLevel.toLocaleString()} близко → -8%`;
+                }
+              }
+
+              // Ближайший wall
               const nearest = gex.levels.reduce((best, l) =>
                 Math.abs(l.strike - price) < Math.abs(best.strike - price) ? l : best
               );
               const distPct = Math.abs(nearest.strike - price) / price * 100;
-
               if (distPct < 2) {
-                if (nearest.gex > 0) {
-                  // Позитивный GEX = маркет-мейкеры покупают при падении → поддержка
-                  if (sig.direction === 'long') {
-                    sig.confidence = Math.min(sig.confidence + 10, 100);
-                    sig.gexNote    = `⚡ GEX Wall $${nearest.strike.toLocaleString()} (поддержка) → +10%`;
-                  }
-                } else {
-                  // Негативный GEX = сопротивление
-                  if (sig.direction === 'short') {
-                    sig.confidence = Math.min(sig.confidence + 10, 100);
-                    sig.gexNote    = `⚡ GEX Wall $${nearest.strike.toLocaleString()} (сопротивление) → +10%`;
-                  }
+                if (nearest.netGEX > 0 && sig.direction === 'long') {
+                  sig.confidence = Math.min(sig.confidence + 10, 100);
+                  sig.gexNote = `⚡ GEX Support $${nearest.strike.toLocaleString()} → +10%`;
+                } else if (nearest.netGEX < 0 && sig.direction === 'short') {
+                  sig.confidence = Math.min(sig.confidence + 10, 100);
+                  sig.gexNote = `⚡ GEX Resistance $${nearest.strike.toLocaleString()} → +10%`;
                 }
               }
 
-              // Добавляем в контекст ключевые стены
-              if (!sig.gexNote && gex.wallUp && gex.wallDown) {
-                sig.gexNote = `⚡ GEX: ↑$${gex.wallUp?.toLocaleString()} ↓$${gex.wallDown?.toLocaleString()}`;
+              // Put/Call Ratio — contrarian сигнал
+              if (gex.pcRatio) {
+                if (gex.pcRatio > 1.5 && sig.direction === 'long') {
+                  // Много путов = рынок боится = contrarian лонг
+                  sig.confidence = Math.min(sig.confidence + 5, 100);
+                  sig.gexNote = (sig.gexNote || '') + ` P/C=${gex.pcRatio}(bearish сентимент→contrarian+5%)`;
+                } else if (gex.pcRatio < 0.6 && sig.direction === 'short') {
+                  // Много коллов = эйфория = contrarian шорт
+                  sig.confidence = Math.min(sig.confidence + 5, 100);
+                  sig.gexNote = (sig.gexNote || '') + ` P/C=${gex.pcRatio}(bullish эйфория→contrarian+5%)`;
+                }
+              }
+
+              // GEX Regime
+              if (gex.regime === 'NEGATIVE' && !sig.gexNote) {
+                sig.gexNote = `⚡ GEX Negative (volatile regime) ↑$${gex.wallUp?.toLocaleString()} ↓$${gex.wallDown?.toLocaleString()}`;
               }
             }
+
+            // Options Unusual Activity
+            try {
+              const optFlow = await getOptionsUnusualActivity(coin_name);
+              if (optFlow && optFlow.signal !== 'neutral') {
+                const align = (optFlow.signal === 'bullish' && sig.direction === 'long') ||
+                              (optFlow.signal === 'bearish' && sig.direction === 'short');
+                if (align) {
+                  sig.confidence = Math.min(sig.confidence + 8, 100);
+                  sig.gexNote = (sig.gexNote || '') + ` 🦁 Options Flow ${optFlow.signal} → +8%`;
+                } else {
+                  sig.confidence = Math.max(sig.confidence - 10, 0);
+                  sig.gexNote = (sig.gexNote || '') + ` ⚠️ Options Flow против → -10%`;
+                }
+              }
+            } catch(_) {}
           }
         } catch(e) { /* GEX не критичен */ }
+
+        // 11. FUNDING RATE — жёсткий фильтр направления
+        // Если funding сильно положительный → лонги переплачивают → шортить выгоднее
+        try {
+          const funding = coinData.fundingRate || 0;
+          const fundingAbs = Math.abs(funding);
+          if (fundingAbs > 0.05) { // экстремальный funding
+            const fundingBullish = funding < 0; // шортисты платят → бычий
+            const aligned = (fundingBullish && sig.direction === 'long') ||
+                            (!fundingBullish && sig.direction === 'short');
+            if (aligned) {
+              sig.confidence = Math.min(sig.confidence + 8, 100);
+              sig.fundingNote = `💸 Funding ${(funding*100).toFixed(3)}% (extreme, aligned) → +8%`;
+            } else {
+              sig.confidence = Math.max(sig.confidence - 12, 0);
+              sig.fundingNote = `⚠️ Funding ${(funding*100).toFixed(3)}% (against signal) → -12%`;
+            }
+          } else if (fundingAbs > 0.02) {
+            const fundingBullish = funding < 0;
+            const aligned = (fundingBullish && sig.direction === 'long') ||
+                            (!fundingBullish && sig.direction === 'short');
+            if (!aligned) {
+              sig.confidence = Math.max(sig.confidence - 5, 0);
+              sig.fundingNote = `⚠️ Funding ${(funding*100).toFixed(3)}% (against) → -5%`;
+            }
+          }
+        } catch(_) {}
+
+        // 12. OI CHANGE — новые деньги подтверждают тренд
+        // OI растёт + цена растёт = настоящий тренд (новые лонги)
+        // OI падает + цена растёт = шорты закрываются (слабее)
+        try {
+          const ccy = coin.instId.replace('-USDT-SWAP','');
+          if (store.oiCache[ccy]?.oi5m?.length >= 2) {
+            const oiArr = store.oiCache[ccy].oi5m;
+            const oiChange = oiArr.length >= 2
+              ? (oiArr[oiArr.length-1] - oiArr[0]) / Math.abs(oiArr[0]) * 100
+              : 0;
+            const priceChange = sig.direction === 'long' ? 1 : -1; // assumed direction
+
+            if (oiChange > 1.5 && priceChange > 0) {
+              // OI растёт + лонг = настоящий тренд
+              sig.confidence = Math.min(sig.confidence + 6, 100);
+              sig.oiNote = `📊 OI+${oiChange.toFixed(1)}% (new longs) → +6%`;
+            } else if (oiChange < -1.5 && priceChange > 0) {
+              // OI падает + лонг = short squeeze, не настоящий тренд
+              sig.confidence = Math.max(sig.confidence - 6, 0);
+              sig.oiNote = `⚠️ OI${oiChange.toFixed(1)}% (short squeeze, weak) → -6%`;
+            }
+          }
+        } catch(_) {}
+
+        // 13. ORDER BOOK IMBALANCE — давление покупателей/продавцов
+        try {
+          const ob = await getOrderBookImbalance(coin.instId);
+          if (ob && ob.signal !== 'neutral') {
+            const aligned = (ob.signal === 'bullish' && sig.direction === 'long') ||
+                            (ob.signal === 'bearish' && sig.direction === 'short');
+            if (aligned) {
+              sig.confidence = Math.min(sig.confidence + 7, 100);
+              sig.obNote = `📖 OrderBook ${ob.bidPct}%bid/${ob.askPct}%ask (${ob.signal}) → +7%`;
+            } else if (Math.abs(ob.imbalance) > 0.3) {
+              sig.confidence = Math.max(sig.confidence - 8, 0);
+              sig.obNote = `⚠️ OrderBook against (${ob.bidPct}%bid/${ob.askPct}%ask) → -8%`;
+            }
+          }
+        } catch(_) {}
 
         // 12. FOOTPRINT — подтверждение через тиковый анализ на GEX уровне
         try {

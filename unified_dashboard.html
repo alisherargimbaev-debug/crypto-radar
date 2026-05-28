@@ -2038,14 +2038,13 @@ async function loadDCA() {
   document.getElementById('dca-pnl-card').className='stat-card '+(pnl>=0?'green':'red');
   const he=document.getElementById('dca-history');
   if(!dcaData.investments.length){he.innerHTML='<div class="empty">NO INVESTMENTS YET</div>';return;}
-  he.innerHTML=`<table class="tbl"><thead><tr><th>Date</th><th>USD</th><th>BTC</th><th>Buy Price</th><th>Current</th><th>P&L</th></tr></thead><tbody>${
-    dcaData.investments.map(i=>{
-      const cv2=i.btc*dcaData.btcPrice;
-      const p=((cv2-i.usd)/i.usd*100).toFixed(1);
-      const pc=parseFloat(p)>=0?'c-green':'c-red';
-      return `<tr><td style="font-family:'DM Mono',monospace;font-size:.6rem">${i.date}</td><td>$${i.usd}</td><td style="font-family:'DM Mono',monospace;font-size:.6rem">${i.btc.toFixed(6)}</td><td style="font-family:'DM Mono',monospace">$${i.price.toLocaleString()}</td><td>$${cv2.toFixed(0)}</td><td class="${pc}" style="font-family:'DM Mono',monospace">${parseFloat(p)>=0?'+':''}${p}%</td></tr>`;
-    }).join('')
-  }</tbody></table>`;
+  const dcaRows = dcaData.investments.map(i=>{
+    const cv2=i.btc*dcaData.btcPrice;
+    const p=((cv2-i.usd)/i.usd*100).toFixed(1);
+    const pc=parseFloat(p)>=0?'c-green':'c-red';
+    return `<tr><td style="font-family:'DM Mono',monospace;font-size:.6rem">${i.date}</td><td>$${i.usd}</td><td style="font-family:'DM Mono',monospace;font-size:.6rem">${i.btc.toFixed(6)}</td><td style="font-family:'DM Mono',monospace">$${i.price.toLocaleString()}</td><td>$${cv2.toFixed(0)}</td><td class="${pc}" style="font-family:'DM Mono',monospace">${parseFloat(p)>=0?'+':''}${p}%</td></tr>`;
+  }).join('');
+  he.innerHTML=`<table class="tbl"><thead><tr><th>Date</th><th>USD</th><th>BTC</th><th>Buy Price</th><th>Current</th><th>P&L</th></tr></thead><tbody>${dcaRows}</tbody></table>`;
 }
 async function addDCA(){
   const usd=parseFloat(document.getElementById('dca-amount').value);

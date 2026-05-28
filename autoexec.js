@@ -412,62 +412,84 @@ async function handlePositionClosed(symbol, tracked) {
     // Последний fallback — самая свежая
     if (!closedPnl) closedPnl = closedPnlList?.[0];
 
-    const pnl       = closedPnl ? parseFloat(closedPnl.closedPnl) : 0;
+    const pnl       = closedPnl ? parseFloat(closedPnl.closedPnl) : null;
     const exitPrice = closedPnl ? parseFloat(closedPnl.avgExitPrice) : 0;
 
-    console.log(`[AutoExec][Close] ${symbol} entry=${entryPrice} exit=${exitPrice} pnl=${pnl} (source: ${closedPnl?.avgEntryPrice || 'fallback'})`);
+    // If closedPnl not found from Bybit API — retry once after 3 seconds
+    if (pnl === null) {
+      console.log(`[AutoExec][Close] ${symbol} — closedPnl not found, retrying in 3s...`);
+      await new Promise(r => setTimeout(r, 3000));
+      const retryList = await bybit.getClosedPnl(symbol, 5);
+      const retryPnl  = retryList?.[0];
+      if (retryPnl) {
+        const retryPnlVal   = parseFloat(retryPnl.closedPnl);
+        const retryExitPrice = parseFloat(retryPnl.avgExitPrice);
+        console.log(`[AutoExec][Close] ${symbol} retry found: pnl=${retryPnlVal} exit=${retryExitPrice}`);
+        // Use retry values
+        Object.assign(closedPnl = {}, retryPnl);
+      }
+    }
 
-    // Обновляем дневной PnL
+    const finalPnl      = closedPnl ? parseFloat(closedPnl.closedPnl) : 0;
+    const finalExitPrice = closedPnl ? parseFloat(closedPnl.avgExitPrice) : 0;
+
+    console.log(`[AutoExec][Close] ${symbol} entry=${entryPrice} exit=${finalExitPrice} pnl=${finalPnl} (source: ${closedPnl ? 'bybit_api' : 'FALLBACK_0'})`);
+
+    // Determine outcome from ACTUAL PnL, not assumed 0 = profit
+    const isWin = closedPnl ? finalPnl >= 0 : null; // null = unknown
+
+    // Update daily PnL
     const balance = await bybit.getBalance();
-    const pnlPct = balance ? (pnl / balance.total * 100) : 0;
+    const pnlPct  = balance ? (finalPnl / balance.total * 100) : 0;
     dailyPnl += pnlPct;
 
-    const emoji    = pnl >= 0 ? '✅' : '❌';
-    const outcome  = pnl >= 0 ? 'ПРИБЫЛЬ' : 'УБЫТОК';
+    const emoji    = isWin === null ? '⏳' : isWin ? '✅' : '❌';
+    const outcome  = isWin === null ? 'UNKNOWN (API delay)' : isWin ? 'WIN' : 'LOSS';
     const dir      = tracked.side === 'Buy' ? '🟢 LONG' : '🔴 SHORT';
     const duration = formatDuration(new Date() - tracked.openedAt);
-    const coin     = symbol.replace('USDT','');
+    const coin     = symbol.replace('USDT', '');
 
     await notify(
       `${emoji} ${coin}/USDT — ${outcome}\n` +
       `━━━━━━━━━━━━━━━━━━━\n` +
       `${dir}\n` +
-      `💰 Вход: $${tracked.entryPrice}\n` +
-      `📍 Выход: $${exitPrice}\n` +
-      `💵 PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\n` +
-      `⏱ В сделке: ${duration}\n` +
-      `📊 Дневной P&L: ${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}%`
+      `💰 Entry: $${tracked.entryPrice}\n` +
+      `📍 Exit:  $${finalExitPrice || '—'}\n` +
+      `💵 PnL:   ${finalPnl >= 0 ? '+' : ''}$${finalPnl.toFixed(2)}\n` +
+      `⏱ Duration: ${duration}\n` +
+      `📊 Daily P&L: ${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}%` +
+      (isWin === null ? '\n⚠️ Bybit API delay — check manually' : '')
     );
 
-    // Уведомляем index.js о реальном закрытии — он обновит store
+    // Notify index.js about real close
     signals.emit('position_closed', {
       symbol,
       instId:      symbol.replace('USDT', '-USDT-SWAP'),
       entryPrice:  tracked.entryPrice,
-      exitPrice,
-      pnl,
+      exitPrice:   finalExitPrice,
+      pnl:         finalPnl,
       pnlPct,
       side:        tracked.side,
-      outcome:     pnl >= 0 ? 'tp1' : 'sl',
+      outcome:     isWin === null ? 'unknown' : isWin ? 'tp1' : 'sl',
       duration:    formatDuration(new Date() - tracked.openedAt),
       openedAt:    tracked.openedAt,
       closedAt:    new Date(),
       strategy:    tracked.signal?.reason || '',
       confidence:  tracked.signal?.confidence || 0,
-      realBalance: balance?.total || null, // реальный баланс Bybit для синхронизации
+      realBalance: balance?.total || null,
     });
 
-    // Запись в Supabase
+    // Save to Supabase
     await saveTrade({
       symbol,
       side: tracked.side,
       entry_price: tracked.entryPrice,
-      exit_price: exitPrice,
+      exit_price: finalExitPrice,
       qty: tracked.qty,
-      pnl,
+      pnl: finalPnl,
       pnl_pct: pnlPct,
       order_id: tracked.orderId,
-      status: pnl >= 0 ? 'win' : 'loss',
+      status: isWin === null ? 'unknown' : isWin ? 'win' : 'loss',
       source: 'autoexec',
       testnet: TESTNET,
       closed_at: new Date().toISOString(),

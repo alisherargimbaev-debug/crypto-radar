@@ -8331,7 +8331,7 @@ cron.schedule('0 11 * * *', async () => {
       .toISOString().substr(11, 5);
 
     const post =
-      `${emoji} *Сигнал дня — ${today}*\n` +
+      `${emoji} *Signal of the Day — ${today}*\n` +
       `━━━━━━━━━━━━━━━\n` +
       `*${coin}/USDT — ${dir}*\n\n` +
       `💰 Entry:  \`$${sig.price}\`\n` +
@@ -8342,9 +8342,9 @@ cron.schedule('0 11 * * *', async () => {
       `📊 Confidence: *${sig.confidence}%*\n` +
       `[${bar}]\n` +
       `📌 ${stratName}\n` +
-      `🕐 Сигнал в ${signalTime} ALM\n` +
+      `🕐 Signal at ${signalTime} ALM\n` +
       `━━━━━━━━━━━━━━━\n` +
-      `_Лучший сигнал бота за сегодня_\n` +
+      `_Best bot signal today_\n` +
       `_Apex Algo Fund — automated 24/7_\n` +
       `@ApexAlgoFund`;
 
@@ -8392,31 +8392,31 @@ cron.schedule('0 15 * * *', async () => {
       const outcomeLabel = best.outcome === 'tp2' ? 'TP2 🏆' : 'TP1 ✅';
 
       post =
-        `🏆 *Лучшая сделка дня — ${today}*\n` +
+        `🏆 *Best Trade of the Day — ${today}*\n` +
         `━━━━━━━━━━━━━━━\n` +
         `*${coin}/USDT — ${dir}*\n\n` +
-        `💰 Вход:  \`$${best.price}\`\n` +
-        `🎯 Выход: ${outcomeLabel}\n` +
-        `📈 P&L:   \`${pnlBestStr}\` (5x)\n` +
-        `⏱ Время: ${durationStr}\n` +
+        `💰 Entry:  \`$${best.price}\`\n` +
+        `🎯 Exit: ${outcomeLabel}\n` +
+        `📈 P&L:  \`${pnlBestStr}\` (5x)\n` +
+        `⏱ Duration: ${durationStr}\n` +
         `📌 ${stratName}\n` +
         `━━━━━━━━━━━━━━━\n` +
-        `📊 *Итог дня:*\n` +
+        `📊 *Daily Stats:*\n` +
         `${wrEmoji} Win Rate: *${wr}%* (${wins.length}✅ / ${losses.length}❌)\n` +
         `💹 PnL: \`${pnlStr}\`\n` +
-        `Сигналов: ${total}\n` +
+        `Signals: ${total}\n` +
         `━━━━━━━━━━━━━━━\n` +
         `_Apex Algo Fund — building from demo to fund_\n` +
         `@ApexAlgoFund`;
     } else {
       post =
-        `📊 *Итог дня — ${today}*\n` +
+        `📊 *Daily Results — ${today}*\n` +
         `━━━━━━━━━━━━━━━\n` +
         `${wrEmoji} Win Rate: *${wr}%* (${wins.length}✅ / ${losses.length}❌)\n` +
         `💹 PnL: \`${pnlStr}\`\n` +
-        `Сигналов: ${total}\n` +
+        `Signals: ${total}\n` +
         `━━━━━━━━━━━━━━━\n` +
-        `_Бывают и плохие дни. Система продолжает работать._\n` +
+        `_Bad days happen. The system keeps running._\n` +
         `@ApexAlgoFund`;
     }
 

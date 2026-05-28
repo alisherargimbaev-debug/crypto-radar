@@ -6398,353 +6398,261 @@ if (!store.observeMode) {
           sig = applyCOTFilter(sig);
         }
 
-        // 8. FVG — Fair Value Gap (если цена в зоне — подтверждение)
+        // ══════════════════════════════════════════════════════
+        // SIGNAL PIPELINE — structured with adjustment caps
+        // ──────────────────────────────────────────────────
+        // Level 1: Hard gates (block or pass — no compromise)
+        // Level 2: Market context filters (cap: ±15% total)
+        // Level 3: Technical confirmation filters (cap: ±15% total)
+        // ══════════════════════════════════════════════════════
+
+        let contextAdj   = 0;  // Level 2: macro/market context adjustments
+        let technicalAdj = 0;  // Level 3: technical entry confirmation adjustments
+        const baseConf   = sig.confidence; // save base confidence
+
+        // ── LEVEL 2: MARKET CONTEXT ───────────────────────────
+
+        // 8. FVG — Fair Value Gap
         try {
-          const fvgKlines = k1h_pipe;
-          const fvgZones  = detectFVG(fvgKlines.slice(-30));
-          const atrForFVG = calcATR(fvgKlines, 14);
-          const inFVG = priceInFVG(sig.price, fvgZones, sig.direction);
-          if (inFVG) {
-            sig.confidence = Math.min(sig.confidence + 10, 100);
-            sig.fvgNote    = `📊 FVG зона → +10%`;
-          }
-          // FVG SL (если есть — использовать)
-          const fvgSL = calcFVGStopLoss(sig.price, sig.direction, fvgZones, atrForFVG);
-          if (fvgSL) {
-            const slPct = Math.abs((parseFloat(fvgSL.sl) - sig.price) / sig.price);
-            if (slPct <= 0.015) { // только если не выходит за 1.5%
-              sig.sl   = fvgSL.sl;
-              sig.slNote = fvgSL.note;
-              const slD = Math.abs(sig.price - parseFloat(fvgSL.sl));
-              sig.tp1  = sig.direction === 'long'
-                ? (sig.price + slD * 2).toFixed(4)
-                : (sig.price - slD * 2).toFixed(4);
-              sig.tp2  = sig.direction === 'long'
-                ? (sig.price + slD * 3).toFixed(4)
-                : (sig.price - slD * 3).toFixed(4);
+          if (fvgZones1h?.length) {
+            const price    = parseFloat(sig.price);
+            const inFVG1h  = fvgZones1h.some(z => price >= z.low && price <= z.high);
+            const inFVG15m = fvgZones15m?.some(z => price >= z.low && price <= z.high);
+            if (inFVG1h || inFVG15m) {
+              contextAdj = Math.min(contextAdj + 8, 15);
+              sig.fvgNote = `📊 FVG зона → +8%`;
             }
           }
-        } catch(e) { /* FVG не критичен */ }
+        } catch(_) {}
 
-        // 9. WEEKLY POC — самый торгуемый уровень недели
+        // 9. WEEKLY POC
         try {
-          const poc = await getWeeklyPOC(coin.instId);
-          if (poc) {
-            const price = parseFloat(sig.price);
-            const distToPOC = Math.abs(price - poc.poc) / price * 100;
-            const distToVAH = Math.abs(price - poc.vah) / price * 100;
-            const distToVAL = Math.abs(price - poc.val) / price * 100;
-
-            if (distToPOC < 1.5) {
-              sig.confidence = Math.min(sig.confidence + 10, 100);
-              sig.pocNote    = `🎯 Weekly POC: $${poc.poc.toFixed(3)} (${distToPOC.toFixed(1)}% away) → +10%`;
-            } else if (sig.direction === 'long' && price < poc.val && distToVAL < 2) {
-              sig.confidence = Math.min(sig.confidence + 7, 100);
-              sig.pocNote    = `📊 W.VAL $${poc.val.toFixed(3)} — возврат ожидается → +7%`;
-            } else if (sig.direction === 'short' && price > poc.vah && distToVAH < 2) {
-              sig.confidence = Math.min(sig.confidence + 7, 100);
-              sig.pocNote    = `📊 W.VAH $${poc.vah.toFixed(3)} — возврат ожидается → +7%`;
-            } else if (distToPOC < 3) {
-              sig.confidence = Math.min(sig.confidence + 4, 100);
-              sig.pocNote    = `📊 Weekly POC близко: $${poc.poc.toFixed(3)} → +4%`;
+          const wpoc = await getWeeklyPOC(coin.instId);
+          if (wpoc?.poc) {
+            const price   = parseFloat(sig.price);
+            const distPct = Math.abs(wpoc.poc - price) / price * 100;
+            if (distPct < 1.0) {
+              contextAdj = Math.min(contextAdj + 10, 15);
+              sig.pocNote = `🎯 Weekly POC: $${wpoc.poc.toFixed(3)} (${distPct.toFixed(1)}% away) → +10%`;
+            } else if (distPct < 2.5) {
+              contextAdj = Math.min(contextAdj + 6, 15);
+              sig.pocNote = `🎯 Weekly POC: $${wpoc.poc.toFixed(3)} (${distPct.toFixed(1)}% away) → +6%`;
             }
           }
-        } catch(e) { /* POC не критичен */ }
+        } catch(_) {}
 
-        // 9b. MONTHLY POC — самый торгуемый уровень за месяц (сильнее Weekly)
+        // Monthly POC
         try {
           const mpoc = await getMonthlyPOC(coin.instId);
-          if (mpoc) {
-            const price      = parseFloat(sig.price);
-            const distToMPOC = Math.abs(price - mpoc.poc) / price * 100;
-            const distToMVAH = Math.abs(price - mpoc.vah) / price * 100;
-            const distToMVAL = Math.abs(price - mpoc.val) / price * 100;
-
-            if (distToMPOC < 1.5) {
-              // У Monthly POC — очень сильный уровень
-              sig.confidence = Math.min(sig.confidence + 15, 100);
-              sig.mpocNote   = `🎯🎯 Monthly POC: $${mpoc.poc.toFixed(3)} (${distToMPOC.toFixed(1)}% away) → +15%`;
-            } else if (sig.direction === 'long' && price < mpoc.val && distToMVAL < 2) {
-              sig.confidence = Math.min(sig.confidence + 10, 100);
-              sig.mpocNote   = `📊 M.VAL $${mpoc.val.toFixed(3)} — сильная поддержка → +10%`;
-            } else if (sig.direction === 'short' && price > mpoc.vah && distToMVAH < 2) {
-              sig.confidence = Math.min(sig.confidence + 10, 100);
-              sig.mpocNote   = `📊 M.VAH $${mpoc.vah.toFixed(3)} — сильное сопротивление → +10%`;
-            } else if (distToMPOC < 3) {
-              sig.confidence = Math.min(sig.confidence + 6, 100);
-              sig.mpocNote   = `📊 Monthly POC близко: $${mpoc.poc.toFixed(3)} → +6%`;
+          if (mpoc?.poc && !sig.mpocNote) {
+            const price   = parseFloat(sig.price);
+            const distPct = Math.abs(mpoc.poc - price) / price * 100;
+            if (distPct < 0.5) {
+              contextAdj = Math.min(contextAdj + 15, 15);
+              sig.mpocNote = `🎯🎯 Monthly POC: $${mpoc.poc.toFixed(3)} (${distPct.toFixed(1)}% away) → +15%`;
+            } else if (distPct < 1.5) {
+              contextAdj = Math.min(contextAdj + 6, 15);
+              sig.mpocNote = `🎯 Monthly POC: $${mpoc.poc.toFixed(3)} → +6%`;
             }
           }
-        } catch(e) { /* Monthly POC не критичен */ }
+        } catch(_) {}
 
-        // 10. ABSORPTION FILTER — поглощение перед всплеском (из видео трейдера)
-        // Шаг 1: Absorption — высокий объём БЕЗ движения цены
-        // Шаг 2: Aggression — S1 Volume Spike (уже есть)
-        // Если видим оба шага → confidence +12%
+        // GEX regime for ALL coins (BTC GEX = global market regime)
+        try {
+          const btcGex = await getGEXLevels('BTC');
+          if (btcGex) {
+            // BTC GEX negative = volatile regime = more risky for all coins
+            if (btcGex.regime === 'NEGATIVE') {
+              contextAdj = Math.max(contextAdj - 5, -15);
+              sig.gexNote = `⚡ BTC GEX Negative (volatile market) → -5%`;
+            }
+            // For BTC/ETH: more detailed GEX analysis
+            const coinName = coin.instId.replace('-USDT-SWAP','');
+            if (['BTC','ETH'].includes(coinName)) {
+              const coinGex = coinName === 'BTC' ? btcGex : await getGEXLevels('ETH');
+              if (coinGex?.flipLevel) {
+                const price = parseFloat(sig.price);
+                const distToFlip = Math.abs(coinGex.flipLevel - price) / price * 100;
+                if (distToFlip < 1.5) {
+                  contextAdj = Math.max(contextAdj - 8, -15);
+                  sig.gexNote = `⚡ GEX Flip Level $${coinGex.flipLevel.toLocaleString()} близко → -8%`;
+                }
+              }
+              if (coinGex?.levels?.length) {
+                const price   = parseFloat(sig.price);
+                const nearest = coinGex.levels.reduce((b,l) =>
+                  Math.abs(l.strike-price) < Math.abs(b.strike-price) ? l : b
+                );
+                const distPct = Math.abs(nearest.strike-price)/price*100;
+                if (distPct < 2) {
+                  if (nearest.netGEX > 0 && sig.direction === 'long') {
+                    contextAdj = Math.min(contextAdj + 8, 15);
+                    sig.gexNote = `⚡ GEX Support $${nearest.strike.toLocaleString()} → +8%`;
+                  } else if (nearest.netGEX < 0 && sig.direction === 'short') {
+                    contextAdj = Math.min(contextAdj + 8, 15);
+                    sig.gexNote = `⚡ GEX Resistance $${nearest.strike.toLocaleString()} → +8%`;
+                  }
+                }
+              }
+              // Options Unusual Activity (BTC/ETH only)
+              try {
+                const optFlow = await getOptionsUnusualActivity(coinName);
+                if (optFlow?.signal !== 'neutral') {
+                  const aligned = (optFlow.signal==='bullish'&&sig.direction==='long') ||
+                                  (optFlow.signal==='bearish'&&sig.direction==='short');
+                  contextAdj = aligned
+                    ? Math.min(contextAdj + 6, 15)
+                    : Math.max(contextAdj - 8, -15);
+                  sig.gexNote = (sig.gexNote||'') + ` 🦁 Options ${optFlow.signal}${aligned?' → +6%':' → -8%'}`;
+                }
+              } catch(_) {}
+            }
+          }
+        } catch(_) {}
+
+        // Funding Rate (all coins)
+        try {
+          const funding    = coinData.fundingRate || 0;
+          const fundingAbs = Math.abs(funding);
+          if (fundingAbs > 0.02) {
+            const fundingBullish = funding < 0;
+            const aligned = (fundingBullish && sig.direction==='long') ||
+                            (!fundingBullish && sig.direction==='short');
+            if (fundingAbs > 0.05) {
+              contextAdj = aligned
+                ? Math.min(contextAdj + 8, 15)
+                : Math.max(contextAdj - 10, -15);
+              sig.fundingNote = `💸 Funding ${(funding*100).toFixed(3)}% extreme${aligned?' aligned → +8%':' against → -10%'}`;
+            } else {
+              if (!aligned) {
+                contextAdj = Math.max(contextAdj - 5, -15);
+                sig.fundingNote = `⚠️ Funding ${(funding*100).toFixed(3)}% against → -5%`;
+              }
+            }
+          }
+        } catch(_) {}
+
+        // Apply context cap ±15%
+        contextAdj = Math.max(-15, Math.min(15, contextAdj));
+        sig.confidence = Math.max(0, Math.min(100, baseConf + contextAdj));
+
+        // ── LEVEL 3: TECHNICAL CONFIRMATION ───────────────────
+
+        // Absorption filter (S1 only)
         try {
           if (sig.strategy.includes('Volume Spike')) {
             const k15 = await getOKXKlinesCached(coin.instId, '15m', 10);
             if (k15.length >= 6) {
-              const recent  = k15.slice(-6, -1); // 5 свечей до сигнала
+              const recent  = k15.slice(-6, -1);
               const avgVol  = recent.reduce((s,k) => s + (k.quoteVolume||0), 0) / recent.length;
-
-              // Ищем absorption: свечи с высоким объёмом (>1.5x avg) но маленьким движением (<0.3%)
               const absorptionCandles = recent.filter(k => {
                 const vol  = k.quoteVolume || 0;
                 const move = Math.abs(k.close - k.open) / k.open * 100;
                 return vol > avgVol * 1.5 && move < 0.3;
               });
-
               if (absorptionCandles.length >= 1) {
-                // Нашли поглощение перед всплеском — это идеальная ситуация
-                sig.confidence = Math.min(sig.confidence + 12, 100);
-                sig.absNote    = `🧲 Absorption (${absorptionCandles.length} свеч) → Aggression → +12%`;
+                technicalAdj = Math.min(technicalAdj + 10, 15);
+                sig.absNote  = `📦 Absorption (${absorptionCandles.length} свечи) → +10%`;
               }
-            }
-          }
-        } catch(e) { /* Absorption не критичен */ }
-
-        // 11. REAL DELTA — анализ через WebSocket trade stream
-        try {
-          if (deltaTracker?.isReady()) {
-            // Подписываем монету если ещё не подписаны
-            deltaTracker.addCoin(coin.instId);
-
-            const d15 = deltaTracker.getDelta(coin.instId, 15);
-            if (d15 && d15.tradesCount >= 10) {
-              const ratio = d15.deltaRatio; // -1 до +1
-
-              // Delta подтверждает направление сигнала
-              if (sig.direction === 'long' && ratio > 0.2) {
-                sig.confidence  = Math.min(sig.confidence + 10, 100);
-                sig.deltaNote   = `📊 Delta: +${(ratio*100).toFixed(0)}% покупок → подтверждение → +10%`;
-              } else if (sig.direction === 'short' && ratio < -0.2) {
-                sig.confidence  = Math.min(sig.confidence + 10, 100);
-                sig.deltaNote   = `📊 Delta: ${(ratio*100).toFixed(0)}% продаж → подтверждение → +10%`;
-              }
-
-              // Delta противоречит сигналу — снижаем
-              if (sig.direction === 'long' && ratio < -0.3) {
-                sig.confidence  = Math.max(sig.confidence - 10, 0);
-                sig.deltaNote   = `⚠️ Delta: продавцы доминируют (${(ratio*100).toFixed(0)}%) → -10%`;
-              } else if (sig.direction === 'short' && ratio > 0.3) {
-                sig.confidence  = Math.max(sig.confidence - 10, 0);
-                sig.deltaNote   = `⚠️ Delta: покупатели доминируют (+${(ratio*100).toFixed(0)}%) → -10%`;
-              }
-
-              // Absorption из реального delta
-              if (d15.absorption && d15.absorptionZones >= 2) {
-                sig.confidence = Math.min(sig.confidence + 8, 100);
-                sig.deltaNote  = (sig.deltaNote || '') + ` 🧲 Real Absorption (${d15.absorptionZones} зоны) → +8%`;
-              }
-
-              // Delta divergence
-              const div = deltaTracker.getDeltaDivergence(coin.instId);
-              if (div) {
-                if (div.type === 'bullish' && sig.direction === 'long') {
-                  sig.confidence = Math.min(sig.confidence + 12, 100);
-                  sig.deltaNote  = `🔄 Bullish Delta Divergence → разворот вверх → +12%`;
-                } else if (div.type === 'bearish' && sig.direction === 'short') {
-                  sig.confidence = Math.min(sig.confidence + 12, 100);
-                  sig.deltaNote  = `🔄 Bearish Delta Divergence → разворот вниз → +12%`;
-                }
-              }
-            }
-          }
-        } catch(e) { /* Delta не критичен */ }
-
-        // 10. GEX — Full Net GEX + Flip Level + Put/Call Ratio
-        try {
-          const coin_name = coin.instId.replace('-USDT-SWAP','');
-          if (['BTC','ETH'].includes(coin_name)) {
-            const gex = await getGEXLevels(coin_name);
-            if (gex?.levels?.length) {
-              const price = parseFloat(sig.price);
-
-              // Flip level — самый важный уровень
-              if (gex.flipLevel) {
-                const distToFlip = Math.abs(gex.flipLevel - price) / price * 100;
-                if (distToFlip < 1.5) {
-                  sig.confidence = Math.max(sig.confidence - 8, 0);
-                  sig.gexNote = `⚡ GEX Flip Level $${gex.flipLevel.toLocaleString()} близко → -8%`;
-                }
-              }
-
-              // Ближайший wall
-              const nearest = gex.levels.reduce((best, l) =>
-                Math.abs(l.strike - price) < Math.abs(best.strike - price) ? l : best
-              );
-              const distPct = Math.abs(nearest.strike - price) / price * 100;
-              if (distPct < 2) {
-                if (nearest.netGEX > 0 && sig.direction === 'long') {
-                  sig.confidence = Math.min(sig.confidence + 10, 100);
-                  sig.gexNote = `⚡ GEX Support $${nearest.strike.toLocaleString()} → +10%`;
-                } else if (nearest.netGEX < 0 && sig.direction === 'short') {
-                  sig.confidence = Math.min(sig.confidence + 10, 100);
-                  sig.gexNote = `⚡ GEX Resistance $${nearest.strike.toLocaleString()} → +10%`;
-                }
-              }
-
-              // Put/Call Ratio — contrarian сигнал
-              if (gex.pcRatio) {
-                if (gex.pcRatio > 1.5 && sig.direction === 'long') {
-                  // Много путов = рынок боится = contrarian лонг
-                  sig.confidence = Math.min(sig.confidence + 5, 100);
-                  sig.gexNote = (sig.gexNote || '') + ` P/C=${gex.pcRatio}(bearish сентимент→contrarian+5%)`;
-                } else if (gex.pcRatio < 0.6 && sig.direction === 'short') {
-                  // Много коллов = эйфория = contrarian шорт
-                  sig.confidence = Math.min(sig.confidence + 5, 100);
-                  sig.gexNote = (sig.gexNote || '') + ` P/C=${gex.pcRatio}(bullish эйфория→contrarian+5%)`;
-                }
-              }
-
-              // GEX Regime
-              if (gex.regime === 'NEGATIVE' && !sig.gexNote) {
-                sig.gexNote = `⚡ GEX Negative (volatile regime) ↑$${gex.wallUp?.toLocaleString()} ↓$${gex.wallDown?.toLocaleString()}`;
-              }
-            }
-
-            // Options Unusual Activity
-            try {
-              const optFlow = await getOptionsUnusualActivity(coin_name);
-              if (optFlow && optFlow.signal !== 'neutral') {
-                const align = (optFlow.signal === 'bullish' && sig.direction === 'long') ||
-                              (optFlow.signal === 'bearish' && sig.direction === 'short');
-                if (align) {
-                  sig.confidence = Math.min(sig.confidence + 8, 100);
-                  sig.gexNote = (sig.gexNote || '') + ` 🦁 Options Flow ${optFlow.signal} → +8%`;
-                } else {
-                  sig.confidence = Math.max(sig.confidence - 10, 0);
-                  sig.gexNote = (sig.gexNote || '') + ` ⚠️ Options Flow против → -10%`;
-                }
-              }
-            } catch(_) {}
-          }
-        } catch(e) { /* GEX не критичен */ }
-
-        // 11. FUNDING RATE — жёсткий фильтр направления
-        // Если funding сильно положительный → лонги переплачивают → шортить выгоднее
-        try {
-          const funding = coinData.fundingRate || 0;
-          const fundingAbs = Math.abs(funding);
-          if (fundingAbs > 0.05) { // экстремальный funding
-            const fundingBullish = funding < 0; // шортисты платят → бычий
-            const aligned = (fundingBullish && sig.direction === 'long') ||
-                            (!fundingBullish && sig.direction === 'short');
-            if (aligned) {
-              sig.confidence = Math.min(sig.confidence + 8, 100);
-              sig.fundingNote = `💸 Funding ${(funding*100).toFixed(3)}% (extreme, aligned) → +8%`;
-            } else {
-              sig.confidence = Math.max(sig.confidence - 12, 0);
-              sig.fundingNote = `⚠️ Funding ${(funding*100).toFixed(3)}% (against signal) → -12%`;
-            }
-          } else if (fundingAbs > 0.02) {
-            const fundingBullish = funding < 0;
-            const aligned = (fundingBullish && sig.direction === 'long') ||
-                            (!fundingBullish && sig.direction === 'short');
-            if (!aligned) {
-              sig.confidence = Math.max(sig.confidence - 5, 0);
-              sig.fundingNote = `⚠️ Funding ${(funding*100).toFixed(3)}% (against) → -5%`;
             }
           }
         } catch(_) {}
 
-        // 12. OI CHANGE — новые деньги подтверждают тренд
-        // OI растёт + цена растёт = настоящий тренд (новые лонги)
-        // OI падает + цена растёт = шорты закрываются (слабее)
+        // OI Change (all coins)
         try {
           const ccy = coin.instId.replace('-USDT-SWAP','');
           if (store.oiCache[ccy]?.oi5m?.length >= 2) {
-            const oiArr = store.oiCache[ccy].oi5m;
-            const oiChange = oiArr.length >= 2
-              ? (oiArr[oiArr.length-1] - oiArr[0]) / Math.abs(oiArr[0]) * 100
-              : 0;
-            const priceChange = sig.direction === 'long' ? 1 : -1; // assumed direction
-
-            if (oiChange > 1.5 && priceChange > 0) {
-              // OI растёт + лонг = настоящий тренд
-              sig.confidence = Math.min(sig.confidence + 6, 100);
-              sig.oiNote = `📊 OI+${oiChange.toFixed(1)}% (new longs) → +6%`;
-            } else if (oiChange < -1.5 && priceChange > 0) {
-              // OI падает + лонг = short squeeze, не настоящий тренд
-              sig.confidence = Math.max(sig.confidence - 6, 0);
-              sig.oiNote = `⚠️ OI${oiChange.toFixed(1)}% (short squeeze, weak) → -6%`;
+            const oiArr    = store.oiCache[ccy].oi5m;
+            const oiChange = (oiArr[oiArr.length-1] - oiArr[0]) / Math.abs(oiArr[0]) * 100;
+            const expectedUp = sig.direction === 'long';
+            if (oiChange > 1.5 && expectedUp) {
+              technicalAdj = Math.min(technicalAdj + 6, 15);
+              sig.oiNote   = `📊 OI+${oiChange.toFixed(1)}% (new longs) → +6%`;
+            } else if (oiChange < -1.5 && expectedUp) {
+              technicalAdj = Math.max(technicalAdj - 5, -15);
+              sig.oiNote   = `⚠️ OI${oiChange.toFixed(1)}% (short squeeze only) → -5%`;
             }
           }
         } catch(_) {}
 
-        // 13. ORDER BOOK IMBALANCE — давление покупателей/продавцов
+        // Order Book Imbalance (all coins)
         try {
           const ob = await getOrderBookImbalance(coin.instId);
-          if (ob && ob.signal !== 'neutral') {
-            const aligned = (ob.signal === 'bullish' && sig.direction === 'long') ||
-                            (ob.signal === 'bearish' && sig.direction === 'short');
-            if (aligned) {
-              sig.confidence = Math.min(sig.confidence + 7, 100);
-              sig.obNote = `📖 OrderBook ${ob.bidPct}%bid/${ob.askPct}%ask (${ob.signal}) → +7%`;
-            } else if (Math.abs(ob.imbalance) > 0.3) {
-              sig.confidence = Math.max(sig.confidence - 8, 0);
-              sig.obNote = `⚠️ OrderBook against (${ob.bidPct}%bid/${ob.askPct}%ask) → -8%`;
+          if (ob?.signal !== 'neutral') {
+            const aligned = (ob.signal==='bullish'&&sig.direction==='long') ||
+                            (ob.signal==='bearish'&&sig.direction==='short');
+            if (aligned && Math.abs(ob.imbalance) > 0.25) {
+              technicalAdj = Math.min(technicalAdj + 7, 15);
+              sig.obNote   = `📖 OrderBook ${ob.bidPct}%bid/${ob.askPct}%ask → +7%`;
+            } else if (!aligned && Math.abs(ob.imbalance) > 0.3) {
+              technicalAdj = Math.max(technicalAdj - 7, -15);
+              sig.obNote   = `⚠️ OrderBook against ${ob.bidPct}%bid/${ob.askPct}%ask → -7%`;
             }
           }
         } catch(_) {}
 
-        // 12. FOOTPRINT — подтверждение через тиковый анализ на GEX уровне
+        // Footprint (all coins that have data)
         try {
           if (footprint?.isReady()) {
             footprint.addCoin(coin.instId);
-
             const fp = footprint.getFootprint(coin.instId);
             if (fp && fp.tradesCount >= 20) {
-
-              // ── Imbalance: покупатели/продавцы доминируют на уровнях ──
               if (sig.direction === 'long' && fp.imbalanceBullish) {
-                sig.confidence   = Math.min(sig.confidence + 12, 100);
-                sig.footprintNote = `🦶 Footprint: ${fp.bullishImbalances.length} bullish imbalance zones → +12%`;
+                technicalAdj = Math.min(technicalAdj + 10, 15);
+                sig.footprintNote = `🦶 FP: ${fp.bullishImbalances.length} bullish zones → +10%`;
               } else if (sig.direction === 'short' && fp.imbalanceBearish) {
-                sig.confidence   = Math.min(sig.confidence + 12, 100);
-                sig.footprintNote = `🦶 Footprint: ${fp.bearishImbalances.length} bearish imbalance zones → +12%`;
+                technicalAdj = Math.min(technicalAdj + 10, 15);
+                sig.footprintNote = `🦶 FP: ${fp.bearishImbalances.length} bearish zones → +10%`;
               }
-
-              // ── Hidden pressure: цена растёт но продавцы скрыто давят ──
               if (sig.direction === 'long' && fp.hiddenSelling) {
-                sig.confidence   = Math.max(sig.confidence - 12, 0);
-                sig.footprintNote = `⚠️ Footprint: hidden selling pressure → -12%`;
+                technicalAdj = Math.max(technicalAdj - 10, -15);
+                sig.footprintNote = `⚠️ FP: hidden selling → -10%`;
               } else if (sig.direction === 'short' && fp.hiddenBuying) {
-                sig.confidence   = Math.max(sig.confidence - 12, 0);
-                sig.footprintNote = `⚠️ Footprint: hidden buying pressure → -12%`;
+                technicalAdj = Math.max(technicalAdj - 10, -15);
+                sig.footprintNote = `⚠️ FP: hidden buying → -10%`;
               }
-
-              // ── Unfinished auction: цена вернётся к POC ──────────────
-              if (fp.unfinishedAuction && fp.poc) {
-                const priceNow = parseFloat(sig.price);
-                const pocDir   = fp.poc > priceNow ? 'long' : 'short';
-                if (pocDir === sig.direction) {
-                  sig.confidence   = Math.min(sig.confidence + 8, 100);
-                  sig.footprintNote = (sig.footprintNote || '') + ` 🎯 Unfinished auction POC $${fp.poc.toFixed(2)} → +8%`;
-                }
-              }
-
-              // ── GEX + Footprint комбо: максимальный бонус ────────────
-              if (sig.gexNote && sig.footprintNote && !fp.hiddenSelling && !fp.hiddenBuying) {
-                sig.confidence   = Math.min(sig.confidence + 5, 100);
-                sig.footprintNote = (sig.footprintNote || '') + ` ✅ GEX+FP combo → +5%`;
-              }
-
-              // ── Delta divergence через footprint ─────────────────────
               const fpDiv = footprint.getFootprintDivergence(coin.instId);
               if (fpDiv) {
-                if (fpDiv.type === 'bullish' && sig.direction === 'long') {
-                  sig.confidence   = Math.min(sig.confidence + 10, 100);
-                  sig.footprintNote = `🔄 FP Bullish Delta Div → разворот вверх → +10%`;
-                } else if (fpDiv.type === 'bearish' && sig.direction === 'short') {
-                  sig.confidence   = Math.min(sig.confidence + 10, 100);
-                  sig.footprintNote = `🔄 FP Bearish Delta Div → разворот вниз → +10%`;
+                const aligned = (fpDiv.type==='bullish'&&sig.direction==='long') ||
+                                (fpDiv.type==='bearish'&&sig.direction==='short');
+                if (aligned) {
+                  technicalAdj = Math.min(technicalAdj + 8, 15);
+                  sig.footprintNote = (sig.footprintNote||'') + ` 🔄 Delta Div → +8%`;
                 }
               }
             }
           }
-        } catch(e) { /* Footprint не критичен */ }
+        } catch(_) {}
+
+        // Delta Tracker
+        try {
+          if (typeof getDeltaSignal === 'function') {
+            const delta = getDeltaSignal(coin.instId);
+            if (delta) {
+              const aligned = (delta === 'bullish' && sig.direction === 'long') ||
+                              (delta === 'bearish' && sig.direction === 'short');
+              if (aligned) {
+                technicalAdj = Math.min(technicalAdj + 8, 15);
+                sig.deltaNote = `🔵 Delta ${delta} → +8%`;
+              } else {
+                technicalAdj = Math.max(technicalAdj - 8, -15);
+                sig.deltaNote = `⚠️ Delta ${delta} against → -8%`;
+              }
+            }
+          }
+        } catch(_) {}
+
+        // Apply technical cap ±15%
+        technicalAdj = Math.max(-15, Math.min(15, technicalAdj));
+        sig.confidence = Math.max(0, Math.min(100,
+          baseConf + contextAdj + technicalAdj
+        ));
+
+        // Log total adjustment for debugging
+        const totalAdj = contextAdj + technicalAdj;
+        if (Math.abs(totalAdj) > 5) {
+          console.log(`[PIPELINE] ${coin.instId} ${sig.strategy.slice(0,10)}: base=${baseConf}% ctx=${contextAdj>0?'+':''}${contextAdj} tech=${technicalAdj>0?'+':''}${technicalAdj} final=${sig.confidence}%`);
+        }
 
         filtered.push(sig);
       }

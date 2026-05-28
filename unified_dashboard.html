@@ -692,6 +692,16 @@ nav::-webkit-scrollbar{display:none;}
 
 <!-- LIVE TRADING -->
 <div class="page" id="page-live">
+  <!-- Date filter -->
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;padding:12px 14px;background:var(--panel);border:1px solid var(--border)">
+    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1px">PERIOD:</div>
+    <input type="date" id="live-date-from" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:'DM Mono',monospace;font-size:.58rem;outline:none;cursor:pointer">
+    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim)">—</div>
+    <input type="date" id="live-date-to" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:5px 9px;font-family:'DM Mono',monospace;font-size:.58rem;outline:none;cursor:pointer">
+    <button class="btn" onclick="applyLiveDateFilter()" style="padding:5px 12px">APPLY</button>
+    <button class="btn" onclick="resetLiveDateFilter()" style="padding:5px 12px;border-color:var(--dim);color:var(--dim)">RESET</button>
+    <div id="live-filter-info" style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--green);margin-left:auto"></div>
+  </div>
   <div class="stats-row" id="live-stats"></div>
   <div class="grid-2">
     <div class="panel">
@@ -1183,7 +1193,27 @@ const DCA_KEY = 'cr_dca_v1';
 let dcaData = JSON.parse(localStorage.getItem(DCA_KEY) || '{"investments":[],"btcPrice":95000}');
 let equityChart, monthlyChart;
 let trackFilter = 'all';
-let trFilterFrom = null, trFilterTo = null;
+let liveFilterFrom = null, liveFilterTo = null;
+
+function applyLiveDateFilter() {
+  const from = document.getElementById('live-date-from')?.value;
+  const to   = document.getElementById('live-date-to')?.value;
+  liveFilterFrom = from ? new Date(from).getTime() : null;
+  liveFilterTo   = to   ? new Date(to + 'T23:59:59').getTime() : null;
+  const info = document.getElementById('live-filter-info');
+  if (info) info.textContent = (from || to) ? `FILTERED: ${from||'*'} → ${to||'*'}` : '';
+  loadLive();
+}
+
+function resetLiveDateFilter() {
+  liveFilterFrom = null; liveFilterTo = null;
+  const df = document.getElementById('live-date-from');
+  const dt = document.getElementById('live-date-to');
+  if (df) df.value = ''; if (dt) dt.value = '';
+  const info = document.getElementById('live-filter-info');
+  if (info) info.textContent = '';
+  loadLive();
+}
 let currentLang = localStorage.getItem('cr_lang') || 'en';
 
 // ── THEME ────────────────────────────────────────────────────
@@ -2232,8 +2262,18 @@ async function loadLive() {
 }
 
 function renderLive(d) {
-  const closed = d.closed || [];
-  const open   = d.open   || [];
+  let closed = d.closed || [];
+  const open = d.open   || [];
+
+  // Apply date filter
+  if (liveFilterFrom || liveFilterTo) {
+    closed = closed.filter(t => {
+      const ts = t.closedAt || t.ts || 0;
+      if (liveFilterFrom && ts < liveFilterFrom) return false;
+      if (liveFilterTo   && ts > liveFilterTo)   return false;
+      return true;
+    });
+  }
 
   // Stats
   const se = document.getElementById('live-stats');

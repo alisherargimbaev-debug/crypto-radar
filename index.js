@@ -784,6 +784,32 @@ function pushTradeHistory(trade) {
   if (store.tradeHistory.length > 500) {
     store.tradeHistory = store.tradeHistory.slice(-500);
   }
+
+  // Сохраняем live сделки в Supabase paper_trades
+  // (paper сделки уже сохраняются через savePaperTradeToSupabase)
+  if (trade.outcome && trade.outcome !== 'open' && !trade._savedToSupabase) {
+    trade._savedToSupabase = true;
+    const isLive = !store.observeMode && !trade.paperOnly;
+    if (isLive) {
+      supabase.from('paper_trades').upsert({
+        ts:         trade.ts || Date.now(),
+        inst_id:    trade.instId || trade.symbol,
+        strategy:   trade.strategy || 'Live',
+        direction:  trade.direction,
+        price:      trade.price,
+        sl:         trade.sl,
+        tp1:        trade.tp1 || trade.tp,
+        tp2:        trade.tp2 || trade.tp,
+        confidence: trade.confidence || 0,
+        outcome:    trade.outcome,
+        pnl:        trade.pnl,
+        closed_at:  trade.closedAt || Date.now(),
+        source:     'bybit_real',
+        filters:    trade.filters ? JSON.stringify(trade.filters) : null,
+      }, { onConflict: 'ts,inst_id' })
+      .then(() => {}).catch(e => console.error('[LIVE→DB] save error:', e.message));
+    }
+  }
 }
 
 // ── Сессии UTC ─────────────────────────────────────────────
@@ -5324,21 +5350,74 @@ app.get('/api/backtest', async (req, res) => {
   }
 });
 
-app.get('/api/trades', (req, res) => {
-  // Реальные сделки бота (не paper) — из store.tradeHistory и store.openTrades
+app.get('/api/trades', async (req, res) => {
   try {
-    const open   = store.openTrades || [];
-    const closed = store.tradeHistory || [];
-    const wins   = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
-    const losses = closed.filter(t => t.outcome === 'sl');
-    const wr     = closed.length ? Math.round(wins.length / closed.length * 100) : 0;
+    const open = store.openTrades || [];
+
+    // Берём live сделки из Supabase (source='bybit_real' или outcome не null)
+    // + из store.tradeHistory в памяти (текущая сессия)
+    let closed = [...(store.tradeHistory || [])];
+
+    // Подгружаем из Supabase если в памяти мало
+    if (closed.filter(t => t.source === 'bybit_real').length < 5) {
+      try {
+        const { data } = await supabase
+          .from('paper_trades')
+          .select('*')
+          .not('outcome', 'is', null)
+          .neq('outcome', 'open')
+          .order('ts', { ascending: false })
+          .limit(200);
+
+        if (data?.length) {
+          // Маппим Supabase формат → store формат
+          const fromDB = data.map(t => ({
+            ts:         t.ts,
+            instId:     t.inst_id,
+            symbol:     (t.inst_id || '').replace('-USDT-SWAP', ''),
+            strategy:   t.strategy,
+            direction:  t.direction,
+            price:      t.price,
+            sl:         t.sl,
+            tp1:        t.tp1,
+            tp2:        t.tp2,
+            confidence: t.confidence,
+            outcome:    t.outcome,
+            pnl:        t.pnl,
+            closedAt:   t.closed_at,
+            source:     t.source || 'paper',
+            filters:    t.filters,
+          }));
+
+          // Мержим — убираем дубликаты по ts
+          const inMemoryTs = new Set(closed.map(t => t.ts));
+          const newFromDB  = fromDB.filter(t => !inMemoryTs.has(t.ts));
+          closed = [...closed, ...newFromDB]
+            .sort((a, b) => (b.closedAt || b.ts || 0) - (a.closedAt || a.ts || 0));
+        }
+      } catch(dbErr) {
+        console.error('[/api/trades] Supabase fetch error:', dbErr.message);
+      }
+    }
+
+    const wins     = closed.filter(t => t.outcome === 'tp1' || t.outcome === 'tp2');
+    const losses   = closed.filter(t => t.outcome === 'sl');
+    const wr       = closed.length ? Math.round(wins.length / closed.length * 100) : 0;
     const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
+
     res.json({
       open:   open.slice(-20),
-      closed: closed.slice(-100).reverse(),
-      stats:  closed.length ? { total: closed.length, wins: wins.length, losses: losses.length, wr, totalPnl: parseFloat(totalPnl.toFixed(2)) } : null,
+      closed: closed.slice(0, 100),
+      stats:  closed.length ? {
+        total:    closed.length,
+        wins:     wins.length,
+        losses:   losses.length,
+        wr,
+        totalPnl: parseFloat(totalPnl.toFixed(2)),
+      } : null,
     });
   } catch(e) {
+    console.error('[/api/trades]', e.message);
     res.json({ open: [], closed: [], stats: null });
   }
 });

@@ -630,12 +630,31 @@ function getEffectiveRiskPct() {
       return n;
     })();
 
-    if (slStreak >= 3) baseRisk *= 0.5;        // 3 SL подряд → риск /2
-    else if (slStreak >= 2) baseRisk *= 0.7;   // 2 SL подряд → риск × 0.7
-    else if (winStreak >= 4) baseRisk *= 1.15; // 4 TP подряд → риск × 1.15 (но не больше 1.5%)
+    if (slStreak >= 3) baseRisk *= 0.5;
+    else if (slStreak >= 2) baseRisk *= 0.7;
+    else if (winStreak >= 4) baseRisk *= 1.15;
   }
 
-  // 3. ОГРАНИЧЕНИЯ
+  // 3. ROLLING SHARPE (последние 20 сделок) — auto risk reduction
+  // Quant стандарт: плохой Sharpe → снижать позицию
+  const last20 = store.tradeHistory.slice(-20).map(t => t.pnl || 0);
+  if (last20.length >= 10) {
+    const m20  = last20.reduce((a,b)=>a+b,0) / last20.length;
+    const s20  = Math.sqrt(last20.reduce((s,r)=>s+(r-m20)**2,0) / last20.length);
+    const rs   = s20 > 0 ? (m20/s20) * Math.sqrt(252) : 0;
+
+    if (rs < 0)        baseRisk *= 0.0;  // Sharpe отрицательный → не торгуем
+    else if (rs < 0.5) baseRisk *= 0.5;  // Sharpe слабый → риск /2
+    else if (rs < 1.0) baseRisk *= 0.75; // Sharpe умеренный → риск × 0.75
+    // Sharpe >= 1.0 → полный риск
+
+    if (rs < 0 && !store.observeMode) {
+      console.log(`[QUANT] Rolling Sharpe=${rs.toFixed(2)} < 0 → переключаем в observe mode`);
+      // Не переключаем автоматически — только логируем, пользователь решает
+    }
+  }
+
+  // 4. ОГРАНИЧЕНИЯ
   return Math.max(0.1, Math.min(baseRisk, store.riskPct * 1.2));
 }
 

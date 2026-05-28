@@ -759,11 +759,12 @@ nav::-webkit-scrollbar{display:none;}
       <div class="sec-title">Risk-Adjusted Returns</div>
       <div class="m-row"><div><div class="m-name">Sharpe Ratio</div><div class="m-hint">TARGET >1.5 · EXCELLENT >2.0</div></div><div class="m-val" id="m-sharpe">—</div></div>
       <div class="m-row"><div><div class="m-name">Sortino Ratio</div><div class="m-hint">DOWNSIDE DEVIATION ONLY</div></div><div class="m-val" id="m-sortino">—</div></div>
+      <div class="m-row"><div><div class="m-name">Calmar Ratio</div><div class="m-hint">ANN.RETURN / MAX DD · TARGET >1.0</div></div><div class="m-val" id="m-calmar">—</div></div>
       <div class="m-row"><div><div class="m-name">Profit Factor</div><div class="m-hint">GROSS PROFIT / GROSS LOSS</div></div><div class="m-val" id="m-pf">—</div></div>
-      <div class="m-row"><div><div class="m-name">Max Consecutive Losses</div><div class="m-hint">CONSECUTIVE LOSSES IN A ROW</div></div><div class="m-val" id="m-max-loss">—</div></div>
-      <div class="m-row"><div><div class="m-name">Expectancy</div><div class="m-hint">PER TRADE EXPECTED RETURN</div></div><div class="m-val" id="m-exp">—</div></div>
+      <div class="m-row"><div><div class="m-name">Expectancy / Trade</div><div class="m-hint">(WR×AvgWin) - (1-WR)×AvgLoss</div></div><div class="m-val" id="m-exp">—</div></div>
       <div class="m-row"><div><div class="m-name">Max Drawdown</div><div class="m-hint">PEAK TO TROUGH</div></div><div class="m-val red" id="m-dd">—</div></div>
-      <div class="m-row"><div><div class="m-name">Recovery Factor</div><div class="m-hint">TOTAL PNL / MAX DD</div></div><div class="m-val" id="m-rf">—</div></div>
+      <div class="m-row"><div><div class="m-name">Recovery Factor</div><div class="m-hint">TOTAL PNL / MAX DD · TARGET >2</div></div><div class="m-val" id="m-rf">—</div></div>
+      <div class="m-row"><div><div class="m-name">Max Consecutive Losses</div><div class="m-hint">CONSECUTIVE SL IN A ROW</div></div><div class="m-val" id="m-max-loss">—</div></div>
     </div>
     <div class="panel">
       <div class="sec-title">Trade Statistics</div>
@@ -772,8 +773,29 @@ nav::-webkit-scrollbar{display:none;}
       <div class="m-row"><div class="m-name">Avg Win</div><div class="m-val green" id="m-avgw">—</div></div>
       <div class="m-row"><div class="m-name">Avg Loss</div><div class="m-val red" id="m-avgl">—</div></div>
       <div class="m-row"><div class="m-name">Total PnL</div><div class="m-val" id="m-pnl">—</div></div>
+      <div class="m-row"><div><div class="m-name">Rolling Sharpe (20)</div><div class="m-hint">LAST 20 TRADES · <0.5 = REDUCE RISK</div></div><div class="m-val" id="m-rolling-sharpe">—</div></div>
       <div class="m-row"><div><div class="m-name">Weekly Drawdown</div><div class="m-hint">LIMIT: 8%</div></div><div class="m-val" id="m-wdd">—</div></div>
+      <div class="m-row"><div><div class="m-name">Kelly % (Half)</div><div class="m-hint">OPTIMAL POSITION SIZE</div></div><div class="m-val" id="m-kelly">—</div></div>
     </div>
+  </div>
+
+  <!-- Confidence Calibration Table -->
+  <div class="panel" style="margin-top:16px">
+    <div class="sec-title">Confidence Calibration — Is It Predicting Anything?</div>
+    <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);margin-bottom:12px">
+      If WR doesn't increase with confidence → confidence is not calibrated (major quant issue)
+    </div>
+    <div id="conf-calibration-table"></div>
+  </div>
+
+  <!-- Rolling Sharpe Chart -->
+  <div class="panel" style="margin-top:16px">
+    <div class="sec-title">Rolling Sharpe (20 trades) — Auto Risk Reduction</div>
+    <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);margin-bottom:8px">
+      🟢 >1.0 = Full size · 🟡 0.5-1.0 = 75% size · 🔴 <0.5 = 50% size · ⚫ <0 = Observe mode
+    </div>
+    <div id="m-risk-status" style="font-family:'DM Mono',monospace;font-size:.6rem;padding:10px 14px;background:var(--panel2);border:1px solid var(--border);margin-bottom:12px">—</div>
+    <div class="chart-wrap" style="height:160px"><canvas id="rolling-sharpe-chart"></canvas></div>
   </div>
 </div>
 
@@ -1574,7 +1596,6 @@ async function loadRadarFull() {
 
 // ── METRICS ──────────────────────────────────────────────────
 async function loadMetrics() {
-  // Берём и paper и live сделки
   const [paper, live] = await Promise.all([
     safeFetch('/api/paper', { closed:[], stats:null }),
     safeFetch('/api/trades', { closed:[] }),
@@ -1582,9 +1603,202 @@ async function loadMetrics() {
   try {
     const paperClosed = (paper.closed||[]).filter(t=>t.outcome&&t.outcome!=='expired');
     const liveClosed  = (live.closed||[]).filter(t=>t.outcome&&t.outcome!=='expired');
-    // Метрики считаем по live если есть (реальные данные), иначе по paper
     const closed = liveClosed.length >= 5 ? liveClosed : paperClosed;
     const source = liveClosed.length >= 5 ? 'LIVE' : 'PAPER';
+    if (closed.length < 5) { document.querySelectorAll('[id^="m-"]').forEach(e=>e.textContent='—'); return; }
+
+    const wins   = closed.filter(t=>t.outcome==='tp1'||t.outcome==='tp2');
+    const losses = closed.filter(t=>t.outcome==='sl');
+    const gw     = wins.reduce((s,t)=>s+Math.abs(t.pnl||0),0);
+    const gl     = losses.reduce((s,t)=>s+Math.abs(t.pnl||0),0);
+    const pf     = gl>0?(gw/gl).toFixed(2):'∞';
+    const aw     = wins.length?(gw/wins.length).toFixed(2):0;
+    const al     = losses.length?(gl/losses.length).toFixed(2):0;
+    const wr     = closed.length?wins.length/closed.length:0;
+    const exp    = (wr*aw-(1-wr)*al).toFixed(3);
+    const totalPnl = closed.reduce((s,t)=>s+(t.pnl||0),0);
+    const rets   = closed.map(t=>t.pnl||0);
+    const mean   = rets.reduce((a,b)=>a+b,0)/rets.length;
+    const std    = Math.sqrt(rets.reduce((s,r)=>s+(r-mean)**2,0)/rets.length);
+    const sharpe = (std>0?(mean/std)*Math.sqrt(252):0).toFixed(2);
+    const neg    = rets.filter(r=>r<0);
+    const dstd   = Math.sqrt(neg.reduce((s,r)=>s+r*r,0)/Math.max(rets.length,1));
+    const sortino = (dstd>0?(mean/dstd)*Math.sqrt(252):0).toFixed(2);
+
+    // Max drawdown
+    let peak=0, eq=0, maxDD=0;
+    closed.forEach(t=>{eq+=(t.pnl||0);if(eq>peak)peak=eq;if(peak-eq>maxDD)maxDD=peak-eq;});
+    const rf = maxDD>0?(totalPnl/maxDD).toFixed(2):'∞';
+
+    // Calmar Ratio = annualized return / max drawdown
+    const annReturn = mean * 252;
+    const calmar = maxDD>0?(annReturn/maxDD).toFixed(2):'∞';
+
+    // Half-Kelly position sizing
+    // f* = (WR * RR - (1-WR)) / RR, Half-Kelly = f*/2
+    const rr = aw > 0 && al > 0 ? aw/al : 2;
+    const kelly = ((wr * rr - (1-wr)) / rr);
+    const halfKelly = Math.max(0, kelly/2 * 100).toFixed(1);
+
+    // Max consecutive losses
+    let maxLoss=0, curLoss=0;
+    for (const t of closed) {
+      if (t.outcome==='sl') { curLoss++; maxLoss=Math.max(maxLoss,curLoss); }
+      else curLoss=0;
+    }
+
+    // Rolling Sharpe — last 20 trades
+    const recent20 = closed.slice(-20);
+    const r20 = recent20.map(t=>t.pnl||0);
+    const m20 = r20.reduce((a,b)=>a+b,0)/Math.max(r20.length,1);
+    const s20 = Math.sqrt(r20.reduce((s,r)=>s+(r-m20)**2,0)/Math.max(r20.length,1));
+    const rollingSharpe = (s20>0?(m20/s20)*Math.sqrt(252):0).toFixed(2);
+
+    // Risk status based on rolling sharpe
+    const rsVal = parseFloat(rollingSharpe);
+    let riskStatus, riskColor;
+    if (rsVal >= 1.0)      { riskStatus = '🟢 FULL SIZE — Sharpe healthy'; riskColor = 'var(--green)'; }
+    else if (rsVal >= 0.5) { riskStatus = '🟡 75% SIZE — Sharpe moderate (reduce position by 25%)'; riskColor = 'var(--yellow)'; }
+    else if (rsVal >= 0)   { riskStatus = '🔴 50% SIZE — Sharpe weak (reduce position by 50%)'; riskColor = 'var(--red)'; }
+    else                   { riskStatus = '⚫ OBSERVE MODE — Sharpe negative (stop live trading)'; riskColor = '#666'; }
+
+    // Weekly PnL
+    const weekAgo = Date.now() - 7*24*3600*1000;
+    const weekTrades = closed.filter(t=>(t.closedAt||t.ts||0)>weekAgo);
+    const weekPnl = weekTrades.reduce((s,t)=>s+(t.pnl||0),0);
+
+    const set = (id,val,cls) => { const e=document.getElementById(id); if(e){e.textContent=val; if(cls)e.className='m-val '+cls;} };
+    const pfc = parseFloat(pf)>=1.5?'green':parseFloat(pf)>=1?'yellow':'red';
+    const sc  = parseFloat(sharpe)>=2?'green':parseFloat(sharpe)>=1?'yellow':'red';
+    const rsc = rsVal>=1?'green':rsVal>=0.5?'yellow':'red';
+
+    set('m-sharpe', sharpe, sc);
+    set('m-sortino', sortino, '');
+    set('m-calmar', calmar, parseFloat(calmar)>=1?'green':parseFloat(calmar)>=0?'yellow':'red');
+    set('m-pf', pf, pfc);
+    set('m-exp', exp+'%', parseFloat(exp)>0?'green':'red');
+    set('m-dd', '-'+maxDD.toFixed(2)+'%', 'red');
+    set('m-rf', rf, parseFloat(rf)>=2?'green':parseFloat(rf)>=1?'yellow':'red');
+    set('m-total', closed.length+' ('+source+')', '');
+    set('m-wr', Math.round(wr*100)+'%', wr>=0.55?'green':wr>=0.4?'yellow':'red');
+    set('m-avgw', '+'+aw+'%', 'green');
+    set('m-avgl', '-'+al+'%', 'red');
+    set('m-pnl', (totalPnl>=0?'+':'')+totalPnl.toFixed(2)+'%', totalPnl>=0?'green':'red');
+    set('m-rolling-sharpe', rollingSharpe, rsc);
+    set('m-wdd', (weekPnl>=0?'+':'')+weekPnl.toFixed(2)+'%', weekPnl>=0?'green':'red');
+    set('m-kelly', halfKelly+'%', parseFloat(halfKelly)>0?'green':'red');
+
+    const mle = document.getElementById('m-max-loss');
+    if (mle) { mle.textContent = maxLoss + ' in a row'; mle.className = 'm-val '+(maxLoss>=5?'red':maxLoss>=3?'yellow':'green'); }
+
+    const rse = document.getElementById('m-risk-status');
+    if (rse) { rse.textContent = riskStatus; rse.style.color = riskColor; }
+
+    // ── Confidence Calibration Table ────────────────────────
+    const bins = {'50-59':[], '60-69':[], '70-79':[], '80-89':[], '90+'  :[]};
+    for (const t of closed) {
+      const c = t.confidence || 0;
+      const isWin = t.outcome === 'tp1' || t.outcome === 'tp2';
+      const val = isWin ? 1 : 0;
+      if      (c < 60) bins['50-59'].push(val);
+      else if (c < 70) bins['60-69'].push(val);
+      else if (c < 80) bins['70-79'].push(val);
+      else if (c < 90) bins['80-89'].push(val);
+      else             bins['90+'].push(val);
+    }
+
+    const cte = document.getElementById('conf-calibration-table');
+    if (cte) {
+      let rows = '';
+      let prevWR = null;
+      for (const [bin, vals] of Object.entries(bins)) {
+        if (!vals.length) continue;
+        const binWR = Math.round(vals.reduce((a,b)=>a+b,0)/vals.length*100);
+        const trend = prevWR !== null ? (binWR > prevWR ? '↑' : binWR < prevWR ? '↓' : '→') : '';
+        const trendColor = trend === '↑' ? 'var(--green)' : trend === '↓' ? 'var(--red)' : 'var(--dim)';
+        const wrColor = binWR >= 60 ? 'var(--green)' : binWR >= 45 ? 'var(--yellow)' : 'var(--red)';
+        const bar = '█'.repeat(Math.round(binWR/10)) + '░'.repeat(10-Math.round(binWR/10));
+        rows += `<tr>
+          <td style="font-family:'DM Mono',monospace;font-size:.55rem">${bin}%</td>
+          <td style="font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim)">${vals.length} trades</td>
+          <td style="font-family:'DM Mono',monospace;font-size:.55rem;color:${wrColor}">${binWR}%</td>
+          <td style="font-family:'DM Mono',monospace;font-size:.48rem;color:${wrColor}">${bar}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:.6rem;color:${trendColor}">${trend}</td>
+        </tr>`;
+        prevWR = binWR;
+      }
+      const calibrated = Object.values(bins).filter(v=>v.length>3).length >= 3;
+      const firstBinWR = (bins['50-59'] || []).length ? Math.round(bins['50-59'].reduce((a,b)=>a+b,0)/bins['50-59'].length*100) : 0;
+      const lastBinWR  = (bins['90+']   || []).length ? Math.round(bins['90+'].reduce((a,b)=>a+b,0)/bins['90+'].length*100) : 0;
+      let calibrationMsg;
+      if (!calibrated) {
+        calibrationMsg = '⏳ Need more data per bin for calibration analysis';
+      } else if (lastBinWR > firstBinWR) {
+        calibrationMsg = '✅ Confidence correlates with WR — calibration improving';
+      } else {
+        calibrationMsg = '⚠️ Confidence NOT predictive — major quant issue, score needs recalibration';
+      }
+      cte.innerHTML = `<table class="tbl" style="width:100%">
+        <thead><tr><th>Confidence</th><th>Trades</th><th>Real WR</th><th>Bar</th><th>Trend</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="font-family:'DM Mono',monospace;font-size:.48rem;color:var(--dim);margin-top:10px">
+        ${calibrationMsg}
+      </div>`;
+    }
+
+    // ── Rolling Sharpe Chart ─────────────────────────────────
+    const window20 = 20;
+    const rollingSharpes = [];
+    for (let i = window20; i <= closed.length; i++) {
+      const slice = closed.slice(i-window20, i).map(t=>t.pnl||0);
+      const sm = slice.reduce((a,b)=>a+b,0)/slice.length;
+      const ss = Math.sqrt(slice.reduce((s,r)=>s+(r-sm)**2,0)/slice.length);
+      rollingSharpes.push(ss>0?(sm/ss)*Math.sqrt(252):0);
+    }
+
+    if (rollingSharpes.length > 1) {
+      const rChartEl = document.getElementById('rolling-sharpe-chart');
+      if (rChartEl) {
+        if (window._rollingSharpeChart) { window._rollingSharpeChart.destroy(); window._rollingSharpeChart = null; }
+        // Color segments by value
+        const colors = rollingSharpes.map(v => v >= 1 ? '#22c55e' : v >= 0.5 ? '#eab308' : '#ef4444');
+        window._rollingSharpeChart = new Chart(rChartEl, {
+          type: 'line',
+          data: {
+            labels: rollingSharpes.map((_,i) => `#${i + window20}`),
+            datasets: [{
+              data: rollingSharpes,
+              borderColor: '#22c55e',
+              segment: {
+                borderColor: ctx => {
+                  const v = rollingSharpes[ctx.p1DataIndex];
+                  return v >= 1 ? '#22c55e' : v >= 0.5 ? '#eab308' : '#ef4444';
+                }
+              },
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.3,
+              fill: false,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { font:{size:9}, maxTicksLimit: 10 }, grid: { color: 'rgba(128,128,128,0.1)' } },
+              y: { ticks: { font:{size:9} }, grid: { color: 'rgba(128,128,128,0.1)' } }
+            }
+          }
+        });
+      }
+    }
+
+  } catch(e) {
+    console.error('loadMetrics error:', e);
+    document.querySelectorAll('[id^="m-"]').forEach(el=>el.textContent='—');
+  }
+}
     if (closed.length < 5) { document.querySelectorAll('[id^="m-"]').forEach(e=>e.textContent='—'); return; }
 
     const wins   = closed.filter(t=>t.outcome==='tp1'||t.outcome==='tp2');
@@ -1637,14 +1851,6 @@ async function loadMetrics() {
     set('m-avgl', '-'+al+'%', 'red');
     set('m-pnl', (totalPnl>=0?'+':'')+totalPnl.toFixed(2)+'%', totalPnl>=0?'green':'red');
     set('m-wdd', (weekPnl>=0?'+':'')+weekPnl.toFixed(2)+'%', weekPnl>=0?'green':'red');
-
-    // Consecutive losses
-    const mle = document.getElementById('m-max-loss');
-    if (mle) { mle.textContent = maxLoss + ' in a row'; mle.className = 'm-val '+(maxLoss>=5?'red':maxLoss>=3?'yellow':'green'); }
-  } catch(e) {
-    document.querySelectorAll('[id^="m-"]').forEach(el=>el.textContent='—');
-  }
-}
 
 // ── TRACK RECORD ─────────────────────────────────────────────
 async function loadTrackRecord() {

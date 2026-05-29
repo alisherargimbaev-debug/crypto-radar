@@ -8152,14 +8152,16 @@ async function dailyReport() {
     } catch(e) {}
 
     // ── 2. Определяем активные стратегии по ADX ──────────────
-    let activeStrategies = [];
-    try {
-      const regime = await getMarketRegime('BTC-USDT-SWAP');
-      const adx = regime?.adx || 0;
-      if (adx > 25)      activeStrategies = ['S4 MA', 'S9 Pullback', 'S10 Breakout', 'S11 Elliott'];
-      else if (adx < 18) activeStrategies = ['S5 RSI Div', 'S6 Funding', 'S12 Sweep'];
-      else               activeStrategies = ['S5 RSI Div', 'S6 Funding', 'S11 Elliott', 'S12 Sweep'];
-    } catch(e) {}
+    // Реальные активные стратегии из кода (не хардкод)
+    const activeStrategies = [];
+    // S1 и S10 всегда активны в live mode
+    activeStrategies.push('S1 Volume Spike (15m)');
+    activeStrategies.push('S10 4H Range Breakout');
+    // Добавляем стратегии в observe mode
+    if (store.observeMode) {
+      activeStrategies.push('S16 VWAP Deviation (observe)');
+      activeStrategies.push('S19 Value Area (observe)');
+    }
 
     // ── 3. AI Анализ через Claude API ────────────────────────
     let aiAnalysis = '';
@@ -8221,37 +8223,38 @@ async function dailyReport() {
       console.error('AI analyst error:', e.message);
     }
 
-    // ── 4. Формируем сообщение ────────────────────────────────
+    // ── 4. Build message ──────────────────────────────────────
     const btcDir = btcChange >= 0 ? '📈' : '📉';
-    let msg = `🤖 УТРЕННИЙ ОТЧЁТ АНАЛИТИКА\n`;
+    const modeStr = store.observeMode ? 'OBSERVE' : store.propMode ? 'PROP' : 'LIVE';
+    let msg = `🤖 MORNING REPORT — Apex Algo Fund\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `🗓 ${getAlmatyDate()} | ${getAlmatyTime()}\n\n`;
+    msg += `🗓 ${getAlmatyDate()} | ${getAlmatyTime()} ALM\n\n`;
 
-    msg += `📊 РЫНОК:\n`;
-    msg += `${btcDir} BTC: $${Number(btcPrice).toLocaleString()} (${btcChange>=0?'+':''}${btcChange.toFixed(2)}% 24ч)\n`;
+    msg += `📊 MARKET:\n`;
+    msg += `${btcDir} BTC: $${Number(btcPrice).toLocaleString()} (${btcChange>=0?'+':''}${btcChange.toFixed(2)}% 24h)\n`;
     msg += `😐 Fear & Greed: ${fng.value} (${fng.label})\n`;
-    msg += `📈 Режим: ${btcRegime}\n\n`;
+    msg += `📈 Regime: ${btcRegime}\n\n`;
 
-    msg += `⚙️ АКТИВНЫЕ СТРАТЕГИИ:\n`;
+    msg += `⚙️ ACTIVE STRATEGIES [${modeStr}]:\n`;
     msg += activeStrategies.map(s => `  • ${s}`).join('\n') + '\n\n';
 
     if (paperStats && paperStats.closed.length >= 3) {
-      msg += `📄 PAPER TRADING (${paperStats.closed.length} сделок):\n`;
+      msg += `📄 PAPER (${paperStats.closed.length} trades):\n`;
       msg += `  WR: ${paperStats.wr}% | PnL: ${paperStats.totalPnl>=0?'+':''}${paperStats.totalPnl.toFixed(1)}%\n\n`;
     }
 
     if (t.length) {
-      msg += `📈 ВЧЕРА (реальные):\n`;
-      msg += `  Сделок: ${t.length} | TP: ${wins.length} | SL: ${losses.length}\n`;
+      msg += `📈 YESTERDAY (live):\n`;
+      msg += `  Trades: ${t.length} | TP: ${wins.length} | SL: ${losses.length}\n`;
       msg += `  WR: ${wr}% | PnL: ${pnl>=0?'+':''}${pnl.toFixed(1)}%\n\n`;
     }
 
     if (aiAnalysis) {
-      msg += `🧠 АНАЛИЗ:\n${aiAnalysis}\n\n`;
+      msg += `🧠 ANALYSIS:\n${aiAnalysis}\n\n`;
     }
 
     msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `Команды: /paper /diag /account`;
+    msg += `Commands: /paper /diag /account`;
 
     await sendTelegram(msg);
   } catch(e) {

@@ -415,18 +415,23 @@ async function handlePositionClosed(symbol, tracked) {
     const pnl       = closedPnl ? parseFloat(closedPnl.closedPnl) : null;
     const exitPrice = closedPnl ? parseFloat(closedPnl.avgExitPrice) : 0;
 
-    // If closedPnl not found from Bybit API — retry once after 3 seconds
+    // If closedPnl not found — retry twice with increasing delays
     if (pnl === null) {
-      console.log(`[AutoExec][Close] ${symbol} — closedPnl not found, retrying in 3s...`);
-      await new Promise(r => setTimeout(r, 3000));
-      const retryList = await bybit.getClosedPnl(symbol, 5);
-      const retryPnl  = retryList?.[0];
-      if (retryPnl) {
-        const retryPnlVal   = parseFloat(retryPnl.closedPnl);
-        const retryExitPrice = parseFloat(retryPnl.avgExitPrice);
-        console.log(`[AutoExec][Close] ${symbol} retry found: pnl=${retryPnlVal} exit=${retryExitPrice}`);
-        // Use retry values
-        Object.assign(closedPnl = {}, retryPnl);
+      for (const delay of [3000, 6000]) {
+        console.log(`[AutoExec][Close] ${symbol} — closedPnl not found, retrying in ${delay/1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+        const retryList = await bybit.getClosedPnl(symbol, 10);
+        if (retryList?.length) {
+          const found = retryList.find(p => {
+            const closeTs = parseFloat(p.updatedTime || p.createdTime || 0);
+            return closeTs > openedTs;
+          }) || retryList[0];
+          if (found) {
+            closedPnl = found;
+            console.log(`[AutoExec][Close] ${symbol} retry OK: pnl=${found.closedPnl} exit=${found.avgExitPrice}`);
+            break;
+          }
+        }
       }
     }
 

@@ -1198,8 +1198,9 @@ let liveFilterFrom = null, liveFilterTo = null;
 function applyLiveDateFilter() {
   const from = document.getElementById('live-date-from')?.value;
   const to   = document.getElementById('live-date-to')?.value;
-  liveFilterFrom = from ? new Date(from).getTime() : null;
-  liveFilterTo   = to   ? new Date(to + 'T23:59:59').getTime() : null;
+  // Use local midnight, not UTC (avoid timezone offset issue)
+  liveFilterFrom = from ? new Date(from + 'T00:00:00').getTime() : null;
+  liveFilterTo   = to   ? new Date(to   + 'T23:59:59').getTime() : null;
   const info = document.getElementById('live-filter-info');
   if (info) info.textContent = (from || to) ? `FILTERED: ${from||'*'} → ${to||'*'}` : '';
   loadLive();
@@ -2268,7 +2269,10 @@ function renderLive(d) {
   // Apply date filter
   if (liveFilterFrom || liveFilterTo) {
     closed = closed.filter(t => {
-      const ts = t.closedAt || t.ts || 0;
+      // Handle both ms and seconds timestamps
+      let ts = t.closedAt || t.ts || 0;
+      // If ts looks like seconds (< year 2100 in seconds = 4102444800)
+      if (ts < 10000000000) ts = ts * 1000;
       if (liveFilterFrom && ts < liveFilterFrom) return false;
       if (liveFilterTo   && ts > liveFilterTo)   return false;
       return true;
@@ -2293,7 +2297,8 @@ function renderLive(d) {
       <div class="stat-card red"><div class="stat-label">Losses</div><div class="stat-value">${losses}</div></div>
       <div class="stat-card ${pc}"><div class="stat-label">PnL</div><div class="stat-value">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</div><div class="stat-sub">${pnlUSD >= 0 ? '+$' : '-$'}${Math.abs(pnlUSD).toFixed(0)}</div></div>`;
   } else if (se) {
-    se.innerHTML = '<div class="stat-card blue"><div class="stat-label">Live Trades</div><div class="stat-value">0</div><div class="stat-sub">NO DATA YET</div></div>';
+    const openCount = open.length;
+    se.innerHTML = `<div class="stat-card blue"><div class="stat-label">Live Trades</div><div class="stat-value">${openCount}</div><div class="stat-sub">${openCount > 0 ? 'OPEN POSITIONS' : 'NO DATA YET'}</div></div>`;
   }
 
   // Open positions

@@ -1204,18 +1204,20 @@ async function handleTelegramCommand(text, chatId) {
     );
   }
 
-  else if (cmd === '/webapp') {
-    const appUrl = process.env.RENDER_EXTERNAL_URL
-      ? process.env.RENDER_EXTERNAL_URL + '/paper-app'
-      : 'https://your-app.onrender.com/paper-app';
+  else if (cmd === '/webapp' || cmd === '/dashboard') {
+    const appUrl = 'https://apexalgofund.com';
     await sendTelegramTo(chatId,
-      `📱 PAPER TRADING APP\n\n` +
-      `Открой в браузере:\n${appUrl}\n\n` +
-      `Там видно:\n` +
-      `• Win Rate и PnL по всем стратегиям\n` +
-      `• Открытые виртуальные сделки\n` +
-      `• Последние 20 закрытых сделок\n` +
-      `• Автообновление каждые 30 секунд`
+      `📊 *APEX ALGO FUND DASHBOARD*\n\n` +
+      `🌐 ${appUrl}\n\n` +
+      `📈 Что доступно:\n` +
+      `• Live trades & open positions\n` +
+      `• Paper trading statistics\n` +
+      `• Strategy performance breakdown\n` +
+      `• Quant metrics (Sharpe, Kelly, Calmar)\n` +
+      `• Whale activity tracker\n` +
+      `• Risk monitor & calibration\n\n` +
+      `🔄 Auto-updates every 30 seconds\n` +
+      `🌏 Hosted in Singapore`
     );
   }
 
@@ -1748,6 +1750,7 @@ async function handleTelegramCommand(text, chatId) {
       `/versions     — 📋 версии стратегий\n` +
       `/logs         — 📋 последние логи бота\n` +
       `/webapp       — 📱 Paper Trading веб-приложение\n` +
+      `/dashboard    — 🌐 apexalgofund.com (live dashboard)\n` +
       `/stocks       — 📈 сигналы по акциям\n\n` +
       `🔧 ПОДПИСКИ:\n` +
       `/anomalies_on  /anomalies_off\n` +
@@ -8259,7 +8262,8 @@ async function dailyReport() {
     }
 
     msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `Commands: /paper /diag /account`;
+    msg += `🌐 apexalgofund.com\n`;
+    msg += `Commands: /paper /diag /account /dashboard`;
 
     await sendTelegram(msg);
   } catch(e) {

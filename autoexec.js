@@ -175,13 +175,16 @@ async function handleSignal(signal) {
     console.log(`${tag} Balance: $${balance.total}, Price: ${price}`);
 
     // ── Расчёт размера позиции ──
-    // positionSize = balance × RISK_PCT / SL_PCT
+    // Правильная формула: qty = riskAmount / (price × sl%)
+    // Пример: balance=$8688, risk=0.5%=$43, price=$2.982, sl=1.5%
+    // qty = $43 / ($2.982 × 0.015) = $43 / $0.04473 = 961 UNI
+    // При SL срабатывании потеря = 961 × $0.04473 = $43 ✅
     const riskAmount = balance.total * (RISK_PCT / 100);
     const slPct = signal.sl_pct;
-    const tpPct = signal.tp_pct || slPct * 2; // TP = 2×SL по умолчанию
+    const tpPct = signal.tp_pct || slPct * 2;
 
-    let positionValue = riskAmount / (slPct / 100);
-    let qty = positionValue / price;
+    // qty = riskAmount / (price × slPct/100)
+    let qty = riskAmount / (price * (slPct / 100));
 
     // Округляем qty до шага лота
     qty = roundToStep(qty, instrument.qtyStep);
@@ -192,6 +195,16 @@ async function handleSignal(signal) {
       await notify(`⚠️ Слишком маленькая позиция для ${signal.symbol}. Минимум: ${instrument.minQty}`);
       return;
     }
+
+    // Защита: маржа не должна превышать 15% баланса
+    const positionValue = qty * price;
+    const margin = positionValue / DEFAULT_LEVERAGE;
+    if (margin > balance.total * 0.15) {
+      const maxQty = roundToStep((balance.total * 0.15 * DEFAULT_LEVERAGE) / price, instrument.qtyStep);
+      console.log(`${tag} Margin cap: reducing qty ${qty} → ${maxQty}`);
+      qty = maxQty;
+    }
+    console.log(`${tag} Size: qty=${qty} value=$${(qty*price).toFixed(2)} risk=$${riskAmount.toFixed(2)} sl=${slPct}%`);
 
     // ── Вычисляем цены SL и TP ──
     let slPrice, tpPrice;

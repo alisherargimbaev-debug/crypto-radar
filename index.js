@@ -785,39 +785,9 @@ async function pushTradeHistory(trade) {
     store.tradeHistory = store.tradeHistory.slice(-500);
   }
 
-  // Save LIVE trades to Supabase (paper trades saved separately via savePaperTradeToSupabase)
-  if (trade.outcome && trade.outcome !== 'open' && !trade._savedToSupabase) {
-    trade._savedToSupabase = true;
-    const isLive = trade.source === 'bybit_real' || (!store.observeMode && !trade.paperOnly);
-    if (isLive) {
-      console.log(`[LIVE→DB] Сохраняю live сделку: ${trade.instId} ${trade.outcome} PnL=${trade.pnl}`);
-      try {
-        const { error } = await supabase.from('paper_trades').insert({
-          ts:         trade.ts || Date.now(),
-          inst_id:    trade.instId || trade.symbol,
-          strategy:   trade.strategy || 'Live',
-          direction:  trade.direction,
-          price:      trade.price,
-          sl:         trade.sl,
-          tp1:        trade.tp1 || trade.tp,
-          tp2:        trade.tp2 || trade.tp,
-          confidence: trade.confidence || 0,
-          outcome:    trade.outcome,
-          pnl:        trade.pnl,
-          closed_at:  trade.closedAt || Date.now(),
-          source:     'bybit_real',
-          filters:    trade.filters ? JSON.stringify(trade.filters) : null,
-        });
-        if (error) {
-          console.error(`[LIVE→DB] ❌ Ошибка сохранения: ${error.message} (code: ${error.code})`);
-        } else {
-          console.log(`[LIVE→DB] ✅ Сохранено: ${trade.instId}`);
-        }
-      } catch(e) {
-        console.error(`[LIVE→DB] ❌ Exception: ${e.message}`);
-      }
-    }
-  }
+  // Live trades are saved to 'trades' table by autoexec.js — no save here.
+  // Paper trades use savePaperTradeToSupabase separately.
+  // This function only updates in-memory store.tradeHistory.
 }
 
 // ── Сессии UTC ─────────────────────────────────────────────
@@ -5463,15 +5433,14 @@ app.get('/api/trades', async (req, res) => {
   try {
     const open = store.openTrades || [];
 
-    // ТОЛЬКО live сделки (source='bybit_real') + из памяти текущей сессии
-    let closed = (store.tradeHistory || []).filter(t => t.source === 'bybit_real' || !t.source); // если source не задан, в памяти это live (paper trades в store не пишутся)
+    // In-memory live trades (current session)
+    let closed = (store.tradeHistory || []).filter(t => t.source === 'bybit_real' || !t.source);
 
-    // Подгружаем live из Supabase
+    // Load live trades from Supabase 'trades' table (clean live-only data)
     try {
       const { data } = await supabase
-        .from('paper_trades')
+        .from('trades')
         .select('*')
-        .eq('source', 'bybit_real') // ← ТОЛЬКО live сделки
         .not('outcome', 'is', null)
         .neq('outcome', 'open')
         .order('ts', { ascending: false })
@@ -5481,10 +5450,11 @@ app.get('/api/trades', async (req, res) => {
         const fromDB = data.map(t => ({
           ts:         t.ts,
           instId:     t.inst_id,
-          symbol:     (t.inst_id || '').replace('-USDT-SWAP', ''),
+          symbol:     t.symbol || (t.inst_id || '').replace('-USDT-SWAP', ''),
           strategy:   t.strategy,
           direction:  t.direction,
           price:      t.price,
+          closePrice: t.close_price,
           sl:         t.sl,
           tp1:        t.tp1,
           tp2:        t.tp2,
@@ -5493,10 +5463,9 @@ app.get('/api/trades', async (req, res) => {
           pnl:        t.pnl,
           closedAt:   t.closed_at,
           source:     'bybit_real',
-          filters:    t.filters,
         }));
 
-        // Мерж по ts — без дубликатов
+        // Merge by ts to avoid duplicates with in-memory data
         const inMemoryTs = new Set(closed.map(t => t.ts));
         const newFromDB  = fromDB.filter(t => !inMemoryTs.has(t.ts));
         closed = [...closed, ...newFromDB]

@@ -288,22 +288,8 @@ async function handleSignal(signal) {
       `📊 Уверенность: ${signal.confidence}%`
     );
 
-    // ── Запись в Supabase ──
-    await saveTrade({
-      symbol: signal.symbol,
-      side: signal.side,
-      entry_price: price,
-      qty,
-      sl_price: slPrice,
-      tp_price: tpPrice,
-      confidence: signal.confidence,
-      reason: signal.reason,
-      order_id: order.orderId,
-      status: 'open',
-      source: 'autoexec',
-      testnet: TESTNET,
-    });
-
+    // ── Open state tracked in memory only.
+    // Live trades are saved to Supabase 'trades' table on close (see handlePositionClosed).
     console.log(`${tag} ✅ Position opened: orderId=${order.orderId}`);
 
   } catch (err) {
@@ -497,20 +483,27 @@ async function handlePositionClosed(symbol, tracked) {
       realBalance: balance?.total || null,
     });
 
-    // Save to Supabase
+    // Save closed live trade to Supabase 'trades' table
+    // (Schema: id, ts, inst_id, symbol, strategy, direction, price, sl, tp1, tp2, confidence, outcome, close_price, closed_at, pnl, created_at)
+    const openedAtMs = tracked.openedAt instanceof Date
+      ? tracked.openedAt.getTime()
+      : Number(tracked.openedAt) || Date.now();
+
     await saveTrade({
-      symbol,
-      side: tracked.side,
-      entry_price: tracked.entryPrice,
-      exit_price: finalExitPrice,
-      qty: tracked.qty,
-      pnl: finalPnl,
-      pnl_pct: pnlPct,
-      order_id: tracked.orderId,
-      status: isWin === null ? 'unknown' : isWin ? 'win' : 'loss',
-      source: 'autoexec',
-      testnet: TESTNET,
-      closed_at: new Date().toISOString(),
+      ts:          openedAtMs,
+      inst_id:     symbol.replace('USDT', '-USDT-SWAP'),
+      symbol:      symbol,
+      strategy:    tracked.signal?.reason || 'AutoExec',
+      direction:   tracked.side,
+      price:       tracked.entryPrice,
+      close_price: finalExitPrice,
+      sl:          tracked.slPrice || null,
+      tp1:         tracked.tpPrice || null,
+      tp2:         null,
+      confidence:  tracked.signal?.confidence || 0,
+      outcome:     isWin === null ? 'unknown' : isWin ? 'tp1' : 'sl',
+      pnl:         finalPnl,
+      closed_at:   new Date().toISOString(),
     });
 
     // Убираем из трекера
@@ -639,7 +632,7 @@ async function notify(text) {
   }
 }
 
-// Запись в Supabase
+// Запись закрытой live сделки в Supabase (таблица 'trades')
 async function saveTrade(data) {
   try {
     if (!supabase) return;
@@ -648,6 +641,7 @@ async function saveTrade(data) {
       created_at: new Date().toISOString(),
     }]);
     if (error) console.error('[AutoExec] Supabase insert error:', error.message);
+    else console.log(`[AutoExec] ✅ Trade saved to DB: ${data.symbol}`);
   } catch (err) {
     console.error('[AutoExec] saveTrade error:', err.message);
   }

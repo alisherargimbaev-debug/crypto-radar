@@ -503,7 +503,7 @@ async function handlePositionClosed(symbol, tracked) {
       confidence:  tracked.signal?.confidence || 0,
       outcome:     isWin === null ? 'unknown' : isWin ? 'tp1' : 'sl',
       pnl:         finalPnl,
-      closed_at:   new Date().toISOString(),
+      closed_at:   Date.now(),
     });
 
     // Убираем из трекера

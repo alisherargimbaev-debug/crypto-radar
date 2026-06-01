@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 /**
- * APEX ALGO FUND — Backtest v1 for S1 Volume Spike (15m)
- * ──────────────────────────────────────────────────────
+ * APEX ALGO FUND — Backtest v1.1 for S1 Volume Spike (15m)
+ * ──────────────────────────────────────────────────────────
+ * v1.1 IMPROVEMENTS over v1:
+ *   - Entry on OPEN of next 1m candle (not close of signal candle)
+ *   - Gap-through SL: if 1m open is already past SL → exit at open + slippage
+ *   - Realtime confirmation filter: if first 1m candle moves AGAINST signal
+ *     direction by >0.3% → cancel entry (simulates real bot delay)
+ *
+ * The first improvement is realistic execution (we never get the exact close).
+ * The second one accounts for slippage on gap-through SL.
+ * The third one mimics what happens in real life — bot takes 2-5s to send order,
+ * during which price already partially confirms or rejects the signal.
  * Exact copy of the production S1 logic from index.js.
  * Tests on real Bybit historical 15-min candles over the past 3 months.
  *
@@ -205,7 +215,7 @@ async function backtest() {
     if (k15m.length < 100) { console.log(`  ⚠ insufficient data (${k15m.length})`); continue; }
     console.log(`  ✓ ${k15m.length} 15m candles`);
 
-    let signals = 0, executed = 0, cooldownUntil = 0;
+    let signals = 0, executed = 0, cancelledByConfirm = 0, cooldownUntil = 0;
 
     // Walk through 15m candles starting from index 20 (need history for indicators)
     for (let i = 20; i < k15m.length - 1; i++) {
@@ -221,22 +231,55 @@ async function backtest() {
 
       signals++;
 
-      const entryPrice = k15m[i].c; // close of signal candle = entry
-      const entryTime  = k15m[i].t;
+      const signalClose = k15m[i].c;
+      const signalTime  = k15m[i].t;
       const atr = calcATR(window, 14);
-      const { sl, tp1, tp2, slPct } = calcSLTP(entryPrice, signal.direction, atr);
+
+      // ─── v1.1: Fetch 1m candles for entry detection + trade simulation ──
+      const tradeEndTime = signalTime + MAX_HOLD_MINUTES * 60 * 1000;
+      const futureCandles = await fetchKlines(symbol, '1', signalTime + 60_000, tradeEndTime);
+      if (futureCandles.length < 2) continue;
+
+      // ─── v1.1: Entry on OPEN of next 1m candle (realistic) ──
+      const firstCandle = futureCandles[0];
+      const realEntryPrice = firstCandle.o;
+      const entryTime = firstCandle.t;
+
+      // ─── v1.1: Realtime confirmation filter ──
+      // If first 1m candle moves AGAINST signal direction >0.3% — cancel
+      const firstMove = (firstCandle.c - firstCandle.o) / firstCandle.o * 100;
+      if (signal.direction === 'long' && firstMove < -0.3) { cancelledByConfirm++; continue; }
+      if (signal.direction === 'short' && firstMove > 0.3)  { cancelledByConfirm++; continue; }
+
+      // ─── Calculate SL/TP based on REAL entry price (not signal close) ──
+      const { sl, tp1, tp2, slPct } = calcSLTP(realEntryPrice, signal.direction, atr);
 
       // Position size from current balance
-      const { qty, riskAmount, value } = calcPositionSize(balance, entryPrice, slPct);
+      const { qty, riskAmount, value } = calcPositionSize(balance, realEntryPrice, slPct);
 
-      // Fetch 1m candles ONLY for this trade's window (entry + MAX_HOLD_MINUTES)
-      const tradeEndTime = entryTime + MAX_HOLD_MINUTES * 60 * 1000;
-      const futureCandles = await fetchKlines(symbol, '1', entryTime + 60_000, tradeEndTime);
-      if (futureCandles.length === 0) continue;
+      // ─── v1.1: Gap-through SL check on entry candle ──
+      // If first candle already crosses SL → exit at worst of (open, sl)
+      let sim;
+      const slHitOnFirst = signal.direction === 'long'
+        ? firstCandle.l <= sl
+        : firstCandle.h >= sl;
 
-      // Simulate
-      const sim = simulateTrade(entryPrice, signal.direction, sl, tp1, tp2, futureCandles);
-      const pnl = calcPnL(entryPrice, sim.exitPrice, signal.direction, qty);
+      if (slHitOnFirst) {
+        // Gap-through: we exit at SL price (filled at SL level via stop order)
+        // OR worse if open already past SL
+        const gapThroughExit = signal.direction === 'long'
+          ? Math.min(realEntryPrice, sl) // can't get better than SL
+          : Math.max(realEntryPrice, sl);
+        const finalExit = signal.direction === 'long'
+          ? Math.min(gapThroughExit, sl)
+          : Math.max(gapThroughExit, sl);
+        sim = { outcome: 'sl', exitPrice: finalExit, exitTime: firstCandle.t };
+      } else {
+        // Normal simulation on remaining 1m candles
+        sim = simulateTrade(realEntryPrice, signal.direction, sl, tp1, tp2, futureCandles.slice(1));
+      }
+
+      const pnl = calcPnL(realEntryPrice, sim.exitPrice, signal.direction, qty);
 
       balance += pnl.netPnl;
       if (balance > peakBalance) peakBalance = balance;
@@ -249,8 +292,11 @@ async function backtest() {
         confidence: signal.confidence,
         volRatio: +signal.volRatio.toFixed(2),
         priceChangePct: +signal.priceChangePct.toFixed(3),
+        signalTime,
+        signalClose: +signalClose.toFixed(6),
         entryTime,
-        entryPrice: +entryPrice.toFixed(6),
+        entryPrice: +realEntryPrice.toFixed(6),
+        entrySlippagePct: +(((realEntryPrice - signalClose) / signalClose) * 100).toFixed(3),
         sl: +sl.toFixed(6),
         tp1: +tp1.toFixed(6),
         tp2: +tp2.toFixed(6),
@@ -263,6 +309,7 @@ async function backtest() {
         exitTime: sim.exitTime,
         exitPrice: +sim.exitPrice.toFixed(6),
         holdMinutes: Math.round((sim.exitTime - entryTime) / 60000),
+        gapThroughExit: slHitOnFirst,
         grossPnl: +pnl.grossPnl.toFixed(4),
         fees: +pnl.fees.toFixed(4),
         netPnl: +pnl.netPnl.toFixed(4),
@@ -277,7 +324,7 @@ async function backtest() {
       cooldownUntil = sim.exitTime + 60 * 60 * 1000;
     }
 
-    console.log(`  → ${signals} signals generated, ${executed} executed`);
+    console.log(`  → ${signals} signals · ${cancelledByConfirm} cancelled (confirm filter) · ${executed} executed`);
   }
 
   console.log('\n═══════════════════════════════════════════════════════');

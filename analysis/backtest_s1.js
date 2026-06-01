@@ -205,12 +205,7 @@ async function backtest() {
     if (k15m.length < 100) { console.log(`  ⚠ insufficient data (${k15m.length})`); continue; }
     console.log(`  ✓ ${k15m.length} 15m candles`);
 
-    console.log('  Fetching 1m klines (for exit detection)...');
-    const k1m = await fetchKlines(symbol, '1', startMs, endMs);
-    if (k1m.length < 100) { console.log(`  ⚠ insufficient 1m data`); continue; }
-    console.log(`  ✓ ${k1m.length} 1m candles`);
-
-    let signals = 0, cooldownUntil = 0;
+    let signals = 0, executed = 0, cooldownUntil = 0;
 
     // Walk through 15m candles starting from index 20 (need history for indicators)
     for (let i = 20; i < k15m.length - 1; i++) {
@@ -230,16 +225,13 @@ async function backtest() {
       const entryTime  = k15m[i].t;
       const atr = calcATR(window, 14);
       const { sl, tp1, tp2, slPct } = calcSLTP(entryPrice, signal.direction, atr);
-      // For backtest, exit on TP2 (we simulate "let winners run to full TP")
-      // This is a v1 simplification — real bot uses trailing stop
-      const exitTarget = tp2;
 
       // Position size from current balance
       const { qty, riskAmount, value } = calcPositionSize(balance, entryPrice, slPct);
 
-      // Find future 1m candles within MAX_HOLD_MINUTES
+      // Fetch 1m candles ONLY for this trade's window (entry + MAX_HOLD_MINUTES)
       const tradeEndTime = entryTime + MAX_HOLD_MINUTES * 60 * 1000;
-      const futureCandles = k1m.filter(c => c.t > entryTime && c.t <= tradeEndTime);
+      const futureCandles = await fetchKlines(symbol, '1', entryTime + 60_000, tradeEndTime);
       if (futureCandles.length === 0) continue;
 
       // Simulate
@@ -279,12 +271,13 @@ async function backtest() {
 
       allTrades.push(trade);
       equityCurve.push({ t: sim.exitTime, balance: +balance.toFixed(2) });
+      executed++;
 
       // Cooldown — 1 hour minimum between same-symbol trades
       cooldownUntil = sim.exitTime + 60 * 60 * 1000;
     }
 
-    console.log(`  → ${signals} signals generated`);
+    console.log(`  → ${signals} signals generated, ${executed} executed`);
   }
 
   console.log('\n═══════════════════════════════════════════════════════');

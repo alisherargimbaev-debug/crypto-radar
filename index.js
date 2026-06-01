@@ -4780,72 +4780,6 @@ async function runStrategies(instId, coinData, asianSession) {
     // S11: Elliott+Fib+SMA — УДАЛЕНА (сложная, редко срабатывает)
 
     // ════════════════════════════════════════════════════════
-    // S14 — Whale Follow (15m) — ОТКЛЮЧЕНА (WR 0% на 8 сделках)
-    if (false) { // S14 disabled
-    try {
-      // Получаем недавние действия китов через copytrader модуль
-      let whaleActions = [];
-      try {
-        if (typeof copytrader?.getRecentActions === 'function') {
-          whaleActions = copytrader.getRecentActions(15) || [];
-        } else if (typeof copytrader?.getTrackedWhalesSnapshot === 'function') {
-          const snapshot = copytrader.getTrackedWhalesSnapshot() || [];
-          whaleActions = snapshot.flatMap(w =>
-            Object.values(w.positions || {}).map(p => ({
-              symbol: p.coin,
-              side:   p.side?.toLowerCase(),
-              size:   p.sizeUsd || 0,
-            }))
-          );
-        }
-      } catch(ce) { /* copytrader недоступен */ }
-
-      if (whaleActions.length > 0) {
-        // Какой символ нас интересует (без -USDT-SWAP)
-        const symbol = instId.replace('-USDT-SWAP', '').replace('-USDT', '');
-
-        // Ищем 2+ китов открывших одинаковое направление по этой монете
-        const matching = whaleActions.filter(a => {
-          const aSym = (a.symbol || a.coin || '').replace('-USDT-SWAP', '').replace('-USDT', '').replace('USDT', '');
-          return aSym.toUpperCase() === symbol.toUpperCase();
-        });
-
-        if (matching.length >= 2) {
-          // Считаем направление: сколько лонгов, сколько шортов
-          let longCnt = 0, shortCnt = 0, totalSize = 0;
-          for (const m of matching) {
-            const side = (m.side || m.direction || '').toLowerCase();
-            const size = parseFloat(m.size || m.notional || m.qty || 0);
-            if (side === 'long' || side === 'buy') { longCnt++; totalSize += size; }
-            else if (side === 'short' || side === 'sell') { shortCnt++; totalSize += size; }
-          }
-
-          // Минимум 2 кита и общий размер $500k+
-          if (totalSize >= 500000 && (longCnt >= 2 || shortCnt >= 2)) {
-            const dir = longCnt > shortCnt ? 'long' : 'short';
-            const sltp = calcSLTP(price, dir, '1️⃣4️⃣ Whale Follow (15m)');
-
-            // Confidence: больше китов и крупнее объём = выше уверенность
-            let conf = 65;
-            if (matching.length >= 3) conf += 8;
-            if (matching.length >= 5) conf += 5;
-            if (totalSize >= 1000000) conf += 5;
-            if (totalSize >= 5000000) conf += 7;
-
-            signals.push({
-              strategy:  '1️⃣4️⃣ Whale Follow (15m)',
-              instId, direction: dir,
-              signal:    dir === 'long' ? '🟢 LONG' : '🔴 SHORT',
-              price, confidence: Math.min(conf, 92),
-              metrics:   `${matching.length} китов · $${(totalSize/1e6).toFixed(2)}M · ${longCnt}L/${shortCnt}S`,
-              paperOnly: true, // paper-only пока нет достаточно данных
-              ...sltp,
-            });
-          }
-        }
-      }
-    } catch(e) { console.error('S14 error:', e.message); }
-    } // end S14 disabled
 
     // ════════════════════════════════════════════════════════
     // S15: Liquidation Hunt — УДАЛЕНА (OKX API недоступен)
@@ -5021,36 +4955,6 @@ async function runStrategies(instId, coinData, asianSession) {
     } catch(e) { console.error('S16 error:', e.message); }
 
     // ════════════════════════════════════════════════════════
-    // S17: BB Squeeze (1H) — ОТКЛЮЧЕНА (WR 24% на 178 сделках = антисигнал)
-    /* S17 disabled
-    try {
-      const k1h_s17 = await getOKXKlinesCached(instId, '1H', 30);
-      if (k1h_s17.length >= 20) {
-        const closes = k1h_s17.map(k => k.close);
-        const ma20 = closes.slice(-20).reduce((a,b) => a+b, 0) / 20;
-        const std20 = Math.sqrt(closes.slice(-20).reduce((s,c) => s + Math.pow(c-ma20,2), 0) / 20);
-        const bbWidth = (std20 * 4) / ma20 * 100; // ширина BB в %
-        const price_s17 = closes[closes.length-1];
-        const atr_s17 = calcATR(k1h_s17, 14);
-        const adx_s17 = calcADX(k1h_s17, 14);
-
-        // BB сжаты (ширина < 3%) + ADX растёт → ожидаем пробой
-        if (bbWidth < 3 && adx_s17 > 20) {
-          const dir = price_s17 > ma20 ? 'long' : 'short';
-          const conf = Math.min(55 + (3 - bbWidth) * 5 + adx_s17 * 0.3, 82);
-          signals.push({
-            instId, direction: dir,
-            strategy: '1️⃣7️⃣ BB Squeeze (1H)',
-            confidence: Math.round(conf),
-            price: price_s17,
-            paperOnly: true, // всегда paper
-            ...calcSLTP(price_s17, dir, '1️⃣7️⃣ BB Squeeze (1H)', atr_s17),
-            metrics: `BBW:${bbWidth.toFixed(1)}% ADX:${adx_s17.toFixed(0)}`,
-          });
-        }
-      }
-    } catch(e) { console.error('S17 error:', e.message); }
-    */ // end S17 disabled
 
   } catch(e) { console.error(`runStrategies [${instId}]:`, e.message); }
   return signals;

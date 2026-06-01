@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 /**
- * APEX ALGO FUND — Backtest v1.1 for S1 Volume Spike (15m)
+ * APEX ALGO FUND — Backtest v1.2 for S1 Volume Spike (15m)
  * ──────────────────────────────────────────────────────────
- * v1.1 IMPROVEMENTS over v1:
- *   - Entry on OPEN of next 1m candle (not close of signal candle)
- *   - Gap-through SL: if 1m open is already past SL → exit at open + slippage
- *   - Realtime confirmation filter: if first 1m candle moves AGAINST signal
- *     direction by >0.3% → cancel entry (simulates real bot delay)
+ * v1.2 — REMOVED LOOK-AHEAD BIAS
+ *   - Entry on OPEN of next 1m candle + slippage (realistic, bot enters in <2s)
+ *   - REMOVED "realtime confirmation filter" — that used future data (cheat!)
+ *   - Gap-through SL handling preserved (if open already past SL → exit at open or sl)
  *
- * The first improvement is realistic execution (we never get the exact close).
- * The second one accounts for slippage on gap-through SL.
- * The third one mimics what happens in real life — bot takes 2-5s to send order,
- * during which price already partially confirms or rejects the signal.
+ * v1.1 was wrong: it cancelled trades based on first 1m candle close,
+ * which is future information bot doesn't have in real time. Result: fake 97% WR.
+ *
+ * v1.2 is honest: bot sees signal, enters at open of next candle, that's it.
  * Exact copy of the production S1 logic from index.js.
  * Tests on real Bybit historical 15-min candles over the past 3 months.
  *
@@ -215,7 +214,7 @@ async function backtest() {
     if (k15m.length < 100) { console.log(`  ⚠ insufficient data (${k15m.length})`); continue; }
     console.log(`  ✓ ${k15m.length} 15m candles`);
 
-    let signals = 0, executed = 0, cancelledByConfirm = 0, cooldownUntil = 0;
+    let signals = 0, executed = 0, cooldownUntil = 0;
 
     // Walk through 15m candles starting from index 20 (need history for indicators)
     for (let i = 20; i < k15m.length - 1; i++) {
@@ -240,16 +239,15 @@ async function backtest() {
       const futureCandles = await fetchKlines(symbol, '1', signalTime + 60_000, tradeEndTime);
       if (futureCandles.length < 2) continue;
 
-      // ─── v1.1: Entry on OPEN of next 1m candle (realistic) ──
+      // ─── v1.2: Entry on OPEN of next 1m candle ──
+      // Bot in real life enters ~1-2 seconds after signal close.
+      // We approximate this with: entry = open of next 1m candle.
+      // This is a small overestimate (real bot enters slightly into the candle),
+      // but it's the most honest approximation we can do without tick data.
+      // NO look-ahead filter — bot does not see how candle closes.
       const firstCandle = futureCandles[0];
       const realEntryPrice = firstCandle.o;
       const entryTime = firstCandle.t;
-
-      // ─── v1.1: Realtime confirmation filter ──
-      // If first 1m candle moves AGAINST signal direction >0.3% — cancel
-      const firstMove = (firstCandle.c - firstCandle.o) / firstCandle.o * 100;
-      if (signal.direction === 'long' && firstMove < -0.3) { cancelledByConfirm++; continue; }
-      if (signal.direction === 'short' && firstMove > 0.3)  { cancelledByConfirm++; continue; }
 
       // ─── Calculate SL/TP based on REAL entry price (not signal close) ──
       const { sl, tp1, tp2, slPct } = calcSLTP(realEntryPrice, signal.direction, atr);
@@ -324,7 +322,7 @@ async function backtest() {
       cooldownUntil = sim.exitTime + 60 * 60 * 1000;
     }
 
-    console.log(`  → ${signals} signals · ${cancelledByConfirm} cancelled (confirm filter) · ${executed} executed`);
+    console.log(`  → ${signals} signals · ${executed} executed`);
   }
 
   console.log('\n═══════════════════════════════════════════════════════');

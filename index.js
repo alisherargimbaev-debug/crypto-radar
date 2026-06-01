@@ -5464,7 +5464,7 @@ app.get('/api/trades', async (req, res) => {
     const open = store.openTrades || [];
 
     // ТОЛЬКО live сделки (source='bybit_real') + из памяти текущей сессии
-    let closed = (store.tradeHistory || []).filter(t => t.source === 'bybit_real' || !t.source); // если source не задан, в памяти это live (paper trades в store не пишутся)
+    let closed = (store.tradeHistory || []).filter(t => t.source === 'bybit_real'); // ТОЛЬКО реальные AutoExec сделки
 
     // Подгружаем live из Supabase
     try {

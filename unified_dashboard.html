@@ -580,7 +580,6 @@ nav::-webkit-scrollbar{display:none;}
       <div class="nav-dropdown-menu" id="dd-menu-analysis">
         <button class="nav-dd-item" onclick="showPageDD('metrics')">Metrics</button>
         <button class="nav-dd-item" onclick="showPageDD('trackrecord')">Track Record</button>
-        <button class="nav-dd-item" onclick="showPageDD('readiness')">Prop Readiness</button>
         <button class="nav-dd-item" onclick="showPageDD('radar')">Radar</button>
         <button class="nav-dd-item" onclick="showPageDD('whales')">Whales</button>
       </div>
@@ -842,125 +841,6 @@ nav::-webkit-scrollbar{display:none;}
     <div class="chart-wrap" style="height:180px"><canvas id="tr-monthly-chart"></canvas></div>
   </div>
 </div>
-
-<!-- PROP READINESS -->
-<div class="page" id="page-readiness">
-  <!-- Header / Score -->
-  <div class="panel" style="margin-bottom:16px;padding:24px 28px;background:linear-gradient(180deg,#0d0d0d 0%,#080808 100%);border:1px solid var(--border2)">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:20px">
-      <div>
-        <div style="font-family:'DM Mono',monospace;font-size:.55rem;letter-spacing:2.4px;color:var(--dim);margin-bottom:6px">PHASE 1 PROP READINESS</div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:2.6rem;letter-spacing:1.5px;line-height:1;color:var(--text);margin-bottom:6px">
-          Readiness Score
-        </div>
-        <div id="rd-status-text" style="font-family:'DM Mono',monospace;font-size:.6rem;color:var(--dim);letter-spacing:1.2px">Checking metrics against Phase 1 criteria</div>
-      </div>
-      <div style="text-align:right">
-        <div id="rd-score" style="font-family:'Bebas Neue',sans-serif;font-size:5.5rem;line-height:1;letter-spacing:2px;color:var(--text)">—</div>
-        <div id="rd-score-sub" style="font-family:'DM Mono',monospace;font-size:.55rem;color:var(--dim);letter-spacing:1.6px;margin-top:2px">0 / 8 METRICS PASSING</div>
-      </div>
-    </div>
-    <!-- Overall progress bar -->
-    <div style="margin-top:22px">
-      <div style="height:4px;background:var(--panel2);position:relative;overflow:hidden">
-        <div id="rd-score-bar" style="height:100%;width:0%;background:var(--red);transition:width 0.6s ease,background 0.3s"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Verdict -->
-  <div id="rd-verdict" class="panel" style="margin-bottom:16px;padding:16px 20px;border-left:3px solid var(--dim)">
-    <div style="font-family:'DM Mono',monospace;font-size:.6rem;color:var(--dim);letter-spacing:1.4px;line-height:1.6" id="rd-verdict-text">
-      Collecting data. Verdict will appear after first 10+ live trades.
-    </div>
-  </div>
-
-  <!-- Metrics grid -->
-  <div class="grid-2" id="rd-metrics-grid" style="gap:12px">
-    <!-- 8 cards injected here -->
-  </div>
-
-  <!-- Note -->
-  <div class="panel" style="margin-top:16px;padding:14px 18px;background:var(--panel)">
-    <div style="font-family:'DM Mono',monospace;font-size:.5rem;color:var(--dim);letter-spacing:1.3px;line-height:1.7">
-      ALL 8 CRITERIA MUST PASS BEFORE APPLYING TO PROP PHASE 1 · DATA SOURCE: LIVE BOT TRADES ONLY · UPDATES EVERY 30 SECONDS
-    </div>
-  </div>
-</div>
-
-<!-- Readiness card styles (scoped) -->
-<style>
-  .rd-card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    padding: 16px 18px;
-    position: relative;
-    transition: border-color 0.3s;
-  }
-  .rd-card.pass { border-color: rgba(34,204,102,0.35); }
-  .rd-card.warn { border-color: rgba(232,160,32,0.35); }
-  .rd-card.fail { border-color: rgba(255,68,68,0.25); }
-  .rd-card-head {
-    display:flex; align-items:center; justify-content:space-between;
-    margin-bottom: 12px;
-  }
-  .rd-card-label {
-    font-family:'DM Mono',monospace;
-    font-size: .55rem;
-    letter-spacing: 1.6px;
-    color: var(--dim);
-    text-transform: uppercase;
-  }
-  .rd-card-status {
-    font-family:'DM Mono',monospace;
-    font-size: .5rem;
-    letter-spacing: 1.4px;
-    padding: 3px 8px;
-    border: 1px solid var(--border);
-  }
-  .rd-card-status.pass { color: var(--green); border-color: rgba(34,204,102,0.4); }
-  .rd-card-status.warn { color: var(--yellow); border-color: rgba(232,160,32,0.4); }
-  .rd-card-status.fail { color: var(--red); border-color: rgba(255,68,68,0.3); }
-  .rd-card-values {
-    display:flex; align-items:baseline; gap:10px;
-    margin-bottom: 10px;
-  }
-  .rd-card-current {
-    font-family:'Bebas Neue',sans-serif;
-    font-size: 2rem;
-    line-height: 1;
-    letter-spacing: 1px;
-    color: var(--text);
-  }
-  .rd-card-target {
-    font-family:'DM Mono',monospace;
-    font-size: .58rem;
-    color: var(--dim);
-    letter-spacing: 1px;
-  }
-  .rd-card-bar {
-    height: 3px;
-    background: var(--panel2);
-    position: relative;
-    overflow: hidden;
-  }
-  .rd-card-bar-fill {
-    height: 100%;
-    background: var(--red);
-    transition: width 0.5s ease, background 0.3s;
-  }
-  .rd-card-bar-fill.pass { background: var(--green); }
-  .rd-card-bar-fill.warn { background: var(--yellow); }
-  .rd-card-bar-fill.fail { background: var(--red); }
-  .rd-card-hint {
-    font-family:'DM Mono',monospace;
-    font-size: .48rem;
-    color: var(--dim2);
-    letter-spacing: 1.1px;
-    margin-top: 8px;
-    line-height: 1.5;
-  }
-</style>
 
 <!-- STRATEGIES -->
 <div class="page" id="page-strategies">
@@ -1379,7 +1259,7 @@ function showPage(id, btn) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
   if (btn) btn.classList.add('active');
-  const loaders = { paper: loadPaper, live: loadLive, metrics: loadMetrics, trackrecord: loadTrackRecord, readiness: loadReadiness, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, flashcrash: loadFlashCrash, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadOverview };
+  const loaders = { paper: loadPaper, live: loadLive, metrics: loadMetrics, trackrecord: loadTrackRecord, strategies: loadStrategies, dca: loadDCA, whales: loadWhales, news: loadNews, media: loadMedia, calc: ()=>{}, flashcrash: loadFlashCrash, radar: () => { loadPaper(); loadRadarFull(); }, overview: loadOverview };
   if (loaders[id]) loaders[id]();
 }
 
@@ -2436,17 +2316,30 @@ function renderLive(d) {
   const ce = document.getElementById('live-closed');
   if (ce) {
     if (!closed.length) { ce.innerHTML = '<div class="empty">NO LIVE TRADES YET</div>'; }
-    else ce.innerHTML = closed.slice(0, 8).map(t => {
-      const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
-      const pnl = t.pnl != null ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) + '%' : '';
-      const pnlCls = (t.pnl||0) >= 0 ? 'c-green' : 'c-red';
-      return `<div class="sig-row">
-        <div class="sig-coin">${(t.symbol||t.instId||'').replace('-USDT-SWAP','')}</div>
-        <div class="sig-strat">${(t.strategy||'').split(' ').slice(0,2).join(' ')}</div>
-        <div>${icon}</div>
-        <div class="sig-conf ${pnlCls}">${pnl}</div>
-      </div>`;
-    }).join('');
+    else {
+      const showAll = window.__liveShowAll === true;
+      const visible = showAll ? closed : closed.slice(0, 8);
+      const hasMore = closed.length > 8;
+      const rows = visible.map(t => {
+        const icon = t.outcome === 'tp1' || t.outcome === 'tp2' ? '✅' : t.outcome === 'sl' ? '❌' : '⏰';
+        const pnl = t.pnl != null ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(2) + '%' : '';
+        const pnlCls = (t.pnl||0) >= 0 ? 'c-green' : 'c-red';
+        return `<div class="sig-row">
+          <div class="sig-coin">${(t.symbol||t.instId||'').replace('-USDT-SWAP','')}</div>
+          <div class="sig-strat">${(t.strategy||'').split(' ').slice(0,2).join(' ')}</div>
+          <div>${icon}</div>
+          <div class="sig-conf ${pnlCls}">${pnl}</div>
+        </div>`;
+      }).join('');
+      const btn = hasMore
+        ? `<div style="text-align:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+             <button onclick="window.__liveShowAll=${!showAll};loadLive()" style="background:transparent;border:1px solid var(--border2);color:var(--text);font-family:'DM Mono',monospace;font-size:.6rem;letter-spacing:1.4px;padding:8px 18px;cursor:pointer;text-transform:uppercase">
+               ${showAll ? '↑ Show less (8)' : '↓ See all (' + closed.length + ')'}
+             </button>
+           </div>`
+        : '';
+      ce.innerHTML = rows + btn;
+    }
   }
 
   // By Strategy
@@ -2471,227 +2364,6 @@ function renderLive(d) {
 }
 
 // ── OVERVIEW (Live stats) ────────────────────────────────────────
-// ─── PROP READINESS ─────────────────────────────────────────────
-async function loadReadiness() {
-  const live = await safeFetch('/api/trades', { open:[], closed:[], stats:null });
-  const closed = (live.closed || []).filter(t => t.outcome && t.outcome !== 'open');
-
-  // ── Compute metrics from live trades only
-  const total = closed.length;
-  const wins  = closed.filter(t => (t.pnl || 0) > 0);
-  const losses = closed.filter(t => (t.pnl || 0) <= 0);
-  const wr = total ? (wins.length / total) * 100 : 0;
-
-  const totalPnl = closed.reduce((s, t) => s + (t.pnl || 0), 0);
-  const balance = 9000; // Bybit demo baseline
-  const pnlPct = (totalPnl / balance) * 100;
-
-  // Max drawdown from running equity curve (sorted by closedAt asc)
-  const sorted = [...closed].sort((a,b) => (a.closedAt || a.ts || 0) - (b.closedAt || b.ts || 0));
-  let equity = 0, peak = 0, maxDD = 0;
-  sorted.forEach(t => {
-    equity += (t.pnl || 0);
-    if (equity > peak) peak = equity;
-    const dd = peak - equity;
-    if (dd > maxDD) maxDD = dd;
-  });
-  const maxDDPct = (maxDD / balance) * 100;
-
-  // Longest loss streak
-  let curStreak = 0, maxStreak = 0;
-  sorted.forEach(t => {
-    if ((t.pnl || 0) <= 0) { curStreak++; if (curStreak > maxStreak) maxStreak = curStreak; }
-    else curStreak = 0;
-  });
-
-  // R:R ratio
-  const avgWin  = wins.length ? wins.reduce((s,t) => s + (t.pnl||0), 0) / wins.length : 0;
-  const avgLoss = losses.length ? Math.abs(losses.reduce((s,t) => s + (t.pnl||0), 0) / losses.length) : 0;
-  const rr = avgLoss > 0 ? avgWin / avgLoss : 0;
-
-  // Rolling Sharpe (simplified: last 30 trades, std of returns)
-  const last30 = sorted.slice(-30).map(t => (t.pnl || 0) / balance * 100);
-  let sharpe = 0;
-  if (last30.length >= 5) {
-    const mean = last30.reduce((a,b) => a+b, 0) / last30.length;
-    const variance = last30.reduce((a,b) => a + (b - mean)**2, 0) / last30.length;
-    const std = Math.sqrt(variance);
-    sharpe = std > 0 ? (mean / std) * Math.sqrt(252) : 0;
-  }
-
-  // Days without errors — approximation: days since most recent trade open
-  // (real error tracking would need separate endpoint; for now use trade activity continuity)
-  const firstTradeTs = sorted[0]?.ts || sorted[0]?.closedAt;
-  const daysActive = firstTradeTs ? Math.floor((Date.now() - firstTradeTs) / 86400000) : 0;
-
-  // ── Define 8 metric cards
-  const metrics = [
-    {
-      key: 'trades',
-      label: 'Live Trades',
-      current: total,
-      target: 50,
-      unit: '',
-      pass: total >= 50,
-      progress: Math.min(total / 50 * 100, 100),
-      currentFmt: String(total),
-      targetFmt: 'NEED 50+',
-      hint: 'Statistical significance threshold',
-    },
-    {
-      key: 'wr',
-      label: 'Win Rate',
-      current: wr,
-      target: 40,
-      pass: total >= 10 && wr >= 40,
-      progress: Math.min(wr / 40 * 100, 100),
-      currentFmt: total ? wr.toFixed(1) + '%' : '—',
-      targetFmt: 'NEED ≥ 40%',
-      hint: 'Breakeven WR @ 1.5 R:R',
-    },
-    {
-      key: 'pnl',
-      label: 'Net P&L',
-      current: pnlPct,
-      target: 0,
-      pass: total >= 10 && pnlPct > 0,
-      progress: pnlPct >= 0 ? Math.min(pnlPct / 5 * 100 + 50, 100) : Math.max(50 + pnlPct * 10, 0),
-      currentFmt: total ? (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%' : '—',
-      targetFmt: 'NEED > 0%',
-      hint: 'Positive total return required',
-    },
-    {
-      key: 'dd',
-      label: 'Max Drawdown',
-      current: maxDDPct,
-      target: 5,
-      pass: total >= 10 && maxDDPct < 5,
-      progress: Math.max(100 - (maxDDPct / 5) * 100, 0),
-      currentFmt: total ? '−' + maxDDPct.toFixed(2) + '%' : '—',
-      targetFmt: 'MAX < 5%',
-      hint: 'Hard stop limit of Phase 1',
-      inverse: true,
-    },
-    {
-      key: 'streak',
-      label: 'Max Loss Streak',
-      current: maxStreak,
-      target: 5,
-      pass: total >= 10 && maxStreak <= 5,
-      progress: Math.max(100 - (maxStreak / 5) * 100, 0),
-      currentFmt: total ? String(maxStreak) : '—',
-      targetFmt: 'MAX ≤ 5',
-      hint: 'Survives prop daily DD',
-      inverse: true,
-    },
-    {
-      key: 'rr',
-      label: 'Risk / Reward',
-      current: rr,
-      target: 1.5,
-      pass: total >= 10 && rr >= 1.5,
-      progress: Math.min(rr / 1.5 * 100, 100),
-      currentFmt: rr > 0 ? rr.toFixed(2) : '—',
-      targetFmt: 'NEED ≥ 1.5',
-      hint: 'Asymmetric payoff',
-    },
-    {
-      key: 'sharpe',
-      label: 'Rolling Sharpe',
-      current: sharpe,
-      target: 0.8,
-      pass: last30.length >= 30 && sharpe >= 0.8,
-      progress: sharpe > 0 ? Math.min(sharpe / 0.8 * 100, 100) : 0,
-      currentFmt: last30.length >= 5 ? sharpe.toFixed(2) : '—',
-      targetFmt: 'NEED ≥ 0.8',
-      hint: 'Risk-adjusted return (30-trade window)',
-    },
-    {
-      key: 'days',
-      label: 'Days Live',
-      current: daysActive,
-      target: 14,
-      pass: daysActive >= 14,
-      progress: Math.min(daysActive / 14 * 100, 100),
-      currentFmt: String(daysActive),
-      targetFmt: 'NEED 14+',
-      hint: 'System stability proof',
-    },
-  ];
-
-  // ── Render cards
-  const grid = document.getElementById('rd-metrics-grid');
-  if (grid) {
-    grid.innerHTML = metrics.map(m => {
-      const passClass = m.pass ? 'pass' : (m.progress >= 60 ? 'warn' : 'fail');
-      const statusText = m.pass ? 'PASS' : (m.progress >= 60 ? 'CLOSE' : 'FAIL');
-      return `
-        <div class="rd-card ${passClass}">
-          <div class="rd-card-head">
-            <div class="rd-card-label">${m.label}</div>
-            <div class="rd-card-status ${passClass}">${statusText}</div>
-          </div>
-          <div class="rd-card-values">
-            <div class="rd-card-current">${m.currentFmt}</div>
-            <div class="rd-card-target">${m.targetFmt}</div>
-          </div>
-          <div class="rd-card-bar">
-            <div class="rd-card-bar-fill ${passClass}" style="width:${Math.max(2, m.progress)}%"></div>
-          </div>
-          <div class="rd-card-hint">${m.hint}</div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  // ── Overall score
-  const passing = metrics.filter(m => m.pass).length;
-  const score = Math.round(passing / metrics.length * 100);
-  const scoreEl = document.getElementById('rd-score');
-  const subEl   = document.getElementById('rd-score-sub');
-  const barEl   = document.getElementById('rd-score-bar');
-  const statusEl = document.getElementById('rd-status-text');
-
-  if (scoreEl) scoreEl.textContent = score + '%';
-  if (subEl)   subEl.textContent = passing + ' / ' + metrics.length + ' METRICS PASSING';
-  if (barEl) {
-    barEl.style.width = score + '%';
-    if (score === 100)      barEl.style.background = 'var(--green)';
-    else if (score >= 60)   barEl.style.background = 'var(--yellow)';
-    else                    barEl.style.background = 'var(--red)';
-  }
-  if (statusEl) {
-    if (score === 100)      statusEl.textContent = '✅ All criteria met. System ready for Phase 1 application.';
-    else if (score >= 75)   statusEl.textContent = 'Close to ready. ' + (metrics.length - passing) + ' metric(s) remaining.';
-    else if (score >= 40)   statusEl.textContent = 'Mid-stage. Continue collecting data, no prop attempt yet.';
-    else if (total < 10)    statusEl.textContent = 'Insufficient data. Need 10+ live trades minimum.';
-    else                    statusEl.textContent = 'Not ready. Significant gaps in performance.';
-  }
-
-  // ── Verdict
-  const verdictEl = document.getElementById('rd-verdict');
-  const verdictText = document.getElementById('rd-verdict-text');
-  if (verdictEl && verdictText) {
-    const failing = metrics.filter(m => !m.pass).map(m => m.label).join(', ');
-    let verdict, color;
-    if (score === 100) {
-      verdict = '🟢 READY · All 8 criteria passed. Apply for Phase 1 prop challenge.';
-      color = 'var(--green)';
-    } else if (score >= 75) {
-      verdict = '🟡 ALMOST · Fix remaining: ' + failing;
-      color = 'var(--yellow)';
-    } else if (total < 10) {
-      verdict = '⚪ COLLECTING · Bot is gathering live trades. Re-evaluate after 10+ trades.';
-      color = 'var(--dim)';
-    } else {
-      verdict = '🔴 NOT READY · Multiple criteria failing: ' + failing;
-      color = 'var(--red)';
-    }
-    verdictText.textContent = verdict;
-    verdictEl.style.borderLeftColor = color;
-  }
-}
-
 async function loadOverview() {
   const [live, paper] = await Promise.all([
     safeFetch('/api/trades', { open:[], closed:[], stats:null }),
@@ -2863,7 +2535,7 @@ function showPageDD(pageId) {
 
   const groups = {
     trading: ['overview','live','paper','strategies'],
-    analysis: ['metrics','trackrecord','readiness','radar','whales'],
+    analysis: ['metrics','trackrecord','radar','whales'],
     tools: ['calc','news','dca','investor','montecarlo','backtest'],
   };
   for (const [group, pages] of Object.entries(groups)) {

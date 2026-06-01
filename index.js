@@ -6348,7 +6348,7 @@ if (!store.observeMode) {
         // В observe mode — НИКАКИХ жёстких блоков, только мягкие корректировки
         // Цель: собрать максимум сырых данных для анализа
         if (!store.observeMode) {
-          const isS1S4 = sig.strategy.startsWith('1️⃣ ') || sig.strategy.startsWith('4️⃣ ');
+          const isS1S4 = sig.strategy.startsWith('1️⃣ ');
 
           // 1. MARKET REGIME
           sig = applyMarketRegime(sig, regime);
@@ -6685,7 +6685,7 @@ if (!store.observeMode) {
         .sort((a, b) => {
           // В проп-режиме — S1 и S4 приоритет над остальными
           if (store.propMode && !store.observeMode) {
-            const aIsProp = a.strategy.startsWith('1️⃣ ') || a.strategy.startsWith('4️⃣ ');
+            const aIsProp = a.strategy.startsWith('1️⃣ ');
             const bIsProp = b.strategy.startsWith('1️⃣ ') || b.strategy.startsWith('4️⃣ ');
             if (aIsProp && !bIsProp) return -1;
             if (!aIsProp && bIsProp) return 1;
@@ -6723,7 +6723,7 @@ if (!store.observeMode) {
 
       // В observe mode пропускаем AI валидацию — собираем сырые данные
       // S1 и S4 тоже пропускаем — они доказали WR 85% без AI фильтра
-      const isS1orS4 = best.strategy.startsWith('1️⃣ ') || best.strategy.startsWith('4️⃣ ');
+      const isS1orS4 = best.strategy.startsWith('1️⃣ ');
       if (!store.observeMode && !isS1orS4) {
         const aiResult = await validateSignalWithAI(best, fng, session);
         if (!aiResult.approved) {

@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * APEX ALGO FUND — Backtest v1.2 for S1 Volume Spike (15m)
+ * APEX ALGO FUND — Backtest v1.3 for S1 Volume Spike (15m)
  * ──────────────────────────────────────────────────────────
- * v1.2 — REMOVED LOOK-AHEAD BIAS
- *   - Entry on OPEN of next 1m candle + slippage (realistic, bot enters in <2s)
- *   - REMOVED "realtime confirmation filter" — that used future data (cheat!)
- *   - Gap-through SL handling preserved (if open already past SL → exit at open or sl)
+ * v1.3 — CLI date parameters for regime testing
+ *   --start=YYYY-MM-DD   start date (default: 90 days ago)
+ *   --end=YYYY-MM-DD     end date (default: today)
+ *   --label=NAME         label for report file (e.g., "bear" or "bull")
  *
- * v1.1 was wrong: it cancelled trades based on first 1m candle close,
- * which is future information bot doesn't have in real time. Result: fake 97% WR.
+ * Examples:
+ *   node analysis/backtest_s1.js
+ *   node analysis/backtest_s1.js --start=2025-11-01 --end=2025-12-31 --label=bear
  *
- * v1.2 is honest: bot sees signal, enters at open of next candle, that's it.
+ * v1.2 base — honest entry on next 1m open + slippage, no look-ahead bias.
  * Exact copy of the production S1 logic from index.js.
  * Tests on real Bybit historical 15-min candles over the past 3 months.
  *
@@ -38,12 +39,25 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
+// ─── CLI ARGS ────────────────────────────────────────────────
+const args = process.argv.slice(2);
+const argMap = {};
+for (const a of args) {
+  const m = a.match(/^--(\w+)=(.+)$/);
+  if (m) argMap[m[1]] = m[2];
+}
+
+const ARG_START = argMap.start;   // YYYY-MM-DD
+const ARG_END   = argMap.end;     // YYYY-MM-DD
+const ARG_LABEL = argMap.label || '';
+
 // ─── CONFIG ──────────────────────────────────────────────────
 const COINS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT',
   'DOGEUSDT', 'BNBUSDT', 'AVAXUSDT', 'LINKUSDT'
 ];
-const DAYS_BACK     = 90;             // 3 months
+const DAYS_BACK     = 90;             // 3 months (default if no CLI args)
+let PERIOD_DAYS     = DAYS_BACK;      // mutated by main() if CLI args used
 const BYBIT_BASE    = 'https://api.bybit.com';
 const REPORT_DIR    = path.join(__dirname, 'reports');
 const RATE_LIMIT_MS = 100;
@@ -196,9 +210,11 @@ async function backtest() {
   console.log('  APEX ALGO FUND — S1 BACKTEST v1');
   console.log('═══════════════════════════════════════════════════════\n');
 
-  const endMs   = Date.now();
-  const startMs = endMs - DAYS_BACK * 24 * 60 * 60 * 1000;
-  console.log(`Period: ${new Date(startMs).toISOString().slice(0, 10)} → ${new Date(endMs).toISOString().slice(0, 10)} (${DAYS_BACK} days)`);
+  const endMs   = ARG_END   ? new Date(ARG_END   + 'T23:59:59Z').getTime() : Date.now();
+  const startMs = ARG_START ? new Date(ARG_START + 'T00:00:00Z').getTime() : (endMs - DAYS_BACK * 24 * 60 * 60 * 1000);
+  const periodDays = Math.round((endMs - startMs) / 86400000);
+  PERIOD_DAYS = periodDays;
+  console.log(`Period: ${new Date(startMs).toISOString().slice(0, 10)} → ${new Date(endMs).toISOString().slice(0, 10)} (${periodDays} days)${ARG_LABEL ? ' [' + ARG_LABEL + ']' : ''}`);
   console.log(`Coins:  ${COINS.length} (${COINS.join(', ')})\n`);
 
   const allTrades = [];
@@ -335,12 +351,13 @@ async function backtest() {
   // Save reports
   fs.mkdirSync(REPORT_DIR, { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
-  const jsonPath = path.join(REPORT_DIR, `backtest_s1_${date}.json`);
-  const csvPath  = path.join(REPORT_DIR, `backtest_s1_${date}.csv`);
-  const htmlPath = path.join(REPORT_DIR, `backtest_s1_${date}.html`);
+  const suffix = ARG_LABEL ? `_${ARG_LABEL}` : '';
+  const jsonPath = path.join(REPORT_DIR, `backtest_s1_${date}${suffix}.json`);
+  const csvPath  = path.join(REPORT_DIR, `backtest_s1_${date}${suffix}.csv`);
+  const htmlPath = path.join(REPORT_DIR, `backtest_s1_${date}${suffix}.html`);
 
   fs.writeFileSync(jsonPath, JSON.stringify({ metrics, trades: allTrades, equityCurve, config: {
-    coins: COINS, daysBack: DAYS_BACK, startingBalance: STARTING_BALANCE,
+    coins: COINS, daysBack: PERIOD_DAYS, label: ARG_LABEL, startingBalance: STARTING_BALANCE,
     riskPct: RISK_PCT, feePct: FEE_PCT, slippagePct: SLIPPAGE_PCT,
     confidenceThreshold: S1_CONFIDENCE_THRESHOLD,
   } }, null, 2));
@@ -379,13 +396,13 @@ function computeMetrics(trades, finalBalance, maxDD, equity) {
     const std = Math.sqrt(variance);
     if (std > 0) {
       // Annualize: assuming ~1000 trades/year as a rough estimate
-      const tradesPerYear = trades.length / (DAYS_BACK / 365);
+      const tradesPerYear = trades.length / (PERIOD_DAYS / 365);
       sharpe = (mean / std) * Math.sqrt(tradesPerYear);
     }
   }
 
   // Calmar (annualized return / max DD)
-  const annualReturn = totalPnlPct * (365 / DAYS_BACK);
+  const annualReturn = totalPnlPct * (365 / PERIOD_DAYS);
   const calmar = maxDD > 0 ? annualReturn / maxDD : 0;
 
   // Longest losing streak
@@ -541,7 +558,7 @@ function buildHTMLReport(m, trades, equity) {
       <h1>APEX ALGO FUND</h1>
       <div class="subtitle">S1 VOLUME SPIKE · BACKTEST REPORT v1</div>
     </div>
-    <div class="date">${new Date().toISOString().slice(0, 10)} · ${DAYS_BACK} DAYS · ${COINS.length} SYMBOLS</div>
+    <div class="date">${new Date().toISOString().slice(0, 10)} · ${PERIOD_DAYS} DAYS · ${COINS.length} SYMBOLS</div>
   </div>
 
   <div class="verdict">

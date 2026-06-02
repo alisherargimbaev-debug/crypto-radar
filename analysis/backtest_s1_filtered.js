@@ -48,9 +48,15 @@ const ARG_START = argMap.start;   // YYYY-MM-DD
 const ARG_END   = argMap.end;     // YYYY-MM-DD
 const ARG_LABEL = argMap.label || '';
 const ARG_MODE  = argMap.mode || 'live';   // live | strict | off
+const ARG_THRESHOLD = argMap.threshold ? parseInt(argMap.threshold) : 70;  // confidence threshold (default 70)
 
 if (!['live', 'strict', 'off'].includes(ARG_MODE)) {
   console.error('Invalid --mode. Use: live | strict | off');
+  process.exit(1);
+}
+
+if (isNaN(ARG_THRESHOLD) || ARG_THRESHOLD < 0 || ARG_THRESHOLD > 100) {
+  console.error('Invalid --threshold. Use 0-100 (default: 70)');
   process.exit(1);
 }
 
@@ -339,6 +345,7 @@ async function backtest() {
   console.log(`Period: ${new Date(startMs).toISOString().slice(0, 10)} → ${new Date(endMs).toISOString().slice(0, 10)} (${periodDays} days)${ARG_LABEL ? ' [' + ARG_LABEL + ']' : ''}`);
   console.log(`Coins:  ${COINS.length} (${COINS.join(', ')})`);
   console.log(`Mode:   ${ARG_MODE}`);
+  console.log(`Thresh: ${ARG_THRESHOLD}% (CLI param)`);
   console.log(`         live   = exact live bot logic (with S1 bypasses)`);
   console.log(`         strict = no S1 bypasses (proper filtering)`);
   console.log(`         off    = no filters (control)\n`);
@@ -412,8 +419,8 @@ async function backtest() {
       filteredSig = applyPocGate(filteredSig, seedHash, ARG_MODE);
       if (filteredSig.confidence === 0) { filterStats.poc++; continue; }
 
-      // Confidence threshold check (matches live)
-      if (filteredSig.confidence < S1_CONFIDENCE_THRESHOLD) {
+      // Confidence threshold check (CLI parameter, default 70)
+      if (filteredSig.confidence < ARG_THRESHOLD) {
         filterStats.threshold++;
         continue;
       }
@@ -539,7 +546,7 @@ async function backtest() {
   // Save reports
   fs.mkdirSync(REPORT_DIR, { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
-  const suffix = `_${ARG_MODE}${ARG_LABEL ? '_' + ARG_LABEL : ''}`;
+  const suffix = `_${ARG_MODE}_t${ARG_THRESHOLD}${ARG_LABEL ? '_' + ARG_LABEL : ''}`;
   const jsonPath = path.join(REPORT_DIR, `backtest_s1${suffix}_${date}.json`);
   const csvPath  = path.join(REPORT_DIR, `backtest_s1${suffix}_${date}.csv`);
   const htmlPath = path.join(REPORT_DIR, `backtest_s1${suffix}_${date}.html`);

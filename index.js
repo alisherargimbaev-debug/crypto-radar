@@ -6249,6 +6249,15 @@ if (!store.observeMode) {
       const filtered = [];
       for (let sig of signals) {
 
+        // ─── S1 BYPASS (Jun 2, 2026, based on backtest validation) ───
+        // 537 backtest trades across 6 regimes: raw S1 WR 88.6%, filtered 43%
+        // Decision: route S1 directly to safety checks, skip context filters
+        // Safety remains: threshold 70%, SL%, RR, position sizing in AutoExec
+        if (sig.strategy.startsWith('1️⃣ ')) {
+          filtered.push(sig);
+          continue;
+        }
+
         // В observe mode — НИКАКИХ жёстких блоков, только мягкие корректировки
         // Цель: собрать максимум сырых данных для анализа
         if (!store.observeMode) {

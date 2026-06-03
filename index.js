@@ -779,6 +779,9 @@ loadSettings();
 loadSettingsFromSupabase().catch(() => {});
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
+// Fix 2.2 (Jun 3, 2026): Deduplicate trade saves to paper_trades by unique key
+const _savedTradesKeys = new Set();
+
 async function pushTradeHistory(trade) {
   store.tradeHistory.push(trade);
   if (store.tradeHistory.length > 500) {
@@ -790,6 +793,19 @@ async function pushTradeHistory(trade) {
     trade._savedToSupabase = true;
     const isLive = trade.source === 'bybit_real' || (!store.observeMode && !trade.paperOnly);
     if (isLive) {
+      // Fix 2.2: Deduplicate by trade key (instId + opened ts)
+      const tradeKey = `${trade.instId || trade.symbol}_${trade.ts || 0}`;
+      if (_savedTradesKeys.has(tradeKey)) {
+        console.log(`[LIVE→DB] ⏭️ Пропускаю дубликат: ${tradeKey}`);
+        return;
+      }
+      _savedTradesKeys.add(tradeKey);
+      if (_savedTradesKeys.size > 1000) {
+        const arr = Array.from(_savedTradesKeys);
+        _savedTradesKeys.clear();
+        arr.slice(-500).forEach(k => _savedTradesKeys.add(k));
+      }
+
       console.log(`[LIVE→DB] Сохраняю live сделку: ${trade.instId} ${trade.outcome} PnL=${trade.pnl}`);
       try {
         const { error } = await supabase.from('paper_trades').insert({

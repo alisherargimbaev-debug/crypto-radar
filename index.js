@@ -8627,6 +8627,17 @@ supabase.from('open_trades').select('*').then(async ({ data }) => {
     } else {
       console.log(`[START Bybit Recon] все ${stillOpen.length} сделок подтверждены на Bybit`);
     }
+
+    // Fix 1.2 (Jun 3, 2026): Trigger autoexec to restore activePositions
+    if (stillOpen.length > 0) {
+      try {
+        const autoExec = require('./autoexec');
+        autoExec.signals.emit('restore_positions', stillOpen);
+        console.log(`[START] Triggered autoexec restore for ${stillOpen.length} positions`);
+      } catch (e) {
+        console.error('[START] autoexec restore trigger error:', e.message);
+      }
+    }
   } catch(e) {
     console.log('[START Bybit Recon] недоступен — пропуск:', e.message);
   }

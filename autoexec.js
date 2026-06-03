@@ -78,6 +78,11 @@ function init() {
       console.log('[AutoExec] Dependencies injected (bot, chatId, supabase)');
     });
 
+    // Fix 1.2 (Jun 3, 2026): Restore activePositions on bot restart
+    signals.on('restore_positions', async (openTradesFromDb) => {
+      await restoreActivePositions(openTradesFromDb);
+    });
+
     // Запускаем мониторинг позиций
     startMonitor();
 
@@ -299,6 +304,54 @@ async function handleSignal(signal) {
 }
 
 // ─── Мониторинг позиций (каждые 30 сек) ─────────────────────
+// ─── Restore activePositions after bot restart (Fix 1.2, Jun 3, 2026) ───
+async function restoreActivePositions(openTradesFromDb) {
+  if (!enabled) { console.log('[AutoExec] Restore skipped — disabled'); return; }
+  if (!bybit) { console.warn('[AutoExec] Restore skipped — bybit not ready'); return; }
+  if (!openTradesFromDb || openTradesFromDb.length === 0) {
+    console.log('[AutoExec] Restore: no open_trades to restore');
+    return;
+  }
+  try {
+    const positions = await bybit.getPositions();
+    const openOnBybit = (positions || []).filter(p => parseFloat(p.size) > 0);
+    if (openOnBybit.length === 0) {
+      console.log('[AutoExec] Restore: no positions on Bybit');
+      return;
+    }
+    console.log(`[AutoExec] Restoring: ${openOnBybit.length} on Bybit, ${openTradesFromDb.length} in DB`);
+    let restored = 0;
+    for (const pos of openOnBybit) {
+      const symbol = pos.symbol;
+      if (activePositions.has(symbol)) continue;
+      const instId = symbol.replace('USDT', '-USDT-SWAP');
+      const dbRecord = openTradesFromDb.find(t =>
+        t.instId === instId || t.symbol === symbol || t.symbol === symbol.replace('USDT', '')
+      );
+      if (!dbRecord) {
+        console.warn(`[AutoExec] Restore: ${symbol} on Bybit but no DB record — skipping`);
+        continue;
+      }
+      const entryPrice = parseFloat(pos.avgPrice) || parseFloat(dbRecord.price) || 0;
+      const qty = parseFloat(pos.size) || 0;
+      const slPrice = parseFloat(pos.stopLoss) || parseFloat(dbRecord.sl) || null;
+      const tpPrice = parseFloat(pos.takeProfit) || parseFloat(dbRecord.tp1) || null;
+      const openedAt = dbRecord.ts ? new Date(+dbRecord.ts) : new Date();
+      activePositions.set(symbol, {
+        signal: { symbol, side: pos.side, confidence: dbRecord.confidence || 0, reason: dbRecord.strategy || 'Restored after restart' },
+        orderId: null, orderLinkId: null,
+        side: pos.side, qty, entryPrice, slPrice, tpPrice, openedAt,
+        restored: true,
+      });
+      restored++;
+      console.log(`[AutoExec] Restored: ${symbol} ${pos.side} entry=${entryPrice} sl=${slPrice} tp=${tpPrice}`);
+    }
+    if (restored > 0) console.log(`[AutoExec] ✅ Restored ${restored} positions. Monitor will track them.`);
+  } catch (err) {
+    console.error('[AutoExec] restoreActivePositions error:', err.message);
+  }
+}
+
 function startMonitor() {
   if (monitorTimer) clearInterval(monitorTimer);
 

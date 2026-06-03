@@ -8279,12 +8279,41 @@ cron.schedule('*/3 * * * *', async () => {
     }
     if (toClose.length > 0) {
       for (const trade of toClose) {
-        trade.outcome='closed_on_exchange'; trade.closedAt=Date.now(); trade.pnl=0;
+        // FIX (Jun 3, 2026): get real PnL from Bybit before recording (was hardcoded pnl=0)
+        const sym = (trade.instId||'').replace('-USDT-SWAP','USDT');
+        let realPnl = 0, realExitPrice = 0;
+        try {
+          const closedList = await bybit.getClosedPnl(sym, 10);
+          const tradeTs = +trade.ts || 0;
+          const entryPrice = +trade.price || 0;
+          let match = closedList?.find(p => {
+            const closeTs = +p.updatedTime || +p.createdTime || 0;
+            const pEntry = +p.avgEntryPrice || 0;
+            const entryMatch = entryPrice > 0 ? Math.abs(pEntry - entryPrice) / entryPrice < 0.005 : true;
+            return closeTs > tradeTs && entryMatch;
+          });
+          if (!match) match = closedList?.find(p => (+p.updatedTime || 0) > tradeTs);
+          if (!match && closedList?.length) {
+            console.warn('[Bybit Sync] '+trade.instId+' no exact match, using most recent');
+            match = closedList[0];
+          }
+          if (match) {
+            realPnl = parseFloat(match.closedPnl) || 0;
+            realExitPrice = parseFloat(match.avgExitPrice) || 0;
+          }
+        } catch (e) {
+          console.error('[Bybit Sync] getClosedPnl error for '+trade.instId+':', e.message);
+        }
+        trade.outcome = realPnl >= 0 ? 'tp1' : 'sl';
+        trade.closedAt = Date.now();
+        trade.pnl = realPnl;
+        trade.closePrice = realExitPrice;
+        trade.source = 'bybit_sync';
+        console.log('[Bybit Sync] '+trade.instId+' closed: entry='+trade.price+' exit='+realExitPrice+' pnl='+realPnl.toFixed(2));
         pushTradeHistory(trade);
         supabase.from('open_trades').delete()
           .eq('inst_id', trade.instId).eq('ts', trade.ts)
           .then(() => {}).catch(e => console.error('[Bybit Sync] open_trades delete error:', e.message));
-        console.log('[Bybit Sync] '+trade.instId+' закрыта → убрана из store и Supabase');
       }
       store.openTrades = stillOpen;
     }

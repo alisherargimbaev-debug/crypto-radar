@@ -409,7 +409,10 @@ async function handlePositionClosed(symbol, tracked) {
     }
 
     // Последний fallback — самая свежая
-    if (!closedPnl) closedPnl = closedPnlList?.[0];
+    // FIX Jun 3, 2026: removed unconditional fallback to closedPnlList[0]
+        // It was causing old trades (from days ago) to be matched as current
+        // Now: if no match found, closedPnl stays null and retry mechanism kicks in
+        // if (!closedPnl) closedPnl = closedPnlList?.[0];
 
     const pnl       = closedPnl ? parseFloat(closedPnl.closedPnl) : null;
     const exitPrice = closedPnl ? parseFloat(closedPnl.avgExitPrice) : 0;

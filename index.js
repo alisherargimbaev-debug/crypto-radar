@@ -791,9 +791,15 @@ async function pushTradeHistory(trade) {
   // Save LIVE trades to Supabase (paper trades saved separately via savePaperTradeToSupabase)
   if (trade.outcome && trade.outcome !== 'open' && !trade._savedToSupabase) {
     trade._savedToSupabase = true;
-    const isLive = trade.source === 'bybit_real' || (!store.observeMode && !trade.paperOnly);
+    // Fix 2.1 (Jun 3, 2026): Skip if AutoExec already saved to trades table
+    if (trade.source === 'autoexec') {
+      console.log(`[LIVE→DB] ⏭️ Пропускаю — AutoExec уже записал в trades: ${trade.instId}`);
+      return;
+    }
+
+    const isLive = trade.source === 'bybit_real' || trade.source === 'bybit_sync' || (!store.observeMode && !trade.paperOnly);
     if (isLive) {
-      // Fix 2.2: Deduplicate by trade key (instId + opened ts)
+      // Fix 2.2: Deduplicate by trade key
       const tradeKey = `${trade.instId || trade.symbol}_${trade.ts || 0}`;
       if (_savedTradesKeys.has(tradeKey)) {
         console.log(`[LIVE→DB] ⏭️ Пропускаю дубликат: ${tradeKey}`);
@@ -806,28 +812,41 @@ async function pushTradeHistory(trade) {
         arr.slice(-500).forEach(k => _savedTradesKeys.add(k));
       }
 
-      console.log(`[LIVE→DB] Сохраняю live сделку: ${trade.instId} ${trade.outcome} PnL=${trade.pnl}`);
+      // Fix 2.1: Route bybit_sync and bybit_real to 'trades' table (was 'paper_trades')
+      const symbol = (trade.instId || '').replace('-USDT-SWAP', 'USDT') || trade.symbol;
+      console.log(`[LIVE→DB] Сохраняю в trades: ${symbol} ${trade.outcome} PnL=${trade.pnl}`);
       try {
-        const { error } = await supabase.from('paper_trades').insert({
-          ts:         trade.ts || Date.now(),
-          inst_id:    trade.instId || trade.symbol,
-          strategy:   trade.strategy || 'Live',
-          direction:  trade.direction,
-          price:      trade.price,
-          sl:         trade.sl,
-          tp1:        trade.tp1 || trade.tp,
-          tp2:        trade.tp2 || trade.tp,
-          confidence: trade.confidence || 0,
-          outcome:    trade.outcome,
-          pnl:        trade.pnl,
-          closed_at:  trade.closedAt || Date.now(),
-          source:     'bybit_real',
-          filters:    trade.filters ? JSON.stringify(trade.filters) : null,
-        });
-        if (error) {
-          console.error(`[LIVE→DB] ❌ Ошибка сохранения: ${error.message} (code: ${error.code})`);
+        const autoExec = require('./autoexec');
+        if (autoExec.saveTrade) {
+          await autoExec.saveTrade({
+            ts:          trade.ts || Date.now(),
+            inst_id:     trade.instId || symbol.replace('USDT', '-USDT-SWAP'),
+            symbol:      symbol,
+            strategy:    trade.strategy || 'BybitSync',
+            direction:   trade.direction,
+            price:       trade.price,
+            close_price: trade.closePrice || trade.exitPrice || 0,
+            sl:          trade.sl || null,
+            tp1:         trade.tp1 || trade.tp || null,
+            tp2:         trade.tp2 || null,
+            confidence:  trade.confidence || 0,
+            outcome:     trade.outcome,
+            pnl:         trade.pnl,
+            closed_at:   trade.closedAt || Date.now(),
+          });
+          console.log(`[LIVE→DB] ✅ Сохранено в trades: ${symbol}`);
         } else {
-          console.log(`[LIVE→DB] ✅ Сохранено: ${trade.instId}`);
+          console.warn('[LIVE→DB] autoExec.saveTrade not available — falling back to paper_trades');
+          const { error } = await supabase.from('paper_trades').insert({
+            ts: trade.ts || Date.now(), inst_id: trade.instId || trade.symbol,
+            strategy: trade.strategy || 'Live', direction: trade.direction,
+            price: trade.price, sl: trade.sl, tp1: trade.tp1 || trade.tp,
+            tp2: trade.tp2 || trade.tp, confidence: trade.confidence || 0,
+            outcome: trade.outcome, pnl: trade.pnl,
+            closed_at: trade.closedAt || Date.now(), source: 'bybit_real',
+            filters: trade.filters ? JSON.stringify(trade.filters) : null,
+          });
+          if (error) console.error(`[LIVE→DB] ❌ Fallback error: ${error.message}`);
         }
       } catch(e) {
         console.error(`[LIVE→DB] ❌ Exception: ${e.message}`);

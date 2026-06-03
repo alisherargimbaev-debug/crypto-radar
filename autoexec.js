@@ -751,5 +751,8 @@ function formatDuration(ms) {
   return `${hours}ч ${mins % 60}м`;
 }
 
+// Fix 2.1 (Jun 3, 2026): Export saveTrade so index.js can write to 'trades' table directly
+module.exports.saveTrade = saveTrade;
+
 // ─── Запуск! ─────────────────────────────────────────────────
 init();

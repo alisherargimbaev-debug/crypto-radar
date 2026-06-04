@@ -122,7 +122,7 @@ async function handleSignal(signal) {
     // Confidence check
     if ((signal.confidence || 0) < MIN_CONFIDENCE) {
       console.log(`${tag} Low confidence ${signal.confidence}% < ${MIN_CONFIDENCE}%, skip`);
-      await notify(`⏭️ Пропущен сигнал ${signal.symbol} ${signal.side}\nConfidence: ${signal.confidence}% < ${MIN_CONFIDENCE}%`);
+      // Silent skip — notification removed to avoid spam (Jun 4, 2026)
       return;
     }
 

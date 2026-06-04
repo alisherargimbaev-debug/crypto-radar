@@ -556,26 +556,7 @@ async function handlePositionClosed(symbol, tracked) {
       (isWin === null ? '\n⚠️ Bybit API delay — check manually' : '')
     );
 
-    // Notify index.js about real close
-    signals.emit('position_closed', {
-      symbol,
-      instId:      symbol.replace('USDT', '-USDT-SWAP'),
-      entryPrice:  tracked.entryPrice,
-      exitPrice:   finalExitPrice,
-      pnl:         finalPnl,
-      pnlPct,
-      side:        tracked.side,
-      outcome:     isWin === null ? 'unknown' : isWin ? 'tp1' : 'sl',
-      duration:    formatDuration(new Date() - tracked.openedAt),
-      openedAt:    tracked.openedAt,
-      closedAt:    new Date(),
-      strategy:    tracked.signal?.reason || '',
-      confidence:  tracked.signal?.confidence || 0,
-      realBalance: balance?.total || null,
-    });
-
-    // Save closed live trade to Supabase 'trades' table
-    // (Schema: id, ts, inst_id, symbol, strategy, direction, price, sl, tp1, tp2, confidence, outcome, close_price, closed_at, pnl, created_at)
+    // Fix (Jun 4, 2026): saveTrade BEFORE emit — so dedup key is claimed first (emit is sync)
     const openedAtMs = tracked.openedAt instanceof Date
       ? tracked.openedAt.getTime()
       : Number(tracked.openedAt) || Date.now();
@@ -595,6 +576,24 @@ async function handlePositionClosed(symbol, tracked) {
       outcome:     isWin === null ? 'unknown' : isWin ? 'tp1' : 'sl',
       pnl:         finalPnl,
       closed_at:   Date.now(),
+    });
+
+    // Notify index.js about real close (after saveTrade so dedup key is already set)
+    signals.emit('position_closed', {
+      symbol,
+      instId:      symbol.replace('USDT', '-USDT-SWAP'),
+      entryPrice:  tracked.entryPrice,
+      exitPrice:   finalExitPrice,
+      pnl:         finalPnl,
+      pnlPct,
+      side:        tracked.side,
+      outcome:     isWin === null ? 'unknown' : isWin ? 'tp1' : 'sl',
+      duration:    formatDuration(new Date() - tracked.openedAt),
+      openedAt:    tracked.openedAt,
+      closedAt:    new Date(),
+      strategy:    tracked.signal?.reason || '',
+      confidence:  tracked.signal?.confidence || 0,
+      realBalance: balance?.total || null,
     });
 
     // Убираем из трекера

@@ -48,6 +48,9 @@ let MAX_POSITIONS_RUNTIME = parseInt(process.env.AUTO_MAX_POSITIONS) || 5;  // /
 const activePositions = new Map();  // symbol → { signal, orderId, entryPrice, ... }
 let dailyPnl = 0;
 let dailyPnlResetDate = todayKey();
+let dailyLimitHit = false;
+let dailyLimitEnabled = true;
+let DAILY_LOSS_LIMIT_RUNTIME = DAILY_LOSS_LIMIT;
 let monitorTimer = null;
 
 // ─── Инициализация ───────────────────────────────────────────
@@ -150,7 +153,8 @@ async function handleSignal(signal) {
 
     // Дневной лимит потерь
     resetDailyPnlIfNeeded();
-    if (dailyPnl <= DAILY_LOSS_LIMIT) {
+    if (dailyLimitEnabled && dailyPnl <= DAILY_LOSS_LIMIT_RUNTIME) {
+      dailyLimitHit = true;
       console.log(`${tag} Daily loss limit hit: ${dailyPnl.toFixed(2)}%`);
       await notify(`🛑 Дневной лимит потерь достигнут (${dailyPnl.toFixed(2)}%). Торговля остановлена до завтра.`);
       enabled = false;
@@ -602,9 +606,10 @@ async function handlePositionClosed(symbol, tracked) {
     activePositions.delete(symbol);
 
     // Проверяем дневной лимит
-    if (dailyPnl <= DAILY_LOSS_LIMIT) {
+    if (dailyLimitEnabled && dailyPnl <= DAILY_LOSS_LIMIT_RUNTIME) {
+      dailyLimitHit = true;
       enabled = false;
-      await notify(`🛑 Дневной лимит потерь (${DAILY_LOSS_LIMIT}%) достигнут! AutoExec выключен.`);
+      await notify(`🛑 Дневной лимит потерь (${DAILY_LOSS_LIMIT_RUNTIME}%) достигнут! AutoExec выключен.`);
     }
 
   } catch (err) {
@@ -641,11 +646,50 @@ async function handleTelegramCommand({ command, args, replyFn }) {
         break;
       }
 
+      case '/daily_limit': {
+        if (!arg) {
+          await replyFn(
+            `📊 Daily Loss Limit\n` +
+            `──────────────────\n` +
+            `Статус: ${dailyLimitEnabled ? '✅ ВКЛ' : '⛔ ВЫКЛ'}\n` +
+            `Лимит: ${DAILY_LOSS_LIMIT_RUNTIME}%\n` +
+            `Текущий PnL: ${dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}%\n` +
+            `Блокировка: ${dailyLimitHit ? '🔴 ДА (до завтра)' : '🟢 нет'}\n\n` +
+            `Команды:\n/daily_limit -5\n/daily_limit off\n/daily_limit on\n/daily_limit reset`
+          );
+          break;
+        }
+        if (arg === 'off') {
+          dailyLimitEnabled = false;
+          await replyFn('⛔ Daily loss limit ВЫКЛЮЧЕН (без защиты!)');
+        } else if (arg === 'on') {
+          dailyLimitEnabled = true;
+          await replyFn(`✅ Daily loss limit ВКЛ: ${DAILY_LOSS_LIMIT_RUNTIME}%`);
+        } else if (arg === 'reset') {
+          dailyPnl = 0;
+          dailyLimitHit = false;
+          await replyFn('🔄 Daily PnL сброшен. Используй /autoexec on для возобновления.');
+        } else {
+          const n = parseFloat(arg);
+          if (isNaN(n) || n >= 0 || n < -50) {
+            await replyFn('❌ Неверное значение. Пример: /daily_limit -5');
+          } else {
+            DAILY_LOSS_LIMIT_RUNTIME = n;
+            dailyLimitEnabled = true;
+            await replyFn(`✅ Daily loss limit: ${n}%`);
+          }
+        }
+        break;
+      }
+
       case '/autoexec': {
         const action = args[0]?.toLowerCase();
         if (action === 'on') {
+          if (dailyLimitHit) {
+            await replyFn(`🛑 Дневной лимит (${DAILY_LOSS_LIMIT_RUNTIME}%) достигнут.\nPnL: ${dailyPnl.toFixed(2)}%\nВключение заблокировано до завтра.`);
+            break;
+          }
           enabled = true;
-          dailyPnl = 0; // Сброс при включении
           await replyFn('✅ AutoExec включён');
         } else if (action === 'off') {
           enabled = false;
@@ -816,6 +860,7 @@ function resetDailyPnlIfNeeded() {
   const today = todayKey();
   if (dailyPnlResetDate !== today) {
     dailyPnl = 0;
+    dailyLimitHit = false;
     dailyPnlResetDate = today;
     console.log('[AutoExec] Daily PnL reset');
   }

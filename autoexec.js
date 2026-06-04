@@ -164,6 +164,13 @@ async function handleSignal(signal) {
       return;
     }
 
+    // Fix A (Jun 4, 2026): Skip known delisted symbols
+    const DELISTED_SYMBOLS = ['NOKUSDT'];  // add more as discovered
+    if (DELISTED_SYMBOLS.includes(signal.symbol)) {
+      console.log(`${tag} ${signal.symbol} в blacklist (делистинг), пропускаю`);
+      return;
+    }
+
     // ── Получаем данные для расчёта ──
     const [balance, price, instrument] = await Promise.all([
       bybit.getBalance(),

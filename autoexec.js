@@ -42,6 +42,8 @@ let bot = null;               // Telegram bot (из index.js)
 let chatId = null;            // Telegram chat ID
 let supabase = null;          // Supabase client (из index.js)
 let isPropMode = false;       // Prop mode — ограниченное кол-во позиций (2 макс)
+let maxPositionsEnabled = true;          // /max_positions on/off
+let MAX_POSITIONS_RUNTIME = parseInt(process.env.AUTO_MAX_POSITIONS) || 5;  // /max_positions N
 
 const activePositions = new Map();  // symbol → { signal, orderId, entryPrice, ... }
 let dailyPnl = 0;
@@ -133,10 +135,10 @@ async function handleSignal(signal) {
       return;
     }
 
-    // Макс позиций — только в prop mode
-    if (isPropMode && activePositions.size >= MAX_POSITIONS) {
-      console.log(`${tag} [PROP] Max positions (${MAX_POSITIONS}) reached`);
-      await notify(`⚠️ [PROP] Макс. позиций (${MAX_POSITIONS}) достигнут. Пропускаю ${signal.symbol}`);
+    // Макс позиций — глобальная проверка (Jun 4, 2026)
+    if (maxPositionsEnabled && activePositions.size >= MAX_POSITIONS_RUNTIME) {
+      console.log(`${tag} Max positions (${MAX_POSITIONS_RUNTIME}) reached, skip`);
+      await notify(`⚠️ Макс. позиций (${MAX_POSITIONS_RUNTIME}) достигнут. Пропускаю ${signal.symbol}`);
       return;
     }
 
@@ -615,6 +617,30 @@ async function handlePositionClosed(symbol, tracked) {
 async function handleTelegramCommand({ command, args, replyFn }) {
   try {
     switch (command) {
+      case '/max_positions': {
+        if (!arg) {
+          await replyFn(`📊 Max positions: ${maxPositionsEnabled ? MAX_POSITIONS_RUNTIME : 'OFF'}\nИспользование:\n/max_positions 5 — установить лимит\n/max_positions off — отключить\n/max_positions on — включить (с прежним лимитом)`);
+          break;
+        }
+        if (arg === 'off') {
+          maxPositionsEnabled = false;
+          await replyFn(`✅ Max positions OFF (лимит снят)`);
+        } else if (arg === 'on') {
+          maxPositionsEnabled = true;
+          await replyFn(`✅ Max positions ON: лимит ${MAX_POSITIONS_RUNTIME}`);
+        } else {
+          const n = parseInt(arg);
+          if (isNaN(n) || n < 1 || n > 50) {
+            await replyFn(`❌ Неверное число: 1-50`);
+          } else {
+            MAX_POSITIONS_RUNTIME = n;
+            maxPositionsEnabled = true;
+            await replyFn(`✅ Max positions: ${n}`);
+          }
+        }
+        break;
+      }
+
       case '/autoexec': {
         const action = args[0]?.toLowerCase();
         if (action === 'on') {

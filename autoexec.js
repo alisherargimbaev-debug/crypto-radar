@@ -725,8 +725,10 @@ async function saveTrade(data) {
   try {
     if (!supabase) return;
 
-    // Fix E: Deduplicate by symbol + opened ts (cross-files)
-    const tradeKey = `${data.symbol || data.inst_id}_${data.ts || 0}`;
+    // Fix E v2 (Jun 4, 2026): Normalize symbol to handle both 'RIVERUSDT' and 'RIVER-USDT-SWAP' formats
+    const rawSymbol = data.symbol || data.inst_id || '';
+    const normSymbol = rawSymbol.replace('-USDT-SWAP', 'USDT').replace(/-/g, '');
+    const tradeKey = `${normSymbol}_${data.ts || 0}`;
     if (_savedTradesGlobalKeys.has(tradeKey)) {
       console.log(`[AutoExec] ⏭️ Пропускаю дубликат (cross-files): ${tradeKey}`);
       return;

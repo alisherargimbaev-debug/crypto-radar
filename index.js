@@ -7245,14 +7245,53 @@ async function weeklyPnLReport() {
     console.error('weeklyPnLReport error:', e.message);
   }
 }
+// Fix Jun 4, 2026: real drawdown by Bybit balance (was: sum of pnl% — broken)
+let peakBalance7d = null;
+let peakBalance7dTs = 0;
+let cachedBalance = null;
+let cachedBalanceTs = 0;
+
+async function getCurrentBalance() {
+  // Cache 60 sec to avoid API spam
+  if (cachedBalance !== null && Date.now() - cachedBalanceTs < 60000) return cachedBalance;
+  try {
+    const BybitClient = require('./bybit-client');
+    const bybit = new BybitClient();
+    const bal = await bybit.getBalance();
+    const total = parseFloat(bal?.total || bal?.equity || 0);
+    if (total > 0) {
+      cachedBalance = total;
+      cachedBalanceTs = Date.now();
+      return total;
+    }
+  } catch(e) { console.error('[DD] balance fetch error:', e.message); }
+  return null;
+}
+
 function checkWeeklyDrawdown() {
-  const now = Date.now();
-  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-  const recent = store.tradeHistory.filter(t => (t.closedAt || t.ts) >= weekAgo);
-  const totalLoss = recent.reduce((s, t) => s + (t.pnl < 0 ? Math.abs(t.pnl) : 0), 0);
+  // Real drawdown by balance peak vs current
+  if (cachedBalance === null) {
+    // Trigger async fetch but return safe default for this call
+    getCurrentBalance().catch(() => {});
+    return { weekLoss: 0, isOverLimit: false, currentBalance: null, peak: null };
+  }
+  // Reset peak if older than 7 days
+  if (Date.now() - peakBalance7dTs > 7 * 24 * 60 * 60 * 1000) {
+    peakBalance7d = cachedBalance;
+    peakBalance7dTs = Date.now();
+  }
+  // Update peak if current balance is higher
+  if (peakBalance7d === null || cachedBalance > peakBalance7d) {
+    peakBalance7d = cachedBalance;
+    peakBalance7dTs = Date.now();
+  }
+  // Calculate drawdown percent
+  const ddPct = peakBalance7d > 0 ? ((peakBalance7d - cachedBalance) / peakBalance7d) * 100 : 0;
   return {
-    weekLoss:   parseFloat(totalLoss.toFixed(2)),
-    isOverLimit: totalLoss >= 8.0, // 8% за неделю = стоп
+    weekLoss:    parseFloat(ddPct.toFixed(2)),
+    isOverLimit: ddPct >= 8.0,
+    currentBalance: cachedBalance,
+    peak:        peakBalance7d,
   };
 }
 

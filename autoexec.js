@@ -381,18 +381,40 @@ function startMonitor() {
 
         console.log(`[AutoExec][Monitor] ${symbol} PnL: ${livePos.unrealisedPnl} (${pnlPct}%)`);
 
-        // ── Breakeven: когда достигли 50% от TP1 → SL в безубыток ──
+        // ── Trailing C (Jun 4, 2026): on 50% TP close 60% + SL breakeven for rest ──
         if (!tracked.breakevenSet && tracked.signal?.tp_pct) {
-          const halfTP = tracked.signal.tp_pct * 0.5; // половина пути до TP1
+          const halfTP = tracked.signal.tp_pct * 0.5;
           if (parseFloat(pnlPct) >= halfTP) {
-            console.log(`[AutoExec][Breakeven] ${symbol} достиг ${halfTP.toFixed(2)}% (50% TP) → SL в безубыток`);
+            console.log(`[AutoExec][Partial] ${symbol} достиг ${halfTP.toFixed(2)}% (50% TP) → закрываю 60%`);
+
+            // 1. Close 60% via reduce-only Market order
+            const partialQty = parseFloat((tracked.qty * 0.6).toFixed(4));
+            let partialClosed = false;
+            try {
+              const closeResult = await bybit.closePosition(symbol, tracked.side, partialQty);
+              if (closeResult) {
+                tracked.qty = parseFloat((tracked.qty - partialQty).toFixed(4));
+                tracked.partialClosed60 = true;
+                partialClosed = true;
+                console.log(`[AutoExec][Partial] ${symbol} закрыто ${partialQty} (60%), осталось ${tracked.qty}`);
+              } else {
+                console.warn(`[AutoExec][Partial] ${symbol} не удалось закрыть 60% — только breakeven`);
+              }
+            } catch (err) {
+              console.error(`[AutoExec][Partial] ${symbol} close error:`, err.message);
+            }
+
+            // 2. SL to breakeven for remaining 40%
             const beResult = await bybit.setTradingStop({
               symbol,
               stopLoss: String(tracked.entryPrice),
             });
             if (beResult) {
               tracked.breakevenSet = true;
-              await notify(`🛡 ${symbol} — SL в безубыток (50% TP достигнут). Сделка безрисковая.`);
+              const msg = partialClosed
+                ? `💰 ${symbol} — закрыто 60% (профит). Остаток 40% защищён breakeven SL.`
+                : `🛡 ${symbol} — SL в безубыток (60% close не удалось).`;
+              await notify(msg);
             }
           }
         }

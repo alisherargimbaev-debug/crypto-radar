@@ -8605,6 +8605,7 @@ cron.schedule('0 0 * * 6', async () => {
 // Weekly drawdown check — каждый час
 cron.schedule('0 * * * *', async () => {
   try {
+    await getCurrentBalance(); // ensure cache is fresh before DD check
     const dd = checkWeeklyDrawdown();
     if (dd.isOverLimit && !store.emergencyStop) {
       store.emergencyStop = true;

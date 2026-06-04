@@ -395,7 +395,13 @@ function startMonitor() {
             console.log(`[AutoExec][Partial] ${symbol} достиг ${halfTP.toFixed(2)}% (50% TP) → закрываю 60%`);
 
             // 1. Close 60% via reduce-only Market order
-            const partialQty = parseFloat((tracked.qty * 0.6).toFixed(4));
+            let partialQty;
+            try {
+              const instr = await bybit.getInstrumentInfo(symbol);
+              const raw60 = tracked.qty * 0.6;
+              partialQty = instr ? roundToStep(raw60, instr.qtyStep) : parseFloat(raw60.toFixed(4));
+              if (instr && partialQty < instr.minQty) partialQty = instr.minQty;
+            } catch(_) { partialQty = parseFloat((tracked.qty * 0.6).toFixed(4)); }
             let partialClosed = false;
             try {
               const closeResult = await bybit.closePosition(symbol, tracked.side, partialQty);

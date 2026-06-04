@@ -4619,7 +4619,7 @@ async function runStrategies(instId, coinData, asianSession) {
         const dayStart = nowUTC - (nowUTC % (24 * 60 * 60 * 1000));
 
         const todayCandles = k4h_s10.filter(c => c.ts >= dayStart && c.ts < nowUTC - 4*60*60*1000);
-        if (!todayCandles.length) throw new Error('[S10] Нет 4H свечи за сегодня');
+        if (!todayCandles.length) { /* Fix (Jun 4, 2026): silence early UTC noise — normal when day just started */ return; }
 
         const rangeCandle = todayCandles[0];
         const rangeHigh   = rangeCandle.high;

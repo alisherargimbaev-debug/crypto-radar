@@ -717,10 +717,28 @@ async function notify(text) {
   }
 }
 
-// Запись закрытой live сделки в Supabase (таблица 'trades')
+// Fix E (Jun 4, 2026): Cross-files dedup set
+const _savedTradesGlobalKeys = new Set();
+
+// Запись закрытой live сделки в Supabase (таблица 'trades') with dedup
 async function saveTrade(data) {
   try {
     if (!supabase) return;
+
+    // Fix E: Deduplicate by symbol + opened ts (cross-files)
+    const tradeKey = `${data.symbol || data.inst_id}_${data.ts || 0}`;
+    if (_savedTradesGlobalKeys.has(tradeKey)) {
+      console.log(`[AutoExec] ⏭️ Пропускаю дубликат (cross-files): ${tradeKey}`);
+      return;
+    }
+    _savedTradesGlobalKeys.add(tradeKey);
+    // Keep set size manageable
+    if (_savedTradesGlobalKeys.size > 1000) {
+      const arr = Array.from(_savedTradesGlobalKeys);
+      _savedTradesGlobalKeys.clear();
+      arr.slice(-500).forEach(k => _savedTradesGlobalKeys.add(k));
+    }
+
     const { error } = await supabase.from('trades').insert([{
       ...data,
       created_at: new Date().toISOString(),

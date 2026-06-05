@@ -779,9 +779,6 @@ loadSettings();
 loadSettingsFromSupabase().catch(() => {});
 
 // ── Добавить в tradeHistory с защитой от переполнения ──────
-// Fix 2.2 (Jun 3, 2026): Deduplicate trade saves to paper_trades by unique key
-const _savedTradesKeys = new Set();
-
 async function pushTradeHistory(trade) {
   store.tradeHistory.push(trade);
   if (store.tradeHistory.length > 500) {
@@ -791,62 +788,30 @@ async function pushTradeHistory(trade) {
   // Save LIVE trades to Supabase (paper trades saved separately via savePaperTradeToSupabase)
   if (trade.outcome && trade.outcome !== 'open' && !trade._savedToSupabase) {
     trade._savedToSupabase = true;
-    // Fix 2.1 (Jun 3, 2026): Skip if AutoExec already saved to trades table
-    if (trade.source === 'autoexec') {
-      console.log(`[LIVE→DB] ⏭️ Пропускаю — AutoExec уже записал в trades: ${trade.instId}`);
-      return;
-    }
-
-    const isLive = trade.source === 'bybit_real' || trade.source === 'bybit_sync' || (!store.observeMode && !trade.paperOnly);
+    const isLive = trade.source === 'bybit_real' || (!store.observeMode && !trade.paperOnly);
     if (isLive) {
-      // Fix 2.2: Deduplicate by trade key
-      const tradeKey = `${trade.instId || trade.symbol}_${trade.ts || 0}`;
-      if (_savedTradesKeys.has(tradeKey)) {
-        console.log(`[LIVE→DB] ⏭️ Пропускаю дубликат: ${tradeKey}`);
-        return;
-      }
-      _savedTradesKeys.add(tradeKey);
-      if (_savedTradesKeys.size > 1000) {
-        const arr = Array.from(_savedTradesKeys);
-        _savedTradesKeys.clear();
-        arr.slice(-500).forEach(k => _savedTradesKeys.add(k));
-      }
-
-      // Fix 2.1: Route bybit_sync and bybit_real to 'trades' table (was 'paper_trades')
-      const symbol = (trade.instId || '').replace('-USDT-SWAP', 'USDT') || trade.symbol;
-      console.log(`[LIVE→DB] Сохраняю в trades: ${symbol} ${trade.outcome} PnL=${trade.pnl}`);
+      console.log(`[LIVE→DB] Сохраняю live сделку: ${trade.instId} ${trade.outcome} PnL=${trade.pnl}`);
       try {
-        const autoExec = require('./autoexec');
-        if (autoExec.saveTrade) {
-          await autoExec.saveTrade({
-            ts:          trade.ts || Date.now(),
-            inst_id:     trade.instId || symbol.replace('USDT', '-USDT-SWAP'),
-            symbol:      symbol,
-            strategy:    trade.strategy || 'BybitSync',
-            direction:   trade.direction,
-            price:       trade.price,
-            close_price: trade.closePrice || trade.exitPrice || 0,
-            sl:          trade.sl || null,
-            tp1:         trade.tp1 || trade.tp || null,
-            tp2:         trade.tp2 || null,
-            confidence:  trade.confidence || 0,
-            outcome:     trade.outcome,
-            pnl:         trade.pnl,
-            closed_at:   trade.closedAt || Date.now(),
-          });
-          console.log(`[LIVE→DB] ✅ Сохранено в trades: ${symbol}`);
+        const { error } = await supabase.from('paper_trades').insert({
+          ts:         trade.ts || Date.now(),
+          inst_id:    trade.instId || trade.symbol,
+          strategy:   trade.strategy || 'Live',
+          direction:  trade.direction,
+          price:      trade.price,
+          sl:         trade.sl,
+          tp1:        trade.tp1 || trade.tp,
+          tp2:        trade.tp2 || trade.tp,
+          confidence: trade.confidence || 0,
+          outcome:    trade.outcome,
+          pnl:        trade.pnl,
+          closed_at:  trade.closedAt || Date.now(),
+          source:     'bybit_real',
+          filters:    trade.filters ? JSON.stringify(trade.filters) : null,
+        });
+        if (error) {
+          console.error(`[LIVE→DB] ❌ Ошибка сохранения: ${error.message} (code: ${error.code})`);
         } else {
-          console.warn('[LIVE→DB] autoExec.saveTrade not available — falling back to paper_trades');
-          const { error } = await supabase.from('paper_trades').insert({
-            ts: trade.ts || Date.now(), inst_id: trade.instId || trade.symbol,
-            strategy: trade.strategy || 'Live', direction: trade.direction,
-            price: trade.price, sl: trade.sl, tp1: trade.tp1 || trade.tp,
-            tp2: trade.tp2 || trade.tp, confidence: trade.confidence || 0,
-            outcome: trade.outcome, pnl: trade.pnl,
-            closed_at: trade.closedAt || Date.now(), source: 'bybit_real',
-            filters: trade.filters ? JSON.stringify(trade.filters) : null,
-          });
-          if (error) console.error(`[LIVE→DB] ❌ Fallback error: ${error.message}`);
+          console.log(`[LIVE→DB] ✅ Сохранено: ${trade.instId}`);
         }
       } catch(e) {
         console.error(`[LIVE→DB] ❌ Exception: ${e.message}`);
@@ -2104,7 +2069,7 @@ function parseAIResponse(line, sig) {
 // ============================================================
 async function getOKXCandidates() {
   const data = await httpGet('https://www.okx.com/api/v5/market/tickers?instType=SWAP');
-  if (!data || data.code !== '0') return [];
+  if (!data || data.code !== '0' || !Array.isArray(data.data)) return [];
 
   // Принудительно добавляем товарные и фондовые активы
   // (они могут не попасть в топ по объёму, но мы хотим их сканировать)
@@ -2163,7 +2128,7 @@ async function getOKXCandidates() {
 
 async function getOKXKlines(instId, bar, limit) {
   const data = await httpGet(`https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=${limit}`);
-  if (!data || data.code !== '0') return [];
+  if (!data || data.code !== '0' || !Array.isArray(data.data)) return [];
   return data.data.reverse().map(c => ({
     ts: +c[0], open: +c[1], high: +c[2], low: +c[3], close: +c[4],
     volume: +c[5], quoteVolume: +c[7], takerBuyQuote: +c[7] * 0.5,
@@ -2176,7 +2141,7 @@ async function getOKXKlinesCached(instId, bar, limit) {
   const key = `${instId}-${bar}-${limit}`;
   const cached = store.klinesCache[key];
   if (cached && Date.now() - cached.ts < KLINES_TTL) {
-    return cached.data;
+    return cached.data || [];
   }
   const data = await getOKXKlines(instId, bar, limit);
   store.klinesCache[key] = { data, ts: Date.now() };
@@ -4619,7 +4584,7 @@ async function runStrategies(instId, coinData, asianSession) {
         const dayStart = nowUTC - (nowUTC % (24 * 60 * 60 * 1000));
 
         const todayCandles = k4h_s10.filter(c => c.ts >= dayStart && c.ts < nowUTC - 4*60*60*1000);
-        if (!todayCandles.length) { /* Fix (Jun 4, 2026): silence early UTC noise — normal when day just started */ return; }
+        if (!todayCandles.length) throw new Error('[S10] Нет 4H свечи за сегодня');
 
         const rangeCandle = todayCandles[0];
         const rangeHigh   = rangeCandle.high;
@@ -7245,53 +7210,14 @@ async function weeklyPnLReport() {
     console.error('weeklyPnLReport error:', e.message);
   }
 }
-// Fix Jun 4, 2026: real drawdown by Bybit balance (was: sum of pnl% — broken)
-let peakBalance7d = null;
-let peakBalance7dTs = 0;
-let cachedBalance = null;
-let cachedBalanceTs = 0;
-
-async function getCurrentBalance() {
-  // Cache 60 sec to avoid API spam
-  if (cachedBalance !== null && Date.now() - cachedBalanceTs < 60000) return cachedBalance;
-  try {
-    const BybitClient = require('./bybit-client');
-    const bybit = new BybitClient();
-    const bal = await bybit.getBalance();
-    const total = parseFloat(bal?.total || bal?.equity || 0);
-    if (total > 0) {
-      cachedBalance = total;
-      cachedBalanceTs = Date.now();
-      return total;
-    }
-  } catch(e) { console.error('[DD] balance fetch error:', e.message); }
-  return null;
-}
-
 function checkWeeklyDrawdown() {
-  // Real drawdown by balance peak vs current
-  if (cachedBalance === null) {
-    // Trigger async fetch but return safe default for this call
-    getCurrentBalance().catch(() => {});
-    return { weekLoss: 0, isOverLimit: false, currentBalance: null, peak: null };
-  }
-  // Reset peak if older than 7 days
-  if (Date.now() - peakBalance7dTs > 7 * 24 * 60 * 60 * 1000) {
-    peakBalance7d = cachedBalance;
-    peakBalance7dTs = Date.now();
-  }
-  // Update peak if current balance is higher
-  if (peakBalance7d === null || cachedBalance > peakBalance7d) {
-    peakBalance7d = cachedBalance;
-    peakBalance7dTs = Date.now();
-  }
-  // Calculate drawdown percent
-  const ddPct = peakBalance7d > 0 ? ((peakBalance7d - cachedBalance) / peakBalance7d) * 100 : 0;
+  const now = Date.now();
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const recent = store.tradeHistory.filter(t => (t.closedAt || t.ts) >= weekAgo);
+  const totalLoss = recent.reduce((s, t) => s + (t.pnl < 0 ? Math.abs(t.pnl) : 0), 0);
   return {
-    weekLoss:    parseFloat(ddPct.toFixed(2)),
-    isOverLimit: ddPct >= 8.0,
-    currentBalance: cachedBalance,
-    peak:        peakBalance7d,
+    weekLoss:   parseFloat(totalLoss.toFixed(2)),
+    isOverLimit: totalLoss >= 8.0, // 8% за неделю = стоп
   };
 }
 
@@ -8353,41 +8279,12 @@ cron.schedule('*/3 * * * *', async () => {
     }
     if (toClose.length > 0) {
       for (const trade of toClose) {
-        // FIX (Jun 3, 2026): get real PnL from Bybit before recording (was hardcoded pnl=0)
-        const sym = (trade.instId||'').replace('-USDT-SWAP','USDT');
-        let realPnl = 0, realExitPrice = 0;
-        try {
-          const closedList = await bybit.getClosedPnl(sym, 10);
-          const tradeTs = +trade.ts || 0;
-          const entryPrice = +trade.price || 0;
-          let match = closedList?.find(p => {
-            const closeTs = +p.updatedTime || +p.createdTime || 0;
-            const pEntry = +p.avgEntryPrice || 0;
-            const entryMatch = entryPrice > 0 ? Math.abs(pEntry - entryPrice) / entryPrice < 0.005 : true;
-            return closeTs > tradeTs && entryMatch;
-          });
-          if (!match) match = closedList?.find(p => (+p.updatedTime || 0) > tradeTs);
-          if (!match && closedList?.length) {
-            console.warn('[Bybit Sync] '+trade.instId+' no exact match, using most recent');
-            match = closedList[0];
-          }
-          if (match) {
-            realPnl = parseFloat(match.closedPnl) || 0;
-            realExitPrice = parseFloat(match.avgExitPrice) || 0;
-          }
-        } catch (e) {
-          console.error('[Bybit Sync] getClosedPnl error for '+trade.instId+':', e.message);
-        }
-        trade.outcome = realPnl >= 0 ? 'tp1' : 'sl';
-        trade.closedAt = Date.now();
-        trade.pnl = realPnl;
-        trade.closePrice = realExitPrice;
-        trade.source = 'bybit_sync';
-        console.log('[Bybit Sync] '+trade.instId+' closed: entry='+trade.price+' exit='+realExitPrice+' pnl='+realPnl.toFixed(2));
+        trade.outcome='closed_on_exchange'; trade.closedAt=Date.now(); trade.pnl=0;
         pushTradeHistory(trade);
         supabase.from('open_trades').delete()
           .eq('inst_id', trade.instId).eq('ts', trade.ts)
           .then(() => {}).catch(e => console.error('[Bybit Sync] open_trades delete error:', e.message));
+        console.log('[Bybit Sync] '+trade.instId+' закрыта → убрана из store и Supabase');
       }
       store.openTrades = stillOpen;
     }
@@ -8605,7 +8502,6 @@ cron.schedule('0 0 * * 6', async () => {
 // Weekly drawdown check — каждый час
 cron.schedule('0 * * * *', async () => {
   try {
-    await getCurrentBalance(); // ensure cache is fresh before DD check
     const dd = checkWeeklyDrawdown();
     if (dd.isOverLimit && !store.emergencyStop) {
       store.emergencyStop = true;
@@ -8701,17 +8597,6 @@ supabase.from('open_trades').select('*').then(async ({ data }) => {
       console.log(`[START Bybit Recon] убрано ${staleBybit.length} устаревших сделок`);
     } else {
       console.log(`[START Bybit Recon] все ${stillOpen.length} сделок подтверждены на Bybit`);
-    }
-
-    // Fix 1.2 (Jun 3, 2026): Trigger autoexec to restore activePositions
-    if (stillOpen.length > 0) {
-      try {
-        const autoExec = require('./autoexec');
-        autoExec.signals.emit('restore_positions', stillOpen);
-        console.log(`[START] Triggered autoexec restore for ${stillOpen.length} positions`);
-      } catch (e) {
-        console.error('[START] autoexec restore trigger error:', e.message);
-      }
     }
   } catch(e) {
     console.log('[START Bybit Recon] недоступен — пропуск:', e.message);

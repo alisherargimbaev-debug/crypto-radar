@@ -44,7 +44,7 @@ const TOP50_COINS = new Set([
 
 // Выключить Binance можно одним флагом, если вдруг endpoint заблокируют
 const ENABLE_BINANCE = false; // Binance API сломан → используем Bybit
-const ENABLE_BYBIT   = true;
+const ENABLE_BYBIT   = false; // Bybit leaderboard endpoint removed (404)
 
 // ── STATE ───────────────────────────────────────────────────────────────
 const state = {
